@@ -1,4 +1,6 @@
+using Domain.DTOs;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace crypto_investment_project.Server.Controllers
 {
@@ -13,9 +15,10 @@ namespace crypto_investment_project.Server.Controllers
 
         private readonly ILogger<WeatherForecastController> _logger;
 
-        public WeatherForecastController(ILogger<WeatherForecastController> logger)
+        public WeatherForecastController(ILogger<WeatherForecastController> logger, IOptions<BinanceSettings> binanceSettings)
         {
             _logger = logger;
+            //binanceSettings.Value.ApiKey
         }
 
         [HttpGet(Name = "GetWeatherForecast")]

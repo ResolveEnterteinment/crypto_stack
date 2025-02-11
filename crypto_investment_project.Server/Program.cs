@@ -1,3 +1,7 @@
+using Application.Interfaces;
+using Domain.DTOs;
+using Infrastructure.Services;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -9,8 +13,12 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
+builder.Services.Configure<BinanceSettings>(builder.Configuration.GetSection("Binance"));
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+builder.Services.AddSingleton<IExchangeService, ExchangeService>();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
