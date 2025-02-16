@@ -1,9 +1,10 @@
-﻿using Domain.Models;
+﻿using Application.Contracts.Responses.Exchange;
+using Domain.Models.Transaction;
 
 namespace Application.Interfaces
 {
     public interface IExchangeService
     {
-        public Task<ExchangeOrderData?> CreateOrder(string symbol, decimal quantity, string side = "BUY", string type = "MARKET");
+        public Task<IEnumerable<ExchangeOrderResponse>?> ProcessTransaction(TransactionData transactionData);
     }
 }

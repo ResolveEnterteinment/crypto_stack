@@ -1,8 +1,10 @@
-﻿namespace Domain.Models
+﻿using MongoDB.Bson;
+
+namespace Domain.Models
 {
     public class BaseEntity
     {
-        public required Guid Id { get; set; }
+        public required ObjectId _id { get; set; }
         public required DateTime CreateTime { get; set; }
     }
 }

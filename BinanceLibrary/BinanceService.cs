@@ -1,4 +1,5 @@
-﻿using Binance.Net.Clients;
+﻿using Binance.Net;
+using Binance.Net.Clients;
 using Binance.Net.Objects.Models.Spot;
 using CryptoExchange.Net.Authentication;
 using Domain.DTOs;
@@ -8,16 +9,19 @@ namespace BinanceLibrary
 {
     public class BinanceService : IBinanceService
     {
-        private BinanceRestClient _binanceClient;
+        private readonly BinanceRestClient _binanceClient;
         public BinanceService(IOptions<BinanceSettings> binanceSettings)
         {
-
             // Replace these with your Binance API credentials
             string apiKey = binanceSettings.Value.ApiKey;
             string apiSecret = binanceSettings.Value.ApiSecret;
+            bool isTestnet = binanceSettings.Value.IsTestnet;
 
-            _binanceClient = new BinanceRestClient();
-            _binanceClient.SetApiCredentials(new ApiCredentials(binanceSettings.Value.ApiKey, binanceSettings.Value.ApiSecret));
+            _binanceClient = new BinanceRestClient(options =>
+            {
+                options.ApiCredentials = new ApiCredentials(apiKey, apiSecret);
+                options.Environment = isTestnet ? BinanceEnvironment.Testnet : BinanceEnvironment.Live;
+            });
         }
 
         internal async Task<BinancePlacedOrder?> PlaceOrder(string symbol, decimal quantity, Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy, Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
@@ -27,7 +31,7 @@ namespace BinanceLibrary
                 symbol,
                 side,
                 type,
-                quantity: 0, // Not used for market buy orders.
+                //quantity: 0, // Not used for market buy orders.
                 quoteQuantity: quantity)
                 .ConfigureAwait(false);
             if (!orderResult.Success)

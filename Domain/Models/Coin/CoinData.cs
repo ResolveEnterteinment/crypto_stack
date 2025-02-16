@@ -1,6 +1,6 @@
-﻿namespace Domain.Models
+﻿namespace Domain.Models.Crypto
 {
-    public class CryptoData : BaseEntity
+    public class CoinData : BaseEntity
     {
         public required string Name { get; set; }
         public required string Ticker { get; set; }
