@@ -1,6 +1,5 @@
-﻿// File: TestDataFactory.cs in your Test project
+﻿// File: TestDataFactory.cs
 using Binance.Net.Objects.Models.Spot;
-
 using Domain.Models.Crypto;
 using Domain.Models.Subscription;
 using Domain.Models.Transaction;
@@ -10,42 +9,37 @@ namespace Infrastructure.Tests.Helpers
 {
     public static class TestDataFactory
     {
-        public static TransactionData CreateDefaultTransactionData(
-            decimal netAmount = 96.7m,
-            ObjectId? subscriptionId = null,
-            ObjectId? userId = null)
+        public static TransactionData CreateDefaultTransactionData(decimal netAmount = 100m)
         {
             return new TransactionData
             {
                 _id = ObjectId.GenerateNewId(),
                 CreateTime = DateTime.UtcNow,
-                UserId = userId ?? ObjectId.GenerateNewId(),
-                SubscriptionId = subscriptionId ?? ObjectId.GenerateNewId(),
+                UserId = ObjectId.GenerateNewId(),
+                SubscriptionId = ObjectId.GenerateNewId(),
                 PaymentProviderId = "pp1",
-                TotalAmount = 100,
-                PaymentProviderFee = 2.3m,
+                TotalAmount = 103,
+                PaymentProviderFee = 2m,
                 PlatformFee = 1,
                 NetAmount = netAmount,
                 Status = "Pending"
             };
         }
 
-        public static CoinAllocation CreateDefaultCoinAllocation(
-            uint allocation = 100,
-            ObjectId? coinId = null)
+        public static CoinAllocation CreateDefaultCoinAllocation(uint percentAmount = 100, ObjectId? coinId = null)
         {
             return new CoinAllocation
             {
                 CoinId = coinId ?? ObjectId.GenerateNewId(),
-                PercentAmount = allocation
+                PercentAmount = percentAmount
             };
         }
 
-        public static CoinData CreateDefaultCoinData(ObjectId? coinId = null)
+        public static CoinData CreateDefaultCoinData(ObjectId coinId)
         {
             return new CoinData
             {
-                _id = coinId ?? ObjectId.GenerateNewId(),
+                _id = coinId,
                 CreateTime = DateTime.UtcNow,
                 Name = "Bitcoin",
                 Symbol = "₿",
@@ -64,10 +58,10 @@ namespace Infrastructure.Tests.Helpers
                 Symbol = "BTCUSDT",
                 Side = Binance.Net.Enums.OrderSide.Buy,
                 Price = 97000m,
-                QuoteQuantity = 96.7m,
+                QuoteQuantity = 70m,  // Assume 70 is the expected quote quantity for a successful order.
                 CreateTime = DateTime.UtcNow,
-                QuantityFilled = 0.01m,
-                Status = Binance.Net.Enums.OrderStatus.Filled
+                QuantityFilled = 0.001m,
+                Status = Binance.Net.Enums.OrderStatus.Filled,
             };
         }
     }
