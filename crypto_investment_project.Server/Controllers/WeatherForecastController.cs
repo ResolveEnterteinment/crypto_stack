@@ -1,3 +1,4 @@
+using Application.Contracts;
 using Domain.DTOs;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -31,6 +32,15 @@ namespace crypto_investment_project.Server.Controllers
                 Summary = Summaries[Random.Shared.Next(Summaries.Length)]
             })
             .ToArray();
+        }
+
+        [HttpGet(Name = "GetWeatherForecastdd")]
+        public IActionResult GetY()
+        {
+            var res = new ApiResponse<object>(new { eray = "erasy" });
+            var errors = new ApiResponse<object>(new string[] { "error" });
+
+            return Ok(errors);
         }
     }
 }
