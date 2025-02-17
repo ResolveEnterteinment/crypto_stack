@@ -1,8 +1,6 @@
-using Application.Contracts.Requests.Exchange;
 using Application.Interfaces;
 using Domain.Models.Transaction;
 using Microsoft.AspNetCore.Mvc;
-using MongoDB.Bson;
 
 namespace crypto_investment_project.Server.Controllers
 {
@@ -13,28 +11,15 @@ namespace crypto_investment_project.Server.Controllers
         private readonly IExchangeService _exchangeService = exchangeService;
 
         [HttpPost]
-        public async Task<IActionResult> Post([FromBody] ExchangeRequest exchangeRequest)
+        public async Task<IActionResult> Post([FromBody] TransactionData transactionData)
         {
-            if (exchangeRequest is null)
+            if (transactionData is null)
             {
                 return BadRequest("A valid transaction is required.");
             }
 
             try
             {
-                TransactionData transactionData = new()
-                {
-                    _id = new ObjectId(exchangeRequest.Id),
-                    CreateTime = exchangeRequest.CreateTime,
-                    UserId = new ObjectId(exchangeRequest.UserId),
-                    SubscriptionId = new ObjectId(exchangeRequest.SubscriptionId),
-                    PaymentProviderId = exchangeRequest.PaymentProviderId,
-                    PaymentProviderFee = exchangeRequest.PaymentProviderFee,
-                    TotalAmount = exchangeRequest.TotalAmount,
-                    PlatformFee = exchangeRequest.PlatformFee,
-                    NetAmount = exchangeRequest.NetAmount,
-                    Status = exchangeRequest.Status,
-                };
                 var result = await _exchangeService.ProcessTransaction(transactionData);
                 return result is null ? throw new NullReferenceException(nameof(result)) : (IActionResult)Ok(result);
             }
