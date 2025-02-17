@@ -36,7 +36,7 @@ namespace crypto_investment_project.Server.Controllers
                     Status = exchangeRequest.Status,
                 };
                 var result = await _exchangeService.ProcessTransaction(transactionData);
-                return Ok(result);
+                return result is null ? throw new NullReferenceException(nameof(result)) : (IActionResult)Ok(result);
             }
             catch (Exception ex)
             {

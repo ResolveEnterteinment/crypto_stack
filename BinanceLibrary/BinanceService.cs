@@ -24,24 +24,27 @@ namespace BinanceLibrary
             });
         }
 
-        internal async Task<BinancePlacedOrder?> PlaceOrder(string symbol, decimal quantity, Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy, Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
+        internal async Task<BinancePlacedOrder> PlaceOrder(string symbol, decimal quantity, Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy, Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
         {
-
-            var orderResult = await _binanceClient.SpotApi.Trading.PlaceOrderAsync(
+            try
+            {
+                var orderResult = await _binanceClient.SpotApi.Trading.PlaceOrderAsync(
                 symbol,
                 side,
                 type,
                 //quantity: 0, // Not used for market buy orders.
                 quoteQuantity: quantity)
                 .ConfigureAwait(false);
-            if (!orderResult.Success)
-            {
-                Console.WriteLine("Error placing order: " + orderResult.Error?.Message);
-                return null;
+                if (!orderResult.Success)
+                {
+                    throw new Exception(orderResult.Error?.Message);
+                }
+                return orderResult.Data;
             }
-
-            return orderResult.Data;
-
+            catch (Exception ex)
+            {
+                throw new Exception("Error placing Binance order: ", ex);
+            }
         }
 
         /// <summary>
@@ -51,7 +54,7 @@ namespace BinanceLibrary
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
         /// <returns>The order details if successful; otherwise, null.</returns>
-        public async Task<BinancePlacedOrder?> PlaceSpotMarketBuyOrder(string symbol, decimal quantity)
+        public async Task<BinancePlacedOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity)
         {
             return await PlaceOrder(symbol, quantity);
         }
@@ -62,7 +65,7 @@ namespace BinanceLibrary
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
         /// <returns>The order details if successful; otherwise, null.</returns>
-        public async Task<BinancePlacedOrder?> PlaceSpotMarketSellOrder(string symbol, decimal quantity)
+        public async Task<BinancePlacedOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity)
         {
             return await PlaceOrder(symbol, quantity, Binance.Net.Enums.OrderSide.Sell);
         }

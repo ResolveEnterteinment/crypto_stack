@@ -5,7 +5,7 @@ namespace Infrastructure.Services
 {
     public interface ICoinService
     {
-        public CoinData? GetCoinData(ObjectId coinId);
-        public CoinData? GetCryptoFromSymbol(string symbol);
+        public Task<CoinData?> GetCoinDataAsync(ObjectId coinId);
+        public Task<CoinData?> GetCryptoFromSymbolAsync(string symbol);
     }
 }

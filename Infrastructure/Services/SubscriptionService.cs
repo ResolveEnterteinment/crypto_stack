@@ -1,5 +1,4 @@
 ﻿using AspNetCore.Identity.MongoDbCore.Infrastructure;
-using DnsClient.Internal;
 using Domain.Models.Subscription;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -12,29 +11,34 @@ namespace Infrastructure.Services
     {
         private readonly IMongoCollection<SubscriptionData> _subscriptions;
         private readonly ILogger<SubscriptionService> _logger;
-        public SubscriptionService(IOptions<MongoDbSettings> mongoDbSettings, ILogger<SubscriptionService> logger)
+
+        // Inject the IOptions<MongoDbSettings>, singleton IMongoClient, and ILogger
+        public SubscriptionService(
+            IOptions<MongoDbSettings> mongoDbSettings,
+            IMongoClient mongoClient,
+            ILogger<SubscriptionService> logger)
         {
-            var mongoClient = new MongoClient(mongoDbSettings.Value.ConnectionString);
-
-            var mongoDatabase = mongoClient.GetDatabase(
-                mongoDbSettings.Value.DatabaseName);
-
-            _subscriptions = mongoDatabase.GetCollection<SubscriptionData>("subscriptions");
             _logger = logger;
+            var databaseName = mongoDbSettings.Value.DatabaseName;
+            var mongoDatabase = mongoClient.GetDatabase(databaseName);
+            _subscriptions = mongoDatabase.GetCollection<SubscriptionData>("subscriptions");
         }
+
         public async Task<IEnumerable<CoinAllocation>> GetCoinAllocationsAsync(ObjectId subscriptionId)
         {
             try
             {
-                var filter = Builders<SubscriptionData>.Filter
-                .Eq(s => s._id, subscriptionId);
-                // Asynchronously retrieves the first document that matches the filter
+                var filter = Builders<SubscriptionData>.Filter.Eq(s => s._id, subscriptionId);
                 var subscription = await _subscriptions.Find(filter).FirstOrDefaultAsync();
-                return subscription == null ? throw new KeyNotFoundException("Subscription not found.") : subscription.CoinAllocations;
+                if (subscription == null)
+                {
+                    throw new KeyNotFoundException("Subscription not found.");
+                }
+                return subscription.CoinAllocations;
             }
             catch (Exception ex)
             {
-                _logger.LogError("Fetch subscription failed: ${message}", ex.Message);
+                _logger.LogError(ex, "Fetch subscription failed: {Message}", ex.Message);
                 return new List<CoinAllocation>();
             }
         }
