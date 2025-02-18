@@ -93,7 +93,7 @@ namespace Infrastructure.Services
                 var exchangeOrder = new ExchangeOrderData
                 {
                     _id = ObjectId.GenerateNewId(),
-                    CreatedAt = order.CreateTime,
+                    CreateTime = order.CreateTime,
                     UserId = ObjectId.Empty,          // TODO: Replace with the actual user id.
                     TranscationId = ObjectId.Empty,   // TODO: Replace with the actual transaction id.
                     CryptoId = crypto?._id ?? ObjectId.Empty, // TODO: Adjust as needed.

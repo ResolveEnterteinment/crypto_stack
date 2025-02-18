@@ -162,7 +162,7 @@ namespace Infrastructure.Services
                 var userData = await _userService.CreateAsync(new UserData()
                 {
                     _id = ObjectId.Parse(user.Id.ToString()),
-                    CreatedAt = DateTime.UtcNow,
+                    CreateTime = DateTime.UtcNow,
                     FullName = request.FullName,
                     Email = request.Email,
                 });
