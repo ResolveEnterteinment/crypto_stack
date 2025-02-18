@@ -1,8 +1,11 @@
 using Application.Interfaces;
+using AspNetCore.Identity.MongoDbCore.Extensions;
 using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using crypto_investment_project.Server.Helpers;
 using Domain.DTOs;
+using Domain.Models.Authentication;
 using Infrastructure.Services;
+using Microsoft.AspNetCore.Identity;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
@@ -29,6 +32,9 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddSingleton<IExchangeService, ExchangeService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 builder.Services.AddSingleton<ICoinService, CoinService>();
+
+builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
+builder.Services.AddScoped<IUserService, UserService>();
 
 var app = builder.Build();
 

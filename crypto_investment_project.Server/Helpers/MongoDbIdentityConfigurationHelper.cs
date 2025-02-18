@@ -1,4 +1,7 @@
-﻿using AspNetCore.Identity.MongoDbCore.Infrastructure;
+﻿using AspNetCore.Identity.MongoDbCore.Extensions;
+using AspNetCore.Identity.MongoDbCore.Infrastructure;
+using Domain.Models.Authentication;
+using Microsoft.AspNetCore.Identity;
 
 namespace crypto_investment_project.Server.Helpers
 {
@@ -29,11 +32,11 @@ namespace crypto_investment_project.Server.Helpers
                 }
             };
 
-            /*builder.Services.ConfigureMongoDbIdentity<ApplicationUser, ApplicationRole, Guid>(mongoDbIdentityConfig)
+            builder.Services.ConfigureMongoDbIdentity<ApplicationUser, ApplicationRole, Guid>(mongoDbIdentityConfig)
                 .AddUserManager<UserManager<ApplicationUser>>()
                 .AddSignInManager<SignInManager<ApplicationUser>>()
                 .AddRoleManager<RoleManager<ApplicationRole>>()
-                .AddDefaultTokenProviders();*/
+                .AddDefaultTokenProviders();
         }
     }
 }

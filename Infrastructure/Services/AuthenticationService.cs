@@ -5,9 +5,12 @@ using Application.Interfaces;
 using Domain.DTOs;
 using Domain.Models.Authentication;
 using Domain.Models.User;
+using Infrastructure.Extensions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 
@@ -25,7 +28,7 @@ namespace Infrastructure.Services
 
         public AuthenticationService(RoleManager<ApplicationRole> roleManager, ILogger<AuthenticationService> logger,
             UserManager<ApplicationUser> userManager, IOptionsSnapshot<JwtSettings> jwtSettings,
-            IUserService userService/*, IEmailService emailService, ISystemSettingsService systemSettingsService*/)
+            IUserService userService/*, IEmailService emailService*/)
         {
             _userManager = userManager;
             _jwtSettings = jwtSettings.Value;
@@ -33,7 +36,6 @@ namespace Infrastructure.Services
             _roleManager = roleManager;
             _logger = logger;
             //_emailService = emailService;
-            //_systemSettingsService = systemSettingsService;
         }
 
         public async Task<LoginResponse> LoginAsync(LoginRequest request)
@@ -86,7 +88,7 @@ namespace Infrastructure.Services
                     signingCredentials: creds
                     );
 
-                var userData = await _userService.GetAsync(user.Id);
+                var userData = await _userService.GetAsync(user.Id.ToObjectId());
 
                 if (userData == null)
                 {
@@ -101,7 +103,6 @@ namespace Infrastructure.Services
                     UserId = user.Id.ToString(),
                     Success = true,
                     EmailConfirmed = true,
-                    IsTutorialCompleted = userData.IsTutorialCompleted ?? false,
                 };
             }
             catch (Exception ex)
@@ -160,11 +161,10 @@ namespace Infrastructure.Services
 
                 var userData = await _userService.CreateAsync(new UserData()
                 {
-                    Id = user.Id,
+                    _id = user.Id.ToObjectId(),
                     CreateTime = DateTime.UtcNow,
                     FullName = request.FullName,
                     Email = request.Email,
-                    //RenderToken = ss.NewAccountRenderTokenCount
                 });
 
                 if (userData == null)
@@ -283,9 +283,9 @@ namespace Infrastructure.Services
                     throw new ApplicationException($"Error confirming email for user with ID '{userId}'.");
                 }
 
-                var ss = await _systemSettingsService.GetSystemSettings();
+                //var ss = await _systemSettingsService.GetSystemSettings();
 
-                return new BaseResponse { Success = true, Message = ss.WebsiteUrl + "/login?message=Your email address has been confirmed." };
+                return new BaseResponse { Success = true, Message = "/login?message=Your email address has been confirmed." };
             }
             catch (Exception ex)
             {
