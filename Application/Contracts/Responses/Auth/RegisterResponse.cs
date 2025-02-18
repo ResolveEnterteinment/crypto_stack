@@ -2,7 +2,7 @@
 
 namespace Application.Contracts.Responses.Auth
 {
-    public class RegisterResponse
+    public class RegisterResponse : BaseResponse
     {
     }
 }
