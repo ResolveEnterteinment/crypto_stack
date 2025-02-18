@@ -1,11 +1,8 @@
 using Application.Interfaces;
-using AspNetCore.Identity.MongoDbCore.Extensions;
 using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using crypto_investment_project.Server.Helpers;
 using Domain.DTOs;
-using Domain.Models.Authentication;
 using Infrastructure.Services;
-using Microsoft.AspNetCore.Identity;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
@@ -15,12 +12,14 @@ BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// Configure MongoDB Identity, Data Protection, TimeProvider, and MongoClient
 MongoDbIdentityConfigurationHelper.Configure(builder);
+
+// Configure settings sections
 builder.Services.Configure<MongoDbSettings>(builder.Configuration.GetSection("MongoDB"));
 builder.Services.Configure<BinanceSettings>(builder.Configuration.GetSection("Binance"));
 
-//builder.Services.AddControllers();
+// Add controllers with JSON options.
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
     options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
@@ -28,7 +27,14 @@ builder.Services.AddControllers().AddJsonOptions(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Register your custom services BEFORE calling Build()
+// -------------------------------------------------------------------
+// Register additional dependencies required by your services:
+// -------------------------------------------------------------------
+
+// 1. Register HttpClient (so that System.Net.Http.HttpClient can be injected).
+builder.Services.AddHttpClient();
+
+// 3. Register your custom services.
 builder.Services.AddSingleton<IExchangeService, ExchangeService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 builder.Services.AddSingleton<ICoinService, CoinService>();

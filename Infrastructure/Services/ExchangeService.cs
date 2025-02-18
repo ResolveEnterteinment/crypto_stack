@@ -28,20 +28,20 @@ namespace Infrastructure.Services
             IOptions<BinanceSettings> binanceSettings,
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient, // Injected singleton MongoClient
-            IBinanceService binanceService, // Injected IBinanceService
             ISubscriptionService subscriptionService,
             ICoinService coinService,
             ILogger<ExchangeService> logger)
         {
             // Use the injected IBinanceService instead of instantiating inline.
-            _binanceService = binanceService;
-            //_binanceService = new BinanceService(binanceSettings);
+            //_binanceService = binanceService;
+            _binanceService = new BinanceService(binanceSettings);
             _subscriptionService = subscriptionService;
             _coinService = coinService;
 
             var databaseName = mongoDbSettings.Value.DatabaseName;
             var mongoDatabase = mongoClient.GetDatabase(databaseName);
             _exchangeOrders = mongoDatabase.GetCollection<ExchangeOrderData>("exchange_orders");
+
             _logger = logger;
         }
 
@@ -93,7 +93,7 @@ namespace Infrastructure.Services
                 var exchangeOrder = new ExchangeOrderData
                 {
                     _id = ObjectId.GenerateNewId(),
-                    CreateTime = order.CreateTime,
+                    CreatedAt = order.CreateTime,
                     UserId = ObjectId.Empty,          // TODO: Replace with the actual user id.
                     TranscationId = ObjectId.Empty,   // TODO: Replace with the actual transaction id.
                     CryptoId = crypto?._id ?? ObjectId.Empty, // TODO: Adjust as needed.

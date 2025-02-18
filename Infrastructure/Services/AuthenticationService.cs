@@ -5,11 +5,11 @@ using Application.Interfaces;
 using Domain.DTOs;
 using Domain.Models.Authentication;
 using Domain.Models.User;
-using Infrastructure.Extensions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using MongoDB.Bson;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -88,7 +88,7 @@ namespace Infrastructure.Services
                     signingCredentials: creds
                     );
 
-                var userData = await _userService.GetAsync(user.Id.ToObjectId());
+                var userData = await _userService.GetAsync(ObjectId.Parse(user.Id.ToString()));
 
                 if (userData == null)
                 {
@@ -161,8 +161,8 @@ namespace Infrastructure.Services
 
                 var userData = await _userService.CreateAsync(new UserData()
                 {
-                    _id = user.Id.ToObjectId(),
-                    CreateTime = DateTime.UtcNow,
+                    _id = ObjectId.Parse(user.Id.ToString()),
+                    CreatedAt = DateTime.UtcNow,
                     FullName = request.FullName,
                     Email = request.Email,
                 });
@@ -175,12 +175,12 @@ namespace Infrastructure.Services
                 var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
 
                 // Send verification email
-               /* await _emailService.SendEmailConfirmationMail(user, token);
-                _ = _emailService.SendNewUserMailToAdmin(user.Email, user.Id.ToString());
-                _ = _emailService.SendWelcomeMailToNewUser(user.Email, new
-                {
+                /* await _emailService.SendEmailConfirmationMail(user, token);
+                 _ = _emailService.SendNewUserMailToAdmin(user.Email, user.Id.ToString());
+                 _ = _emailService.SendWelcomeMailToNewUser(user.Email, new
+                 {
 
-                });*/
+                 });*/
 
                 return new RegisterResponse
                 {
