@@ -61,10 +61,10 @@ namespace Infrastructure.Tests.Services
         {
             // Arrange: Create a SubscriptionData with a list of coin allocations.
             var subscriptionId = ObjectId.GenerateNewId();
-            var coinAllocations = new List<CoinAllocation>
+            var coinAllocations = new List<CoinAllocationData>
             {
-                new CoinAllocation { CoinId = ObjectId.GenerateNewId(), PercentAmount = 50 },
-                new CoinAllocation { CoinId = ObjectId.GenerateNewId(), PercentAmount = 50 }
+                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 50 },
+                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 50 }
             };
 
             var subscriptionData = new SubscriptionData

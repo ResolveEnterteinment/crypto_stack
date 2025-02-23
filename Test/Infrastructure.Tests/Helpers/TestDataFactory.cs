@@ -44,9 +44,9 @@ namespace Infrastructure.Tests.Helpers
             return transactionData;
         }
 
-        public static CoinAllocation CreateDefaultCoinAllocation(uint percentAmount = 100, ObjectId? coinId = null)
+        public static CoinAllocationData CreateDefaultCoinAllocation(uint percentAmount = 100, ObjectId? coinId = null)
         {
-            return new CoinAllocation
+            return new CoinAllocationData
             {
                 CoinId = coinId ?? ObjectId.GenerateNewId(),
                 PercentAmount = percentAmount

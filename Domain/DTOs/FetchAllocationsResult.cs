@@ -5,12 +5,12 @@ namespace Domain.DTOs
     public class FetchAllocationsResult
     {
         public bool AllFilled { get; }                // Overall success (true if all orders succeeded)
-        public IReadOnlyList<CoinAllocation> Allocations { get; }  // Detailed results for each order
+        public IReadOnlyList<CoinAllocationData> Allocations { get; }  // Detailed results for each order
         public string? ErrorSummary { get; }           // High-level error message if not fully successful
         public string? FailureReason { get; }  // Null if successful
         public string? ErrorMessage { get; }           // Detailed error if failed
 
-        public FetchAllocationsResult(bool allFilled, IReadOnlyList<CoinAllocation> allocations, string? failureReason = null, string? errorMessage = null)
+        public FetchAllocationsResult(bool allFilled, IReadOnlyList<CoinAllocationData> allocations, string? failureReason = null, string? errorMessage = null)
         {
             AllFilled = allFilled;
             Allocations = allocations ?? throw new ArgumentNullException(nameof(allocations));
@@ -18,7 +18,7 @@ namespace Domain.DTOs
             ErrorMessage = errorMessage;
         }
 
-        public static FetchAllocationsResult Success(IReadOnlyList<CoinAllocation> allocations)
+        public static FetchAllocationsResult Success(IReadOnlyList<CoinAllocationData> allocations)
         {
             if (!allocations.Any())
             {
@@ -29,7 +29,7 @@ namespace Domain.DTOs
 
         public static FetchAllocationsResult Failure(string reason, string errorMessage)
         {
-            return new FetchAllocationsResult(false, new List<CoinAllocation>().AsReadOnly(), reason, errorMessage);
+            return new FetchAllocationsResult(false, new List<CoinAllocationData>().AsReadOnly(), reason, errorMessage);
         }
     }
 }

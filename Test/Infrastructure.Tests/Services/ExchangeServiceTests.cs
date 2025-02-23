@@ -100,7 +100,7 @@ namespace Infrastructure.Tests.Services
             var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest();
             var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
             var coinAllocation = TestDataFactory.CreateDefaultCoinAllocation();
-            var allocations = new List<CoinAllocation> { coinAllocation };
+            var allocations = new List<CoinAllocationData> { coinAllocation };
             var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.CoinId);
             var fakeOrder = TestDataFactory.CreateDefaultOrder();
 
@@ -152,7 +152,7 @@ namespace Infrastructure.Tests.Services
             var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest(netAmount: 0);
             var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
             var coinAllocation = TestDataFactory.CreateDefaultCoinAllocation();
-            var allocations = new List<CoinAllocation> { coinAllocation };
+            var allocations = new List<CoinAllocationData> { coinAllocation };
             var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.CoinId);
             var fakeOrder = TestDataFactory.CreateDefaultOrder();
 
@@ -236,7 +236,7 @@ namespace Infrastructure.Tests.Services
 
             // Create an allocation with PercentAmount set to 120 (out of range).
             var coinAllocation = TestDataFactory.CreateDefaultCoinAllocation(percentAmount: 120);
-            var allocations = new List<CoinAllocation> { coinAllocation };
+            var allocations = new List<CoinAllocationData> { coinAllocation };
 
             // Create fake coin data (will not be used because the allocation is invalid).
             var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.CoinId);
@@ -332,10 +332,10 @@ namespace Infrastructure.Tests.Services
             var coinId1 = ObjectId.GenerateNewId();
             var coinId2 = ObjectId.GenerateNewId();
             // First allocation: 30%, returns null coin data.
-            var coinAllocation1 = new CoinAllocation { CoinId = coinId1, PercentAmount = 30 };
+            var coinAllocation1 = new CoinAllocationData { CoinId = coinId1, PercentAmount = 30 };
             // Second allocation: 70%, returns valid coin data.
-            var coinAllocation2 = new CoinAllocation { CoinId = coinId2, PercentAmount = 70 };
-            var allocations = new List<CoinAllocation> { coinAllocation1, coinAllocation2 };
+            var coinAllocation2 = new CoinAllocationData { CoinId = coinId2, PercentAmount = 70 };
+            var allocations = new List<CoinAllocationData> { coinAllocation1, coinAllocation2 };
 
             // For first allocation, GetCoinDataAsync returns null.
             // For second allocation, return valid coin data.

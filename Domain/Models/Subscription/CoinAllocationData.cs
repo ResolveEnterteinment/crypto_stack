@@ -3,7 +3,7 @@ using MongoDB.Bson.Serialization.Attributes;
 
 namespace Domain.Models.Subscription
 {
-    public class CoinAllocation
+    public class CoinAllocationData
     {
         [BsonRepresentation(BsonType.ObjectId)]
         public required ObjectId CoinId { get; set; }

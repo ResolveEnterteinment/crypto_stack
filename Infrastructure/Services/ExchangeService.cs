@@ -6,6 +6,7 @@ using Domain.Constants;
 using Domain.DTOs;
 using Domain.Models.Crypto;
 using Domain.Models.Exchange;
+using Domain.Models.Subscription;
 using Domain.Models.Transaction;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -145,8 +146,13 @@ namespace Infrastructure.Services
                         Price = placedOrder.Price,
                         Status = placedOrder.Status
                     };
-
+                    var balance = new BalanceData()
+                    {
+                        CoinId = placedOrder.CryptoId,
+                        Quantity = placedOrder.Quantity
+                    };
                     var insertResult = await InsertAsync(orderData);
+                    var updateBalanceResult = await _subscriptionService.UpdateBalances(transaction.SubscriptionId, new List<BalanceData>() { balance });
                     if (insertResult is null || !insertResult.IsAcknowledged)
                         throw new Exception($"Failed to create order record: {insertResult?.ErrorMessage}");
 
