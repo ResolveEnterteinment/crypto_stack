@@ -1,56 +1,133 @@
-﻿// File: BaseService.cs
-using Microsoft.Extensions.Configuration;
+﻿using AspNetCore.Identity.MongoDbCore.Infrastructure;
+using Domain.DTOs;
+using Domain.Interfaces;
+using Domain.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using MongoDB.Bson;
 using MongoDB.Driver;
-using System.Text.Json;
+using System.Reflection;
 
 namespace Infrastructure.Services
 {
-    /// <summary>
-    /// Provides common functionality for service classes.
-    /// </summary>
-    public abstract class BaseService<T>
+    public abstract class BaseService<T> : IRepository<T> where T : class
     {
-        protected readonly HttpClient _httpClient;
-        protected readonly ILogger<T> _logger;
-        protected readonly IConfiguration _config;
-        protected readonly IMongoClient _mongoClient;
+        protected readonly IMongoCollection<T> _collection;
+        protected readonly ILogger _logger;
+        private static readonly IReadOnlySet<string> ValidPropertyNames = GetValidPropertyNames();
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="BaseService{T}"/> class.
-        /// </summary>
-        /// <param name="httpClient">An HttpClient instance for API calls.</param>
-        /// <param name="logger">A logger instance for logging.</param>
-        /// <param name="config">Application configuration.</param>
-        /// <param name="mongoClient">A singleton MongoClient instance injected via DI.</param>
-        protected BaseService(HttpClient httpClient, ILogger<T> logger, IConfiguration config, IMongoClient mongoClient)
+        protected BaseService(IMongoClient mongoClient, IOptions<MongoDbSettings> mongoDbSettings, string collectionName, ILogger logger)
         {
-            _httpClient = httpClient;
+            var database = mongoClient.GetDatabase(mongoDbSettings.Value.DatabaseName);
+            _collection = database.GetCollection<T>(collectionName);
             _logger = logger;
-            _config = config;
-            _mongoClient = mongoClient;
         }
 
-        /// <summary>
-        /// Performs a GET request and deserializes the response into the specified type.
-        /// </summary>
-        /// <typeparam name="U">The type to deserialize the response into.</typeparam>
-        /// <param name="url">The URL for the GET request.</param>
-        /// <returns>An instance of U representing the response data.</returns>
-        protected async Task<U?> GetAsync<U>(string url)
+        public async Task<T> GetByIdAsync(ObjectId id)
         {
+            var filter = Builders<T>.Filter.Eq("_id", id);
+            return await _collection.Find(filter).FirstOrDefaultAsync();
+        }
+
+        public async Task<List<T>> GetAllAsync(FilterDefinition<T> filter = null)
+        {
+            filter ??= Builders<T>.Filter.Empty;
+            return await _collection.Find(filter).ToListAsync();
+        }
+
+        public async Task<InsertResult> InsertAsync(T entity)
+        {
+            if (entity is null) return new InsertResult()
+            {
+                IsAcknowledged = false,
+                InsertedId = null,
+                ErrorMessage = $"Invalid argument. {nameof(entity)} is null."
+            };
             try
             {
-                var response = await _httpClient.GetAsync(url);
-                response.EnsureSuccessStatusCode();
-                var content = await response.Content.ReadAsStringAsync();
-                return content is null ? throw new NullReferenceException($"Response content is null.") : JsonSerializer.Deserialize<U>(content);
+                await _collection.InsertOneAsync(entity).ConfigureAwait(false);
+                return new InsertResult()
+                {
+                    IsAcknowledged = true,
+                    InsertedId = (entity as BaseEntity)._id.ToString()// orderData now includes its generated ObjectId (if not already set)
+                };
             }
-            catch (Exception ex)
+            catch (MongoException ex)
             {
-                _logger.LogError(ex, "Error during GET request to {Url}", url);
-                return default;
+                _logger.LogError(ex, "Failed to insert entity of type {Type}", typeof(T).Name);
+                return new InsertResult()
+                {
+                    IsAcknowledged = false,
+                    InsertedId = null,
+                    ErrorMessage = ex.Message
+                };
             }
+        }
+
+        public async Task<UpdateResult> UpdateAsync(ObjectId id, object updatedFields)
+        {
+            if (updatedFields == null)
+            {
+                throw new ArgumentNullException(nameof(updatedFields), "Updated fields cannot be null.");
+            }
+
+            var updateDefinition = BuildUpdateDefinition(updatedFields);
+            var filter = Builders<T>.Filter.Eq("_id", id);
+
+            try
+            {
+                return await _collection.UpdateOneAsync(filter, updateDefinition).ConfigureAwait(false);
+            }
+            catch (MongoException ex)
+            {
+                _logger.LogError(ex, "Failed to update entity with ID {Id}", id);
+                throw new InvalidOperationException($"Failed to update entity with ID {id}.", ex);
+            }
+        }
+
+        public async Task<DeleteResult> DeleteAsync(ObjectId id)
+        {
+            var filter = Builders<T>.Filter.Eq("_id", id);
+            try
+            {
+                return await _collection.DeleteOneAsync(filter).ConfigureAwait(false);
+            }
+            catch (MongoException ex)
+            {
+                _logger.LogError(ex, "Failed to delete entity with ID {Id}", id);
+                throw new InvalidOperationException($"Failed to delete entity with ID {id}.", ex);
+            }
+        }
+
+        protected virtual UpdateDefinition<T> BuildUpdateDefinition(object updatedFields)
+        {
+            var bsonDocument = updatedFields.ToBsonDocument();
+            var updateBuilder = Builders<T>.Update;
+            var validUpdates = new List<UpdateDefinition<T>>();
+
+            foreach (var element in bsonDocument.Elements)
+            {
+                if (ValidPropertyNames.Contains(element.Name))
+                {
+                    validUpdates.Add(updateBuilder.Set(element.Name, element.Value));
+                }
+            }
+
+            if (validUpdates.Count == 0)
+            {
+                throw new ArgumentException("No valid fields provided for update.", nameof(updatedFields));
+            }
+
+            return updateBuilder.Combine(validUpdates);
+        }
+
+        private static IReadOnlySet<string> GetValidPropertyNames()
+        {
+            return new HashSet<string>(
+                typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Select(p => p.Name),
+                StringComparer.OrdinalIgnoreCase
+            );
         }
     }
 }

@@ -1,14 +1,10 @@
 ﻿using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
-namespace Domain.Models.Exchange
+namespace Domain.DTOs
 {
-    public class ExchangeOrderData : BaseEntity
+    public class PlacedOrderResult
     {
-        [BsonRepresentation(BsonType.ObjectId)]
-        public required ObjectId UserId { get; set; }
-        [BsonRepresentation(BsonType.ObjectId)]
-        public required ObjectId TranscationId { get; set; }
         public required long OrderId { get; set; }
         [BsonRepresentation(BsonType.ObjectId)]
         public required ObjectId CryptoId { get; set; }

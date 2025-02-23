@@ -21,10 +21,9 @@ namespace crypto_investment_project.Server.Controllers
             }
             TransactionData transactionData = new()
             {
-                _id = new ObjectId(exchangeRequest.Id),
-                CreateTime = exchangeRequest.CreateTime,
                 UserId = new ObjectId(exchangeRequest.UserId),
                 SubscriptionId = new ObjectId(exchangeRequest.SubscriptionId),
+                TransactionId = ObjectId.Parse(exchangeRequest.Id),
                 PaymentProviderId = exchangeRequest.PaymentProviderId,
                 PaymentProviderFee = exchangeRequest.PaymentProviderFee,
                 TotalAmount = exchangeRequest.TotalAmount,

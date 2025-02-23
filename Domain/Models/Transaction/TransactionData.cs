@@ -9,6 +9,8 @@ namespace Domain.Models.Transaction
         public required ObjectId UserId { get; set; }
         [BsonRepresentation(BsonType.ObjectId)]
         public required ObjectId SubscriptionId { get; set; }
+        [BsonRepresentation(BsonType.ObjectId)]
+        public required ObjectId TransactionId { get; set; }
         public required string PaymentProviderId { get; set; }
         public required decimal TotalAmount { get; set; }
         public required decimal PaymentProviderFee { get; set; }

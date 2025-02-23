@@ -64,7 +64,7 @@ namespace Infrastructure.Tests.Services
         [Fact]
         public async Task GetCryptoFromSymbolAsync_WithNullOrEmptySymbol_ReturnsNull()
         {
-            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _httpClient, _logger, _configuration);
+            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _logger);
 
             var resultEmpty = await coinService.GetCryptoFromSymbolAsync("");
             Assert.Null(resultEmpty);
@@ -78,7 +78,7 @@ namespace Infrastructure.Tests.Services
         {
             // Setup to return an empty list (simulate no coin found)
             SetupFindAsync(_mockCollection, new List<CoinData>());
-            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _httpClient, _logger, _configuration);
+            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _logger);
             string testSymbol = "BTCUSDT";
 
             var result = await coinService.GetCryptoFromSymbolAsync(testSymbol);
@@ -105,7 +105,7 @@ namespace Infrastructure.Tests.Services
             };
 
             SetupFindAsync(_mockCollection, new List<CoinData> { expectedCoin });
-            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _httpClient, _logger, _configuration);
+            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _logger);
             string testSymbol = "BTCUSDT";
 
             var result = await coinService.GetCryptoFromSymbolAsync(testSymbol);
@@ -122,10 +122,10 @@ namespace Infrastructure.Tests.Services
         public async Task GetCoinDataAsync_WhenCoinNotFound_ReturnsNull()
         {
             SetupFindAsync(_mockCollection, new List<CoinData>());
-            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _httpClient, _logger, _configuration);
+            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _logger);
             var coinId = ObjectId.GenerateNewId();
 
-            var result = await coinService.GetCoinDataAsync(coinId);
+            var result = await coinService.GetByIdAsync(coinId);
 
             Assert.Null(result);
             _mockCollection.Verify(x => x.FindAsync(
@@ -149,10 +149,10 @@ namespace Infrastructure.Tests.Services
             };
 
             SetupFindAsync(_mockCollection, new List<CoinData> { expectedCoin });
-            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _httpClient, _logger, _configuration);
+            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _logger);
             var coinId = expectedCoin._id;
 
-            var result = await coinService.GetCoinDataAsync(coinId);
+            var result = await coinService.GetByIdAsync(coinId);
 
             Assert.NotNull(result);
             Assert.Equal(expectedCoin._id, result!._id);

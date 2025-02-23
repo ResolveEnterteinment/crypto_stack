@@ -1,8 +1,9 @@
-﻿using Application.Contracts.Responses.Exchange;
-using Application.Interfaces;
+﻿using Application.Interfaces;
 using crypto_investment_project.Server.Controllers;
+using Domain.DTOs;
 using Infrastructure.Tests.Helpers;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using Moq;
 
 namespace Server.Tests.Controllers
@@ -28,20 +29,29 @@ namespace Server.Tests.Controllers
         public async Task Post_ProcessTransactionReturnsValid_ReturnsOkResult()
         {
             // Arrange
-            var transaction = TestDataFactory.CreateDefaultTransactionData();
-            var expectedResponses = new List<ExchangeOrderResponse>
+            var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest();
+            var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
+            var expectedResponses = new AllocationOrdersResult(new List<OrderResult>()
             {
-                new ExchangeOrderResponse(true, "Order created successfully")
-            };
+                new OrderResult(
+                    true,
+                    123456,
+                    ObjectId.GenerateNewId().ToString(),
+                    "BTC",
+                    transactionData.NetAmount,
+                    0.0096m,
+                    "success"
+                    )
+            });
 
             var mockExchangeService = new Mock<IExchangeService>();
-            mockExchangeService.Setup(x => x.ProcessTransaction(transaction))
+            mockExchangeService.Setup(x => x.ProcessTransaction(transactionData))
                                .ReturnsAsync(expectedResponses);
 
             var controller = new ExchangeController(mockExchangeService.Object);
 
             // Act
-            var result = await controller.Post(transaction);
+            var result = await controller.Post(exchangeRequest);
 
             // Assert
             var okResult = Assert.IsType<OkObjectResult>(result);
@@ -52,17 +62,18 @@ namespace Server.Tests.Controllers
         public async Task Post_ProcessTransactionReturnsNull_ReturnsBadRequest()
         {
             // Arrange
-            var transaction = TestDataFactory.CreateDefaultTransactionData();
+            var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest();
+            var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
 
             var mockExchangeService = new Mock<IExchangeService>();
             // Simulate ProcessTransaction returning null.
-            mockExchangeService.Setup(x => x.ProcessTransaction(transaction))
-                               .ReturnsAsync((IEnumerable<ExchangeOrderResponse>?)null);
+            mockExchangeService.Setup(x => x.ProcessTransaction(transactionData))
+                               .ReturnsAsync((AllocationOrdersResult?)null);
 
             var controller = new ExchangeController(mockExchangeService.Object);
 
             // Act
-            var result = await controller.Post(transaction);
+            var result = await controller.Post(exchangeRequest);
 
             // Assert
             var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
@@ -73,21 +84,22 @@ namespace Server.Tests.Controllers
         public async Task Post_ProcessTransactionThrowsException_ReturnsBadRequest()
         {
             // Arrange
-            var transaction = TestDataFactory.CreateDefaultTransactionData();
+            var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest();
+            var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
             var exceptionMessage = "Some error occurred";
 
             var mockExchangeService = new Mock<IExchangeService>();
-            mockExchangeService.Setup(x => x.ProcessTransaction(transaction))
+            mockExchangeService.Setup(x => x.ProcessTransaction(transactionData))
                                .ThrowsAsync(new Exception(exceptionMessage));
 
             var controller = new ExchangeController(mockExchangeService.Object);
 
             // Act
-            var result = await controller.Post(transaction);
+            var result = await controller.Post(exchangeRequest);
 
             // Assert
             var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-            Assert.Contains(exceptionMessage, badRequestResult.Value.ToString());
+            Assert.Contains(exceptionMessage, badRequestResult.Value?.ToString());
         }
     }
 }

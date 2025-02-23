@@ -1,5 +1,4 @@
-﻿using Application.Contracts.Responses.Exchange;
-using Application.Interfaces;
+﻿using Application.Interfaces;
 using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using Binance.Net.Objects.Models.Spot;
 using BinanceLibrary;
@@ -8,21 +7,17 @@ using Domain.DTOs;
 using Domain.Models.Crypto;
 using Domain.Models.Exchange;
 using Domain.Models.Transaction;
-using Infrastructure.Exceptions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services
 {
-    public class ExchangeService : IExchangeService
+    public class ExchangeService : BaseService<ExchangeOrderData>, IExchangeService
     {
-        private readonly IBinanceService _binanceService;
+        private IBinanceService _binanceService;
         private readonly ISubscriptionService _subscriptionService;
         private readonly ICoinService _coinService;
-        private readonly IMongoCollection<ExchangeOrderData> _exchangeOrders;
-        private readonly ILogger<ExchangeService> _logger;
 
         public ExchangeService(
             IOptions<BinanceSettings> binanceSettings,
@@ -30,19 +25,19 @@ namespace Infrastructure.Services
             IMongoClient mongoClient, // Injected singleton MongoClient
             ISubscriptionService subscriptionService,
             ICoinService coinService,
-            ILogger<ExchangeService> logger)
+            ILogger<ExchangeService> logger) : base(mongoClient, mongoDbSettings, "exchange_orders", logger)
         {
             // Use the injected IBinanceService instead of instantiating inline.
             //_binanceService = binanceService;
-            _binanceService = new BinanceService(binanceSettings);
+            _binanceService = CreateBinanceService(binanceSettings); // Use factory method
             _subscriptionService = subscriptionService;
             _coinService = coinService;
+        }
 
-            var databaseName = mongoDbSettings.Value.DatabaseName;
-            var mongoDatabase = mongoClient.GetDatabase(databaseName);
-            _exchangeOrders = mongoDatabase.GetCollection<ExchangeOrderData>("exchange_orders");
-
-            _logger = logger;
+        // Protected virtual factory method for instantiation
+        protected virtual IBinanceService CreateBinanceService(IOptions<BinanceSettings> settings)
+        {
+            return new BinanceService(settings);
         }
 
         /// <summary>
@@ -53,7 +48,7 @@ namespace Infrastructure.Services
         /// <param name="side">Order side (BUY or SELL). Default is BUY.</param>
         /// <param name="type">Order type. Default is MARKET.</param>
         /// <returns>The created ExchangeOrderData if successful; otherwise, null.</returns>
-        private async Task<ExchangeOrderData?> CreateOrderAsync(string ticker, decimal quantity, string side = OrderSideConstants.Buy, string type = "MARKET")
+        public async Task<PlacedOrderResult?> PlaceExchangeOrderAsync(CoinData coin, decimal quantity, string side = OrderSide.Buy, string type = "MARKET")
         {
             try
             {
@@ -62,15 +57,15 @@ namespace Infrastructure.Services
                     throw new ArgumentOutOfRangeException(nameof(quantity), $"Quantity must be greater than zero. Provided value is {quantity}");
                 }
 
-                BinancePlacedOrder? order = null;
-                var symbol = ticker + "USDT";
+                BinancePlacedOrder order = new();
+                var symbol = coin.Ticker + "USDT";
 
                 // Call the appropriate Binance service method based on the OrderSide enum.
-                if (side == OrderSideConstants.Buy)
+                if (side == OrderSide.Buy)
                 {
                     order = await _binanceService.PlaceSpotMarketBuyOrder(symbol, quantity);
                 }
-                else if (side == OrderSideConstants.Sell)
+                else if (side == OrderSide.Sell)
                 {
                     order = await _binanceService.PlaceSpotMarketSellOrder(symbol, quantity);
                 }
@@ -79,24 +74,12 @@ namespace Infrastructure.Services
                     throw new ArgumentException("Invalid order side. Allowed values are BUY or SELL.", nameof(side));
                 }
 
-                if (order == null)
-                {
-                    _logger.LogError("Order creation failed for symbol: {Symbol}", symbol);
-                    throw new OrderCreationException($"Order creation failed for symbol: {symbol}");
-                }
-
                 // Log order details using structured logging instead of Console.WriteLine.
                 LogOrderDetails(order);
 
-                // Retrieve crypto data asynchronously.
-                var crypto = await _coinService.GetCryptoFromSymbolAsync(order.Symbol);
-                var exchangeOrder = new ExchangeOrderData
+                var placedOrder = new PlacedOrderResult()
                 {
-                    _id = ObjectId.GenerateNewId(),
-                    CreateTime = order.CreateTime,
-                    UserId = ObjectId.Empty,          // TODO: Replace with the actual user id.
-                    TranscationId = ObjectId.Empty,   // TODO: Replace with the actual transaction id.
-                    CryptoId = crypto?._id ?? ObjectId.Empty, // TODO: Adjust as needed.
+                    CryptoId = coin._id,
                     QuoteQuantity = order.QuoteQuantity,
                     Price = order.AverageFillPrice,
                     Quantity = order.QuantityFilled,
@@ -104,63 +87,89 @@ namespace Infrastructure.Services
                     Status = order.Status.ToString(),
                 };
 
-                _logger.LogInformation("Order created successfully for symbol: {Symbol}, OrderId: {OrderId}", symbol, order.Id);
-                return exchangeOrder;
+                _logger.LogInformation($"Order created successfully for symbol: {symbol}, OrderId: {order.Id}, Status: {order.Status}");
+                return placedOrder;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to create order: {Message}", ex.Message);
-                throw new OrderCreationException($"Failed to create order: {ex.Message}", ex);
+                _logger.LogError(ex, $"Failed to create order: {ex.Message}");
+                return null;
             }
         }
 
-        public async Task<IEnumerable<ExchangeOrderResponse>?> ProcessTransaction(TransactionData transaction)
+        public async Task<AllocationOrdersResult> ProcessTransaction(TransactionData transaction)
         {
+            var orderResults = new List<OrderResult>();
             var netAmount = transaction.NetAmount;
             if (netAmount <= 0)
-                throw new ArgumentOutOfRangeException(nameof(netAmount), $"Net transaction amount must be greater than zero. Provided value is {netAmount}");
-
-            var orderResponses = new List<ExchangeOrderResponse>();
-
-            var allocations = await _subscriptionService.GetCoinAllocationsAsync(transaction.SubscriptionId);
-            if (!allocations.Any())
             {
-                _logger.LogError("Unable to fetch coin allocations for subscription #{SubscriptionId}", transaction.SubscriptionId);
-                throw new KeyNotFoundException($"Unable to fetch coin allocations for subscription #{transaction.SubscriptionId}");
+                orderResults.Add(OrderResult.Failure(null, FailureReason.ValidationError, $"Invalid transaction net amount. Transaction net amount must be greater than zero. Provided value is {netAmount}"));
+                return new AllocationOrdersResult(orderResults.AsReadOnly());
             }
 
-            foreach (var alloc in allocations)
+            FetchAllocationsResult fetchAllocationsResult = await _subscriptionService.GetAllocationsAsync(transaction.SubscriptionId);
+            if (!fetchAllocationsResult.AllFilled)
+            {
+                orderResults.Add(OrderResult.Failure(null, FailureReason.ValidationError, $"Unable to fetch coin allocations due to {fetchAllocationsResult.FailureReason}: {fetchAllocationsResult.ErrorMessage}"));
+                return new AllocationOrdersResult(orderResults.AsReadOnly());
+            }
+
+            foreach (var alloc in fetchAllocationsResult.Allocations)
             {
                 try
                 {
-                    if (alloc.PercentAmount <= 0 || alloc.PercentAmount > 100) throw new ArgumentOutOfRangeException(nameof(alloc.PercentAmount), "Allocation must be a number between 0-100.");
-                    decimal quoteOrderQuantity = netAmount * (alloc.PercentAmount / 100m); //division of decimal, don't forget to put m at the end, otherwise you get 0!!! percent/100m
+                    if (alloc.PercentAmount <= 0 || alloc.PercentAmount > 100)
+                        throw new ArgumentOutOfRangeException(nameof(alloc.PercentAmount), "Allocation must be between 0-100.");
 
-                    CoinData? coinData = await _coinService.GetCoinDataAsync(alloc.CoinId)
-                        ?? throw new KeyNotFoundException($"Coin data not found by id #{alloc.CoinId}");
+                    decimal quoteOrderQuantity = netAmount * (alloc.PercentAmount / 100m);
+                    if (quoteOrderQuantity <= 0)
+                        throw new ArgumentException($"Quote order quantity must be positive. Value: {quoteOrderQuantity}");
 
-                    // Create order asynchronously using BUY as default. Adjust side if needed.
-                    var order = await CreateOrderAsync(coinData.Ticker, quoteOrderQuantity);
-                    if (order == null)
-                        throw new OrderCreationException("Order creation returned null.");
+                    var coinData = await _coinService.GetByIdAsync(alloc.CoinId);
+                    if (coinData is null)
+                        throw new KeyNotFoundException($"Coin data not found for id #{alloc.CoinId}");
 
-                    order.UserId = transaction.UserId;
-                    order.TranscationId = transaction._id;
+                    var symbol = coinData.Ticker + "USDT";
+                    PlacedOrderResult? placedOrder = await PlaceExchangeOrderAsync(coinData, quoteOrderQuantity);
+                    if (placedOrder is null)
+                        throw new Exception("Order placement returned null");
 
-                    await _exchangeOrders.InsertOneAsync(order);
+                    ExchangeOrderData orderData = new ExchangeOrderData()
+                    {
+                        UserId = transaction.UserId,
+                        TranscationId = transaction._id,
+                        OrderId = placedOrder.OrderId,
+                        CryptoId = placedOrder.CryptoId,
+                        QuoteQuantity = placedOrder.QuoteQuantity,
+                        Quantity = placedOrder.Quantity,
+                        Price = placedOrder.Price,
+                        Status = placedOrder.Status
+                    };
 
-                    orderResponses.Add(new ExchangeOrderResponse(
-                        true,
-                        $"Order created: id: {order.OrderId}, ticker: {coinData.Ticker}, price: {order.Price}, quantity: {order.Quantity}, status: {order.Status}"
-                    ));
-                    _logger.LogInformation(orderResponses.ToString());
+                    var insertResult = await InsertAsync(orderData);
+                    if (insertResult is null || !insertResult.IsAcknowledged)
+                        throw new Exception($"Failed to create order record: {insertResult?.ErrorMessage}");
+
+                    orderResults.Add(OrderResult.Success(placedOrder.OrderId, insertResult.InsertedId?.ToString(), coinData._id.ToString(), placedOrder.QuoteQuantity, placedOrder.Quantity, placedOrder.Status));
+                    _logger.LogInformation("Order created for {Symbol}, OrderId: {OrderId}", symbol, placedOrder.OrderId);
                 }
                 catch (Exception ex)
                 {
-                    orderResponses.Add(new ExchangeOrderResponse(false, $"Failed to create exchange order: {ex.Message}"));
+                    string reason = ex switch
+                    {
+                        ArgumentOutOfRangeException => FailureReason.ValidationError,
+                        ArgumentException => FailureReason.ValidationError,
+                        KeyNotFoundException => FailureReason.DataNotFound,
+                        _ when ex.Message.Contains("Binance") => FailureReason.ExchangeApiError,
+                        _ when ex.Message.Contains("insert") => FailureReason.DatabaseError,
+                        _ => FailureReason.Unknown
+                    };
+                    orderResults.Add(OrderResult.Failure(alloc.CoinId.ToString(), reason, ex.Message));
+                    _logger.LogError(ex, $"Failed to process order: {ex.Message}");
                 }
             }
-            return orderResponses;
+
+            return new AllocationOrdersResult(orderResults.AsReadOnly());
         }
 
         /// <summary>
@@ -177,8 +186,9 @@ namespace Infrastructure.Services
             Console.WriteLine($"Symbol:                     {order.Symbol}");
             Console.WriteLine($"Side:                       {order.Side}");
             Console.WriteLine($"Price:                      {order.Price}");
-            Console.WriteLine($"Executed Quantity:          {order.QuoteQuantity}");
-            Console.WriteLine($"Order Create Time:          {order.CreateTime}");
+            Console.WriteLine($"Quote Quantity:             {order.QuoteQuantity}");
+            Console.WriteLine($"Order Quantity:             {order.QuantityFilled}");
+            Console.WriteLine($"Create Time:                {order.CreateTime}");
             Console.WriteLine($"Status:                     {order.Status}");
             Console.WriteLine(new string('-', 50));
         }

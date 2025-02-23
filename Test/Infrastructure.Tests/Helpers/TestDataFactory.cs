@@ -1,4 +1,5 @@
 ﻿// File: TestDataFactory.cs
+using Application.Contracts.Requests.Exchange;
 using Binance.Net.Objects.Models.Spot;
 using Domain.Models.Crypto;
 using Domain.Models.Subscription;
@@ -9,14 +10,14 @@ namespace Infrastructure.Tests.Helpers
 {
     public static class TestDataFactory
     {
-        public static TransactionData CreateDefaultTransactionData(decimal netAmount = 100m)
+        public static ExchangeRequest CreateDefaultExchangeRequest(decimal netAmount = 100m)
         {
-            return new TransactionData
+            return new ExchangeRequest
             {
-                _id = ObjectId.GenerateNewId(),
+                Id = ObjectId.GenerateNewId().ToString(),
                 CreateTime = DateTime.UtcNow,
-                UserId = ObjectId.GenerateNewId(),
-                SubscriptionId = ObjectId.GenerateNewId(),
+                UserId = ObjectId.GenerateNewId().ToString(),
+                SubscriptionId = ObjectId.GenerateNewId().ToString(),
                 PaymentProviderId = "pp1",
                 TotalAmount = 103,
                 PaymentProviderFee = 2m,
@@ -24,6 +25,23 @@ namespace Infrastructure.Tests.Helpers
                 NetAmount = netAmount,
                 Status = "Pending"
             };
+        }
+
+        public static TransactionData CreateDefaultTransactionData(ExchangeRequest request)
+        {
+            TransactionData transactionData = new()
+            {
+                UserId = new ObjectId(request.UserId),
+                SubscriptionId = new ObjectId(request.SubscriptionId),
+                TransactionId = ObjectId.Parse(request.Id),
+                PaymentProviderId = request.PaymentProviderId,
+                PaymentProviderFee = request.PaymentProviderFee,
+                TotalAmount = request.TotalAmount,
+                PlatformFee = request.PlatformFee,
+                NetAmount = request.NetAmount,
+                Status = request.Status,
+            };
+            return transactionData;
         }
 
         public static CoinAllocation CreateDefaultCoinAllocation(uint percentAmount = 100, ObjectId? coinId = null)

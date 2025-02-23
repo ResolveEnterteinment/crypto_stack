@@ -5,9 +5,10 @@ namespace Domain.Models
 {
     public class BaseEntity
     {
+        [BsonId]
         [BsonRepresentation(BsonType.ObjectId)]
-        public required ObjectId _id { get; set; }
+        public ObjectId _id { get; set; }
         [BsonRepresentation(BsonType.DateTime)]
-        public required DateTime CreateTime { get; set; } = DateTime.UtcNow;
+        public DateTime CreateTime { get; set; } = DateTime.UtcNow;
     }
 }

@@ -1,4 +1,6 @@
 ﻿using AspNetCore.Identity.MongoDbCore.Infrastructure;
+using Domain.Constants;
+using Domain.DTOs;
 using Domain.Models.Subscription;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -7,40 +9,44 @@ using MongoDB.Driver;
 
 namespace Infrastructure.Services
 {
-    public class SubscriptionService : ISubscriptionService
+    public class SubscriptionService : BaseService<SubscriptionData>, ISubscriptionService
     {
-        private readonly IMongoCollection<SubscriptionData> _subscriptions;
-        private readonly ILogger<SubscriptionService> _logger;
-
         // Inject the IOptions<MongoDbSettings>, singleton IMongoClient, and ILogger
         public SubscriptionService(
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
             ILogger<SubscriptionService> logger)
+            : base(mongoClient, mongoDbSettings, "subscriptions", logger)
         {
-            _logger = logger;
-            var databaseName = mongoDbSettings.Value.DatabaseName;
-            var mongoDatabase = mongoClient.GetDatabase(databaseName);
-            _subscriptions = mongoDatabase.GetCollection<SubscriptionData>("subscriptions");
         }
 
-        public async Task<IEnumerable<CoinAllocation>> GetCoinAllocationsAsync(ObjectId subscriptionId)
+        public async Task<FetchAllocationsResult> GetAllocationsAsync(ObjectId subscriptionId)
         {
             try
             {
-                var filter = Builders<SubscriptionData>.Filter.Eq(s => s._id, subscriptionId);
-                var subscription = await _subscriptions.Find(filter).FirstOrDefaultAsync();
+                var subscription = await GetByIdAsync(subscriptionId);
                 if (subscription == null)
                 {
-                    throw new KeyNotFoundException("Subscription not found.");
+                    throw new KeyNotFoundException($"Subscription #{subscriptionId} not found.");
                 }
-                return subscription.CoinAllocations;
+                if (subscription.CoinAllocations == null || !subscription.CoinAllocations.Any())
+                {
+                    throw new ArgumentException("Subscription allocations cannot be empty/null.");
+                }
+                return FetchAllocationsResult.Success(subscription.CoinAllocations.ToList().AsReadOnly());
             }
             catch (Exception ex)
             {
+                string reason = ex switch
+                {
+                    ArgumentException => FailureReason.ValidationError,
+                    KeyNotFoundException => FailureReason.DataNotFound,
+                    _ => FailureReason.Unknown
+                };
                 _logger.LogError(ex, "Fetch subscription failed: {Message}", ex.Message);
-                return new List<CoinAllocation>();
+                return FetchAllocationsResult.Failure(reason, ex.Message);
             }
         }
+
     }
 }

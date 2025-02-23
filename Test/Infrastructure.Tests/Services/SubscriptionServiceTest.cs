@@ -82,11 +82,11 @@ namespace Infrastructure.Tests.Services
             var subscriptionService = new SubscriptionService(_mongoDbSettings, _mockMongoClient.Object, _logger);
 
             // Act
-            var result = await subscriptionService.GetCoinAllocationsAsync(subscriptionId);
+            var result = await subscriptionService.GetAllocationsAsync(subscriptionId);
 
             // Assert
-            Assert.NotNull(result);
-            Assert.Equal(2, System.Linq.Enumerable.Count(result));
+            Assert.NotNull(result.Allocations);
+            Assert.Equal(2, result.Allocations.Count);
         }
 
         [Fact]
@@ -99,11 +99,11 @@ namespace Infrastructure.Tests.Services
             var subscriptionService = new SubscriptionService(_mongoDbSettings, _mockMongoClient.Object, _logger);
 
             // Act
-            var result = await subscriptionService.GetCoinAllocationsAsync(subscriptionId);
+            var result = await subscriptionService.GetAllocationsAsync(subscriptionId);
 
             // Assert: The catch block should return an empty list.
-            Assert.NotNull(result);
-            Assert.Empty(result);
+            Assert.NotNull(result.Allocations);
+            Assert.Empty(result.Allocations);
         }
 
         [Fact]
@@ -120,11 +120,11 @@ namespace Infrastructure.Tests.Services
             var subscriptionService = new SubscriptionService(_mongoDbSettings, _mockMongoClient.Object, _logger);
 
             // Act
-            var result = await subscriptionService.GetCoinAllocationsAsync(subscriptionId);
+            var result = await subscriptionService.GetAllocationsAsync(subscriptionId);
 
             // Assert: In case of exception, an empty list is returned.
-            Assert.NotNull(result);
-            Assert.Empty(result);
+            Assert.NotNull(result.Allocations);
+            Assert.Empty(result.Allocations);
         }
     }
 }

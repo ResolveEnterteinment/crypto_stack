@@ -1,10 +1,13 @@
-﻿using Application.Contracts.Responses.Exchange;
+﻿using Domain.Constants;
+using Domain.DTOs;
+using Domain.Models.Crypto;
 using Domain.Models.Transaction;
 
 namespace Application.Interfaces
 {
     public interface IExchangeService
     {
-        public Task<IEnumerable<ExchangeOrderResponse>?> ProcessTransaction(TransactionData transactionData);
+        public Task<AllocationOrdersResult> ProcessTransaction(TransactionData transactionData);
+        public Task<PlacedOrderResult?> PlaceExchangeOrderAsync(CoinData coin, decimal quantity, string side = OrderSide.Buy, string type = "MARKET");
     }
 }

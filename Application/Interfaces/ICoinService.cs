@@ -1,11 +1,10 @@
-﻿using Domain.Models.Crypto;
-using MongoDB.Bson;
+﻿using Domain.Interfaces;
+using Domain.Models.Crypto;
 
 namespace Infrastructure.Services
 {
-    public interface ICoinService
+    public interface ICoinService : IRepository<CoinData>
     {
-        public Task<CoinData?> GetCoinDataAsync(ObjectId coinId);
         public Task<CoinData?> GetCryptoFromSymbolAsync(string symbol);
     }
 }

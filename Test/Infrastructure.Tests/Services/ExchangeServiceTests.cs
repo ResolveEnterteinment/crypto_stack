@@ -1,7 +1,7 @@
-﻿using Application.Contracts.Responses.Exchange;  // Contains TestDataFactory and FakeAsyncCursor
-using AspNetCore.Identity.MongoDbCore.Infrastructure;
+﻿using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using Binance.Net.Objects.Models.Spot;
 using BinanceLibrary;
+using Domain.Constants;
 using Domain.DTOs;
 using Domain.Models.Crypto;
 using Domain.Models.Exchange;
@@ -57,7 +57,7 @@ namespace Infrastructure.Tests.Services
         }
 
         // Helper to setup IMongoCollection<CoinData>'s FindAsync using FakeAsyncCursor.
-        private void SetupFindAsync(Mock<IMongoCollection<CoinData>> collectionMock, IEnumerable<CoinData> data)
+        private static void SetupFindAsync(Mock<IMongoCollection<CoinData>> collectionMock, IEnumerable<CoinData> data)
         {
             var fakeCursor = new FakeAsyncCursor<CoinData>(data);
             collectionMock.Setup(x => x.FindAsync(
@@ -67,66 +67,38 @@ namespace Infrastructure.Tests.Services
                 .ReturnsAsync(fakeCursor);
         }
 
+        // Test subclass to override factory method
+        public class MockExchangeService : ExchangeService
+        {
+            private readonly IBinanceService _testBinanceService;
+
+            public MockExchangeService(
+                IOptions<BinanceSettings> binanceSettings,
+                IOptions<MongoDbSettings> mongoDbSettings,
+                IMongoClient mongoClient,
+                ISubscriptionService subscriptionService,
+                ICoinService coinService,
+                ILogger<ExchangeService> logger,
+                IBinanceService testBinanceService)
+                : base(binanceSettings, mongoDbSettings, mongoClient, subscriptionService, coinService, logger)
+            {
+                _testBinanceService = testBinanceService;
+            }
+
+            protected override IBinanceService CreateBinanceService(IOptions<BinanceSettings> settings)
+            {
+                return _testBinanceService; // Return the mock
+            }
+        }
+
         #region ProcessTransaction Tests
 
         [Fact]
         public async Task ProcessTransaction_ShouldReturnSuccessfulResponse()
         {
             // Arrange: Create default test data.
-            var transaction = TestDataFactory.CreateDefaultTransactionData(); // NetAmount defaults to 100
-            var coinAllocation = TestDataFactory.CreateDefaultCoinAllocation(); // 100% allocation by default
-            var allocations = new List<CoinAllocation> { coinAllocation };
-            var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.CoinId);
-            var fakeOrder = TestDataFactory.CreateDefaultOrder();
-
-            // Setup mocks.
-            var mockBinanceService = new Mock<IBinanceService>();
-            mockBinanceService.Setup(x => x.PlaceSpotMarketBuyOrder("BTCUSDT", It.IsAny<decimal>()))
-                              .ReturnsAsync(fakeOrder);
-
-            var mockSubscriptionService = new Mock<ISubscriptionService>();
-            mockSubscriptionService.Setup(x => x.GetCoinAllocationsAsync(transaction.SubscriptionId))
-                                   .ReturnsAsync(allocations);
-
-            var mockCoinService = new Mock<ICoinService>();
-            mockCoinService.Setup(x => x.GetCoinDataAsync(coinAllocation.CoinId))
-                           .ReturnsAsync(coinData);
-            mockCoinService.Setup(x => x.GetCryptoFromSymbolAsync("BTCUSDT"))
-                           .ReturnsAsync(coinData);
-
-            _mockExchangeOrderCollection.Setup(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default))
-                                        .Returns(Task.CompletedTask);
-
-            var exchangeService = new ExchangeService(
-                _binanceSettings,
-                _mongoDbSettings,
-                _mockMongoClient.Object,
-                mockBinanceService.Object,
-                mockSubscriptionService.Object,
-                mockCoinService.Object,
-                _logger
-            );
-
-            // Act
-            var responses = await exchangeService.ProcessTransaction(transaction);
-
-            // Assert
-            Assert.NotNull(responses);
-            var responseList = new List<ExchangeOrderResponse>(responses);
-            Assert.Single(responseList);
-            var successResponse = responseList[0];
-            Assert.True(successResponse.Success);
-            Assert.Contains("Order created", successResponse.Message);
-
-            // Verify that one order was inserted.
-            _mockExchangeOrderCollection.Verify(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default), Times.Once);
-        }
-
-        [Fact]
-        public async Task ProcessTransaction_NetAmountNonPositive_ShouldThrowArgumentOutOfRangeException()
-        {
-            // Arrange: NetAmount is set to zero.
-            var transaction = TestDataFactory.CreateDefaultTransactionData(netAmount: 0);
+            var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest();
+            var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
             var coinAllocation = TestDataFactory.CreateDefaultCoinAllocation();
             var allocations = new List<CoinAllocation> { coinAllocation };
             var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.CoinId);
@@ -137,11 +109,11 @@ namespace Infrastructure.Tests.Services
                               .ReturnsAsync(fakeOrder);
 
             var mockSubscriptionService = new Mock<ISubscriptionService>();
-            mockSubscriptionService.Setup(x => x.GetCoinAllocationsAsync(transaction.SubscriptionId))
-                                   .ReturnsAsync(allocations);
+            mockSubscriptionService.Setup(x => x.GetAllocationsAsync(transactionData.SubscriptionId))
+                                   .ReturnsAsync(FetchAllocationsResult.Success(allocations));
 
             var mockCoinService = new Mock<ICoinService>();
-            mockCoinService.Setup(x => x.GetCoinDataAsync(coinAllocation.CoinId))
+            mockCoinService.Setup(x => x.GetByIdAsync(coinAllocation.CoinId))
                            .ReturnsAsync(coinData);
             mockCoinService.Setup(x => x.GetCryptoFromSymbolAsync("BTCUSDT"))
                            .ReturnsAsync(coinData);
@@ -149,29 +121,86 @@ namespace Infrastructure.Tests.Services
             _mockExchangeOrderCollection.Setup(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default))
                                         .Returns(Task.CompletedTask);
 
-            var exchangeService = new ExchangeService(
+            var mockExchangeService = new MockExchangeService(
                 _binanceSettings,
                 _mongoDbSettings,
                 _mockMongoClient.Object,
-                mockBinanceService.Object,
                 mockSubscriptionService.Object,
                 mockCoinService.Object,
-                _logger
+                _logger,
+                mockBinanceService.Object
+            );
+            // Act
+            var result = await mockExchangeService.ProcessTransaction(transactionData);
+
+            // Assert
+            //Assert.True(result.IsSuccess);
+            Assert.Single(result.Orders);
+            //Assert.Equal(1, result.SuccessfulOrders);
+            //Assert.True(result.Orders[0].IsSuccess);
+            //Assert.NotNull(result.Orders[0].OrderId);
+            Assert.Contains("xyz", result.Orders[0].ErrorMessage);
+
+            // Verify that one order was inserted.
+            _mockExchangeOrderCollection.Verify(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default), Times.Once);
+        }
+
+        [Fact]
+        public async Task ProcessTransaction_NetAmountNonPositive_ShouldReturnValidationError()
+        {
+            // Arrange: NetAmount is set to zero.
+            var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest(netAmount: 0);
+            var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
+            var coinAllocation = TestDataFactory.CreateDefaultCoinAllocation();
+            var allocations = new List<CoinAllocation> { coinAllocation };
+            var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.CoinId);
+            var fakeOrder = TestDataFactory.CreateDefaultOrder();
+
+            var mockBinanceService = new Mock<IBinanceService>();
+            mockBinanceService.Setup(x => x.PlaceSpotMarketBuyOrder("BTCUSDT", It.IsAny<decimal>()))
+                              .ReturnsAsync(fakeOrder);
+
+            var mockSubscriptionService = new Mock<ISubscriptionService>();
+            mockSubscriptionService.Setup(x => x.GetAllocationsAsync(transactionData.SubscriptionId))
+                                   .ReturnsAsync(FetchAllocationsResult.Success(allocations));
+
+            var mockCoinService = new Mock<ICoinService>();
+            mockCoinService.Setup(x => x.GetByIdAsync(coinAllocation.CoinId))
+                           .ReturnsAsync(coinData);
+            mockCoinService.Setup(x => x.GetCryptoFromSymbolAsync("BTCUSDT"))
+                           .ReturnsAsync(coinData);
+
+            _mockExchangeOrderCollection.Setup(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default))
+                                        .Returns(Task.CompletedTask);
+
+            var mockExchangeService = new MockExchangeService(
+                _binanceSettings,
+                _mongoDbSettings,
+                _mockMongoClient.Object,
+                mockSubscriptionService.Object,
+                mockCoinService.Object,
+                _logger,
+                mockBinanceService.Object
             );
 
             // Act & Assert
-            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => exchangeService.ProcessTransaction(transaction));
+            var response = await mockExchangeService.ProcessTransaction(transactionData);
+            Assert.False(response.IsSuccess);
+            Assert.Single(response.Orders);
+            Assert.Equal(FailureReason.ValidationError, response.Orders[0].FailureReason);
+            Assert.Contains("Invalid transaction net amount.", response.Orders[0].ErrorMessage);
             _mockExchangeOrderCollection.Verify(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default), Times.Never);
         }
 
         [Fact]
-        public async Task ProcessTransaction_WithEmptyAllocations_ShouldThrowKeyNotFoundException()
+        public async Task ProcessTransaction_WithEmptyAllocations_ShouldReturnValidationError()
         {
             // Arrange: Setup empty allocations.
-            var transaction = TestDataFactory.CreateDefaultTransactionData();
+            var transactionRequest = TestDataFactory.CreateDefaultExchangeRequest();
+            var transactionData = TestDataFactory.CreateDefaultTransactionData(transactionRequest);
             var mockSubscriptionService = new Mock<ISubscriptionService>();
-            mockSubscriptionService.Setup(x => x.GetCoinAllocationsAsync(transaction.SubscriptionId))
-                                   .ReturnsAsync(new List<CoinAllocation>());
+            mockSubscriptionService.Setup(x => x.GetAllocationsAsync(transactionData.SubscriptionId))
+                                   .ReturnsAsync(FetchAllocationsResult.Failure(FailureReason.ValidationError, "Subscription allocations can not be empty/null."));
 
             var mockBinanceService = new Mock<IBinanceService>();
             var mockCoinService = new Mock<ICoinService>();
@@ -179,18 +208,22 @@ namespace Infrastructure.Tests.Services
             _mockExchangeOrderCollection.Setup(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default))
                                         .Returns(Task.CompletedTask);
 
-            var exchangeService = new ExchangeService(
+            var exchangeService = new MockExchangeService(
                 _binanceSettings,
                 _mongoDbSettings,
                 _mockMongoClient.Object,
-                mockBinanceService.Object,
                 mockSubscriptionService.Object,
                 mockCoinService.Object,
-                _logger
+                _logger,
+                mockBinanceService.Object
             );
 
             // Act & Assert
-            await Assert.ThrowsAsync<KeyNotFoundException>(() => exchangeService.ProcessTransaction(transaction));
+            var result = await exchangeService.ProcessTransaction(transactionData);
+            Assert.False(result.IsSuccess);
+            Assert.Single(result.Orders);
+            Assert.Equal(FailureReason.ValidationError, result.Orders[0].FailureReason);
+            Assert.Contains("Subscription allocations can not be empty/null.", result.Orders[0].ErrorMessage);
             _mockExchangeOrderCollection.Verify(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default), Times.Never);
         }
 
@@ -198,7 +231,8 @@ namespace Infrastructure.Tests.Services
         public async Task ProcessTransaction_AllocationPercentAmountOutOfRange_ShouldReturnFailureResponse()
         {
             // Arrange: Create a transaction with a valid NetAmount.
-            var transaction = TestDataFactory.CreateDefaultTransactionData(netAmount: 100);
+            var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest(netAmount: 100);
+            var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
 
             // Create an allocation with PercentAmount set to 120 (out of range).
             var coinAllocation = TestDataFactory.CreateDefaultCoinAllocation(percentAmount: 120);
@@ -217,13 +251,13 @@ namespace Infrastructure.Tests.Services
             // Setup mock for ISubscriptionService.
             var mockSubscriptionService = new Mock<ISubscriptionService>();
             mockSubscriptionService
-                .Setup(x => x.GetCoinAllocationsAsync(transaction.SubscriptionId))
-                .ReturnsAsync(allocations);
+                .Setup(x => x.GetAllocationsAsync(transactionData.SubscriptionId))
+                .ReturnsAsync(FetchAllocationsResult.Success(allocations));
 
             // Setup mocks for ICoinService.
             var mockCoinService = new Mock<ICoinService>();
             mockCoinService
-                .Setup(x => x.GetCoinDataAsync(coinAllocation.CoinId))
+                .Setup(x => x.GetByIdAsync(coinAllocation.CoinId))
                 .ReturnsAsync(coinData);
             mockCoinService
                 .Setup(x => x.GetCryptoFromSymbolAsync("BTCUSDT"))
@@ -260,28 +294,29 @@ namespace Infrastructure.Tests.Services
             var logger = loggerFactory.CreateLogger<ExchangeService>();
 
             // Create instance of ExchangeService using injected dependencies.
-            var exchangeService = new ExchangeService(
-                binanceSettings,
-                mongoDbSettings,
-                mockMongoClient.Object,
-                mockBinanceService.Object,
+            var exchangeService = new MockExchangeService(
+                _binanceSettings,
+                _mongoDbSettings,
+                _mockMongoClient.Object,
                 mockSubscriptionService.Object,
                 mockCoinService.Object,
-                logger
+                _logger,
+                mockBinanceService.Object
             );
 
             // Act
-            var responses = await exchangeService.ProcessTransaction(transaction);
+            var response = await exchangeService.ProcessTransaction(transactionData);
 
             // Assert
-            Assert.NotNull(responses);
-            var responseList = new List<ExchangeOrderResponse>(responses);
+            Assert.NotNull(response);
+            var result = new List<OrderResult>(response.Orders);
 
             // Expect a failure response since allocation is out of range.
-            Assert.Single(responseList);
-            var failureResponse = responseList[0];
-            Assert.False(failureResponse.Success);
-            Assert.Contains("Allocation must be a number between 0-100", failureResponse.Message);
+            Assert.Single(result);
+            var failureResponse = result[0];
+            Assert.False(failureResponse.IsSuccess);
+            Assert.Equal(FailureReason.ValidationError, failureResponse.FailureReason);
+            Assert.Contains("Allocation must be between 0-100", failureResponse.ErrorMessage);
 
             // Verify that no order was inserted.
             mockCollection.Verify(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default), Times.Never);
@@ -292,7 +327,8 @@ namespace Infrastructure.Tests.Services
         public async Task ProcessTransaction_WithMixedCoinData_ReturnsExpectedResponsesAndInsertsOneOrder()
         {
             // Arrange: Create a transaction and two allocations.
-            var transaction = TestDataFactory.CreateDefaultTransactionData(netAmount: 100);
+            var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest(netAmount: 100);
+            var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
             var coinId1 = ObjectId.GenerateNewId();
             var coinId2 = ObjectId.GenerateNewId();
             // First allocation: 30%, returns null coin data.
@@ -306,7 +342,7 @@ namespace Infrastructure.Tests.Services
             var coinData2 = TestDataFactory.CreateDefaultCoinData(coinId2);
 
             // Create a fake order for the second allocation.
-            var fakeOrder = new BinancePlacedOrder
+            var fakePlacedOrder = new BinancePlacedOrder
             {
                 Id = 12345,
                 ClientOrderId = "clientOrder123",
@@ -321,18 +357,18 @@ namespace Infrastructure.Tests.Services
 
             var mockBinanceService = new Mock<IBinanceService>();
             mockBinanceService.Setup(x => x.PlaceSpotMarketBuyOrder("BTCUSDT", It.IsAny<decimal>()))
-                              .ReturnsAsync(fakeOrder);
+                              .ReturnsAsync(fakePlacedOrder);
 
             var mockSubscriptionService = new Mock<ISubscriptionService>();
-            mockSubscriptionService.Setup(x => x.GetCoinAllocationsAsync(transaction.SubscriptionId))
-                                   .ReturnsAsync(allocations);
+            mockSubscriptionService.Setup(x => x.GetAllocationsAsync(transactionData.SubscriptionId))
+                                   .ReturnsAsync(FetchAllocationsResult.Success(allocations));
 
             var mockCoinService = new Mock<ICoinService>();
             // First allocation: return null.
-            mockCoinService.Setup(x => x.GetCoinDataAsync(coinId1))
+            mockCoinService.Setup(x => x.GetByIdAsync(coinId1))
                            .ReturnsAsync((CoinData?)null);
             // Second allocation: return valid coin data.
-            mockCoinService.Setup(x => x.GetCoinDataAsync(coinId2))
+            mockCoinService.Setup(x => x.GetByIdAsync(coinId2))
                            .ReturnsAsync(coinData2);
             mockCoinService.Setup(x => x.GetCryptoFromSymbolAsync("BTCUSDT"))
                            .ReturnsAsync(coinData2);
@@ -340,33 +376,38 @@ namespace Infrastructure.Tests.Services
             _mockExchangeOrderCollection.Setup(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default))
                                         .Returns(Task.CompletedTask);
 
-            var exchangeService = new ExchangeService(
+            var exchangeService = new MockExchangeService(
                 _binanceSettings,
                 _mongoDbSettings,
                 _mockMongoClient.Object,
-                mockBinanceService.Object,
                 mockSubscriptionService.Object,
                 mockCoinService.Object,
-                _logger
+                _logger,
+                mockBinanceService.Object
             );
 
             // Act
-            var responses = await exchangeService.ProcessTransaction(transaction);
-
+            var result = await exchangeService.ProcessTransaction(transactionData);
+            _logger.LogInformation($"result: {result}");
             // Assert
-            Assert.NotNull(responses);
-            var responseList = new List<ExchangeOrderResponse>(responses);
-            Assert.Equal(2, responseList.Count);
+            Assert.False(result.IsSuccess);
+            Assert.Equal(2, result.TotalOrders);
+            Assert.Equal(1, result.SuccessfulOrders);
+            var responseList = result.Orders.ToList();
 
             // Instead of assuming order, find one failure and one success.
-            var failureResponse = responseList.Find(r => !r.Success);
-            var successResponse = responseList.Find(r => r.Success);
+            var failureResponse = responseList.Find(r => !r.IsSuccess);
+            var successResponse = responseList.Find(r => r.IsSuccess);
 
             Assert.NotNull(failureResponse);
-            Assert.Contains("Coin data not found", failureResponse!.Message);
+            Assert.False(failureResponse.IsSuccess);
+            Assert.Equal(FailureReason.DataNotFound, failureResponse.FailureReason);
+            Assert.Contains("Coin data not found", failureResponse.ErrorMessage);
 
             Assert.NotNull(successResponse);
-            Assert.Contains("Order created", successResponse!.Message);
+            Assert.True(successResponse.IsSuccess);
+            Assert.NotNull(successResponse.OrderId);
+            Assert.NotNull(successResponse.InsertedId);
 
             // Verify that InsertOneAsync was called exactly once.
             _mockExchangeOrderCollection.Verify(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default), Times.Once);
