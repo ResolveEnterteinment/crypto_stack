@@ -4,6 +4,7 @@ using Binance.Net.Objects.Models.Spot;
 using CryptoExchange.Net.Authentication;
 using Domain.DTOs;
 using Microsoft.Extensions.Options;
+using MongoDB.Bson;
 
 namespace BinanceLibrary
 {
@@ -24,7 +25,7 @@ namespace BinanceLibrary
             });
         }
 
-        internal async Task<BinancePlacedOrder> PlaceOrder(string symbol, decimal quantity, Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy, Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
+        internal async Task<BinancePlacedOrder> PlaceOrder(string symbol, decimal quantity, ObjectId subscriptionId, Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy, Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
         {
             try
             {
@@ -33,7 +34,8 @@ namespace BinanceLibrary
                 side,
                 type,
                 //quantity: 0, // Not used for market buy orders.
-                quoteQuantity: quantity)
+                quoteQuantity: quantity,
+                newClientOrderId: subscriptionId.ToString()) //subscription id to track user orders
                 .ConfigureAwait(false);
                 if (!orderResult.Success)
                 {
@@ -43,7 +45,7 @@ namespace BinanceLibrary
             }
             catch (Exception ex)
             {
-                throw new Exception("Error placing Binance order: ", ex);
+                throw new Exception($"Error placing Binance order: {ex.Message}");
             }
         }
 
@@ -54,9 +56,17 @@ namespace BinanceLibrary
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
         /// <returns>The order details if successful; otherwise, null.</returns>
-        public async Task<BinancePlacedOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity)
+        public async Task<BinancePlacedOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity, ObjectId subscriptionId)
         {
-            return await PlaceOrder(symbol, quantity);
+            try
+            {
+                return await PlaceOrder(symbol, quantity, subscriptionId);
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+
         }
         /// <summary>
         /// Places a spot market sell order using the provided API credentials.
@@ -65,9 +75,29 @@ namespace BinanceLibrary
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
         /// <returns>The order details if successful; otherwise, null.</returns>
-        public async Task<BinancePlacedOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity)
+        public async Task<BinancePlacedOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity, ObjectId subscriptionId)
         {
-            return await PlaceOrder(symbol, quantity, Binance.Net.Enums.OrderSide.Sell);
+            try
+            {
+                return await PlaceOrder(symbol, quantity, subscriptionId, Binance.Net.Enums.OrderSide.Sell);
+            }
+            catch (Exception)
+            {
+
+                throw;
+            }
+        }
+
+        Task<decimal> IBinanceService.GetFiatBalanceAsync(string symbol)
+        {
+            //throw new NotImplementedException();
+            return Task.FromResult(1000m);
+        }
+
+        Task<BinancePlacedOrder> IBinanceService.GetOrderInfoAsync(long orderId)
+        {
+            //throw new NotImplementedException();
+            return Task.FromResult(new BinancePlacedOrder() { });
         }
     }
 }

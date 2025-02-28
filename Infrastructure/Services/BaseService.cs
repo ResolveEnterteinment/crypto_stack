@@ -12,12 +12,14 @@ namespace Infrastructure.Services
 {
     public abstract class BaseService<T> : IRepository<T> where T : class
     {
+        protected readonly IMongoClient _mongoClient;
         protected readonly IMongoCollection<T> _collection;
         protected readonly ILogger _logger;
         private static readonly IReadOnlySet<string> ValidPropertyNames = GetValidPropertyNames();
 
         protected BaseService(IMongoClient mongoClient, IOptions<MongoDbSettings> mongoDbSettings, string collectionName, ILogger logger)
         {
+            _mongoClient = mongoClient;
             var database = mongoClient.GetDatabase(mongoDbSettings.Value.DatabaseName);
             _collection = database.GetCollection<T>(collectionName);
             _logger = logger;
@@ -35,7 +37,21 @@ namespace Infrastructure.Services
             return await _collection.Find(filter).ToListAsync();
         }
 
-        public async Task<InsertResult> InsertAsync(T entity)
+        public async Task<T> GetOneAsync(FilterDefinition<T> filter)
+        {
+            try
+            {
+                return await _collection.Find(filter).FirstOrDefaultAsync();
+            }
+            catch (Exception ex)
+            {
+
+                throw;
+            }
+
+        }
+
+        public async Task<InsertResult> InsertOneAsync(T entity)
         {
             if (entity is null) return new InsertResult()
             {
@@ -101,15 +117,19 @@ namespace Infrastructure.Services
 
         protected virtual UpdateDefinition<T> BuildUpdateDefinition(object updatedFields)
         {
-            var bsonDocument = updatedFields.ToBsonDocument();
             var updateBuilder = Builders<T>.Update;
             var validUpdates = new List<UpdateDefinition<T>>();
 
-            foreach (var element in bsonDocument.Elements)
+            // Get all public instance properties of the updatedFields object
+            var properties = updatedFields.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            foreach (var property in properties)
             {
-                if (ValidPropertyNames.Contains(element.Name))
+                var propertyName = property.Name;
+                // Check if the property is valid for the type T
+                if (ValidPropertyNames.Contains(propertyName))
                 {
-                    validUpdates.Add(updateBuilder.Set(element.Name, element.Value));
+                    var value = property.GetValue(updatedFields);
+                    validUpdates.Add(updateBuilder.Set(propertyName, value));
                 }
             }
 

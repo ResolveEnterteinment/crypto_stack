@@ -6,7 +6,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
-using static MongoDB.Driver.UpdateResult;
 
 namespace Infrastructure.Services
 {
@@ -20,7 +19,7 @@ namespace Infrastructure.Services
         {
         }
 
-        public async Task<FetchAllocationsResult> GetAllocationsAsync(ObjectId subscriptionId)
+        public async Task<ResultWrapper<IReadOnlyCollection<CoinAllocationData>>> GetAllocationsAsync(ObjectId subscriptionId)
         {
             // Unchanged
             try
@@ -32,9 +31,9 @@ namespace Infrastructure.Services
                 }
                 if (subscription.CoinAllocations == null || !subscription.CoinAllocations.Any())
                 {
-                    throw new ArgumentException("Subscription allocations cannot be empty/null.");
+                    throw new ArgumentException($"Coin allocation fetch error. No allocation(s) found for subscription #{subscriptionId}.");
                 }
-                return FetchAllocationsResult.Success(subscription.CoinAllocations.ToList().AsReadOnly());
+                return ResultWrapper<IReadOnlyCollection<CoinAllocationData>>.Success(subscription.CoinAllocations.ToList().AsReadOnly());
             }
             catch (Exception ex)
             {
@@ -45,7 +44,7 @@ namespace Infrastructure.Services
                     _ => FailureReason.Unknown
                 };
                 _logger.LogError(ex, "Fetch subscription failed: {Message}", ex.Message);
-                return FetchAllocationsResult.Failure(reason, ex.Message);
+                return ResultWrapper<IReadOnlyCollection<CoinAllocationData>>.Failure(reason, ex.Message);
             }
         }
 
@@ -61,40 +60,5 @@ namespace Infrastructure.Services
             return await GetAllAsync(filter);
         }
 
-        public async Task<UpdateResult> UpdateBalances(ObjectId subscriptionId, IEnumerable<BalanceData> updateBalances)
-        {
-            try
-            {
-                var subscription = await GetByIdAsync(subscriptionId);
-                if (subscription is null)
-                    throw new KeyNotFoundException($"Failed to fetch subscription data for id #{subscriptionId}. {nameof(subscription)} returned null.");
-
-                var balances = subscription.Balances?.ToList() ?? new List<BalanceData>();
-                foreach (var newBalance in updateBalances)
-                {
-                    var balance = balances.Find(b => b.CoinId == newBalance.CoinId);
-                    if (balance is null)
-                    {
-                        balances.Add(newBalance);
-                    }
-                    else
-                    {
-                        balance.Quantity += newBalance.Quantity;
-                    }
-                }
-
-                // Directly build the update definition
-                var updateDefinition = Builders<SubscriptionData>.Update.Set(s => s.Balances, balances);
-                var filter = Builders<SubscriptionData>.Filter.Eq(s => s._id, subscriptionId);
-                var result = await _collection.UpdateOneAsync(filter, updateDefinition).ConfigureAwait(false);
-                _logger.LogInformation($"Updated subscription {subscriptionId} balances. Updated balances: {balances.Count} items");
-                return result;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unable to update subscription balances: {Message}", ex.Message);
-                return Unacknowledged.Instance;
-            }
-        }
     }
 }

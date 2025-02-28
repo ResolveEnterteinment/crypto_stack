@@ -38,6 +38,7 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<IExchangeService, ExchangeService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 builder.Services.AddSingleton<ICoinService, CoinService>();
+builder.Services.AddSingleton<IBalanceService, BalanceService>();
 
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IUserService, UserService>();

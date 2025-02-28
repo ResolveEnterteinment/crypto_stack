@@ -1,4 +1,5 @@
-﻿using MongoDB.Bson;
+﻿using Domain.Models.Balance;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace Domain.Models.Subscription

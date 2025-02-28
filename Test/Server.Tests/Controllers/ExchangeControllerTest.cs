@@ -1,6 +1,8 @@
 ﻿using Application.Interfaces;
 using crypto_investment_project.Server.Controllers;
+using Domain.Constants;
 using Domain.DTOs;
+using Domain.Models.Transaction;
 using Infrastructure.Tests.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -31,21 +33,20 @@ namespace Server.Tests.Controllers
             // Arrange
             var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest();
             var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
-            var expectedResponses = new AllocationOrdersResult(new List<OrderResult>()
-            {
-                new OrderResult(
-                    true,
-                    123456,
-                    ObjectId.GenerateNewId().ToString(),
-                    "BTC",
+            var expectedResponses = new AllocationOrdersResult(new List<OrderResult>(){
+                OrderResult.Success(
+                    orderId: 123456,
+                    isInsertSuccess: true,
+                    isUpdateSuccess: true,
+                    coinId: ObjectId.GenerateNewId().ToString(),
                     transactionData.NetAmount,
                     0.0096m,
-                    "success"
-                    )
+                    OrderStatus.Filled
+                    ),
             });
 
             var mockExchangeService = new Mock<IExchangeService>();
-            mockExchangeService.Setup(x => x.ProcessTransaction(transactionData))
+            mockExchangeService.Setup(x => x.ProcessTransaction(It.IsAny<TransactionData>()))
                                .ReturnsAsync(expectedResponses);
 
             var controller = new ExchangeController(mockExchangeService.Object);
@@ -55,7 +56,7 @@ namespace Server.Tests.Controllers
 
             // Assert
             var okResult = Assert.IsType<OkObjectResult>(result);
-            Assert.Equal(expectedResponses, okResult.Value);
+            Assert.Equal(expectedResponses, okResult?.Value);
         }
 
         [Fact]
@@ -86,7 +87,7 @@ namespace Server.Tests.Controllers
             // Arrange
             var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest();
             var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
-            var exceptionMessage = "Some error occurred";
+            var exceptionMessage = "Exchange order could not be initiated";
 
             var mockExchangeService = new Mock<IExchangeService>();
             mockExchangeService.Setup(x => x.ProcessTransaction(transactionData))

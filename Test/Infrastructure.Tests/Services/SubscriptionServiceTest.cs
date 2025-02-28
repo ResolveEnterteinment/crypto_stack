@@ -1,4 +1,6 @@
 ﻿using AspNetCore.Identity.MongoDbCore.Infrastructure;
+using Domain.Constants;
+using Domain.Models.Balance;
 using Domain.Models.Subscription;
 using Infrastructure.Services;
 using Infrastructure.Tests.Helpers;
@@ -49,6 +51,7 @@ namespace Infrastructure.Tests.Services
         {
             IEnumerable<SubscriptionData> data = subscription != null ? new List<SubscriptionData> { subscription } : new List<SubscriptionData>();
             var fakeCursor = new FakeAsyncCursor<SubscriptionData>(data);
+
             collectionMock.Setup(x => x.FindAsync(
                 It.IsAny<FilterDefinition<SubscriptionData>>(),
                 It.IsAny<FindOptions<SubscriptionData, SubscriptionData>>(),
@@ -85,8 +88,9 @@ namespace Infrastructure.Tests.Services
             var result = await subscriptionService.GetAllocationsAsync(subscriptionId);
 
             // Assert
-            Assert.NotNull(result.Allocations);
-            Assert.Equal(2, result.Allocations.Count);
+            Assert.True(result.IsSuccess);
+            Assert.NotNull(result.Data);
+            Assert.Equal(2, result.Data.Count);
         }
 
         [Fact]
@@ -102,8 +106,9 @@ namespace Infrastructure.Tests.Services
             var result = await subscriptionService.GetAllocationsAsync(subscriptionId);
 
             // Assert: The catch block should return an empty list.
-            Assert.NotNull(result.Allocations);
-            Assert.Empty(result.Allocations);
+            Assert.False(result.IsSuccess);
+            Assert.NotNull(result.Data);
+            Assert.Empty(result.Data);
         }
 
         [Fact]
@@ -123,8 +128,169 @@ namespace Infrastructure.Tests.Services
             var result = await subscriptionService.GetAllocationsAsync(subscriptionId);
 
             // Assert: In case of exception, an empty list is returned.
-            Assert.NotNull(result.Allocations);
-            Assert.Empty(result.Allocations);
+            Assert.False(result.IsSuccess);
+            Assert.Equal(FailureReason.DatabaseError, result.FailureReason);
+            Assert.NotNull(result.Data);
+            Assert.Empty(result.Data);
+        }
+        [Fact]
+        public async Task GetUserSubscriptionsAsync_WhenUserExists_ReturnsSubscriptions()
+        {
+            // Arrange: Create a SubscriptionData with a list of coin allocations.
+            var userId = ObjectId.GenerateNewId();
+            var coinAllocations = new List<CoinAllocationData>
+            {
+                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 60 },
+                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 40 }
+            };
+
+            var subscriptionData = new SubscriptionData
+            {
+                UserId = userId,
+                Interval = "Monthly",
+                Amount = 100,
+                CoinAllocations = coinAllocations
+            };
+
+            SetupFindAsyncSubscription(_mockCollection, subscriptionData);
+
+            var subscriptionService = new SubscriptionService(_mongoDbSettings, _mockMongoClient.Object, _logger);
+
+            // Act
+            var result = await subscriptionService.GetUserSubscriptionsAsync(userId);
+            var subscriptionsList = result.ToList();
+            // Assert
+            Assert.NotNull(subscriptionsList);
+            Assert.Single(subscriptionsList);
+            Assert.Equal(100, subscriptionsList[0].Amount);
+            Assert.Equal(2, subscriptionsList[0].CoinAllocations.Count());
+        }
+        [Fact]
+        public async Task GetUserSubscriptionsAsync_WhenNoSubscriptions_ReturnsEmptyList()
+        {
+            // Arrange: Create a SubscriptionData with a list of coin allocations.
+            var userId = ObjectId.GenerateNewId();
+
+            SetupFindAsyncSubscription(_mockCollection, default);
+
+            var subscriptionService = new SubscriptionService(_mongoDbSettings, _mockMongoClient.Object, _logger);
+
+            // Act
+            var result = await subscriptionService.GetUserSubscriptionsAsync(userId);
+            // Assert
+            Assert.NotNull(result);
+            Assert.Empty(result);
+        }
+        [Fact]
+        public async Task UpdateBalancesAsync_WhenUserSubscriptionExists_ReturnsUpdateBalanceResult()
+        {
+            // Arrange: Create a SubscriptionData with a list of coin allocations.
+            var userId = ObjectId.GenerateNewId();
+            var coinAllocations = new List<CoinAllocationData>
+            {
+                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 60 },
+                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 40 }
+            };
+
+            var subscriptionData = new SubscriptionData
+            {
+                UserId = userId,
+                Interval = "Monthly",
+                Amount = 100,
+                CoinAllocations = coinAllocations,
+                Balances = new List<BalanceData>()
+                {
+                    new BalanceData
+                    {
+                        CoinId = coinAllocations[0].CoinId,
+                        Quantity = 0
+                    },
+                    new BalanceData
+                    {
+                        CoinId = coinAllocations[1].CoinId,
+                        Quantity = 0
+                    },
+                }
+            };
+
+            var updateBalances = new List<BalanceData>()
+            {
+                new BalanceData {
+                    CoinId = coinAllocations[0].CoinId,
+                    Quantity = 0.003m
+                },
+                new BalanceData {
+                    CoinId = coinAllocations[1].CoinId,
+                    Quantity = 1.7m
+                }
+            };
+
+            SetupFindAsyncSubscription(_mockCollection, subscriptionData);
+
+            var subscriptionService = new SubscriptionService(_mongoDbSettings, _mockMongoClient.Object, _logger);
+
+            // Act
+            var result = await subscriptionService.UpdateBalancesAsync(subscriptionData._id, updateBalances);
+            // Assert
+            Assert.NotNull(result);
+            Assert.True(result.IsSuccess);
+            Assert.Equal(2, result.Data.Count);
+        }
+        [Fact]
+        public async Task UpdateBalancesAsync_WhenNoUserSubscription_ReturnsFailedUpdateBalanceResult()
+        {
+            // Arrange: Create a SubscriptionData with a list of coin allocations.
+            var userId = ObjectId.GenerateNewId();
+            var coinAllocations = new List<CoinAllocationData>
+            {
+                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 60 },
+                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 40 }
+            };
+
+            var subscriptionData = new SubscriptionData
+            {
+                UserId = userId,
+                Interval = "Monthly",
+                Amount = 100,
+                CoinAllocations = coinAllocations,
+                Balances = new List<BalanceData>()
+                {
+                    new BalanceData
+                    {
+                        CoinId = coinAllocations[0].CoinId,
+                        Quantity = 0
+                    },
+                    new BalanceData
+                    {
+                        CoinId = coinAllocations[1].CoinId,
+                        Quantity = 0
+                    },
+                }
+            };
+
+            var updateBalances = new List<BalanceData>()
+            {
+                new BalanceData {
+                    CoinId = coinAllocations[0].CoinId,
+                    Quantity = 0.003m
+                },
+                new BalanceData {
+                    CoinId = coinAllocations[1].CoinId,
+                    Quantity = 1.7m
+                }
+            };
+
+            SetupFindAsyncSubscription(_mockCollection, subscriptionData);
+
+            var subscriptionService = new SubscriptionService(_mongoDbSettings, _mockMongoClient.Object, _logger);
+
+            // Act
+            var result = await subscriptionService.UpdateBalancesAsync(ObjectId.GenerateNewId(), updateBalances);
+            // Assert
+            Assert.NotNull(result);
+            Assert.False(result.IsSuccess);
+            Assert.Empty(result.Data);
+            Assert.Contains("Unable to update subscription balances", result.ErrorMessage);
         }
     }
 }

@@ -82,5 +82,18 @@ namespace Infrastructure.Tests.Helpers
                 Status = Binance.Net.Enums.OrderStatus.Filled,
             };
         }
+        public static SubscriptionData CreateDefaultSubscription()
+        {
+            return new SubscriptionData
+            {
+                UserId = ObjectId.GenerateNewId(),
+                Interval = "Monthly",
+                Amount = 100,
+                CoinAllocations = new List<CoinAllocationData>(){
+                    CreateDefaultCoinAllocation(60),
+                    CreateDefaultCoinAllocation(40)
+                }
+            };
+        }
     }
 }
