@@ -3,6 +3,7 @@ using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using crypto_investment_project.Server.Helpers;
 using Domain.DTOs;
 using Infrastructure.Services;
+using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
@@ -19,11 +20,14 @@ MongoDbIdentityConfigurationHelper.Configure(builder);
 builder.Services.Configure<MongoDbSettings>(builder.Configuration.GetSection("MongoDB"));
 builder.Services.Configure<BinanceSettings>(builder.Configuration.GetSection("Binance"));
 
-// Add controllers with JSON options.
-builder.Services.AddControllers().AddJsonOptions(options =>
-{
-    options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-});
+// Add controllers with Newtonsoft.Json
+builder.Services.AddControllers()
+    .AddNewtonsoftJson(options =>
+    {
+        options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
+        options.SerializerSettings.NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore;
+    });
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -35,15 +39,22 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
 
 // 3. Register your custom services.
-builder.Services.AddSingleton<IExchangeService, ExchangeService>();
+builder.Services.AddSingleton<IPaymentService, PaymentService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
-builder.Services.AddSingleton<ICoinService, CoinService>();
+builder.Services.AddScoped<IExchangeService, ExchangeService>();
+builder.Services.AddSingleton<IAssetService, AssetService>();
 builder.Services.AddSingleton<IBalanceService, BalanceService>();
+builder.Services.AddSingleton<ITransactionService, TransactionService>();
+builder.Services.AddSingleton<IEventService, EventService>();
+builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(EventService).Assembly));
 
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IUserService, UserService>();
 
 var app = builder.Build();
+
+var binanceSettings = builder.Services.BuildServiceProvider().GetRequiredService<IOptions<BinanceSettings>>().Value;
+Console.WriteLine($"Binance ApiKey: {binanceSettings.ApiKey}");
 
 app.UseDefaultFiles();
 app.UseStaticFiles();

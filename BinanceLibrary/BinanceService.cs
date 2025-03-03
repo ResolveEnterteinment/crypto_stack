@@ -2,7 +2,9 @@
 using Binance.Net.Clients;
 using Binance.Net.Objects.Models.Spot;
 using CryptoExchange.Net.Authentication;
+using Domain.Constants;
 using Domain.DTOs;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 
@@ -11,12 +13,14 @@ namespace BinanceLibrary
     public class BinanceService : IBinanceService
     {
         private readonly BinanceRestClient _binanceClient;
-        public BinanceService(IOptions<BinanceSettings> binanceSettings)
+        protected readonly ILogger _logger;
+        public BinanceService(IOptions<BinanceSettings> binanceSettings, ILogger logger)
         {
             // Replace these with your Binance API credentials
             string apiKey = binanceSettings.Value.ApiKey;
             string apiSecret = binanceSettings.Value.ApiSecret;
             bool isTestnet = binanceSettings.Value.IsTestnet;
+            _logger = logger;
 
             _binanceClient = new BinanceRestClient(options =>
             {
@@ -33,8 +37,8 @@ namespace BinanceLibrary
                 symbol,
                 side,
                 type,
-                //quantity: 0, // Not used for market buy orders.
-                quoteQuantity: quantity,
+                quantity: side == Binance.Net.Enums.OrderSide.Sell ? quantity : null, // Not used for market buy orders.
+                quoteQuantity: side == Binance.Net.Enums.OrderSide.Buy ? quantity : null,
                 newClientOrderId: subscriptionId.ToString()) //subscription id to track user orders
                 .ConfigureAwait(false);
                 if (!orderResult.Success)
@@ -87,7 +91,36 @@ namespace BinanceLibrary
                 throw;
             }
         }
+        public async Task<ResultWrapper<IEnumerable<BinanceBalance>>> GetBalancesAsync(IEnumerable<string>? tickers = null)
+        {
+            try
+            {
+                _logger.LogInformation("Fetching exchange balances for ticker: {Ticker}", tickers == null ? "All" : string.Join(", ", tickers));
+                var accountInfo = await _binanceClient.SpotApi.Account.GetAccountInfoAsync();
+                if (!accountInfo.Success || accountInfo.Data == null)
+                {
+                    _logger.LogError("Failed to retrieve account info from Binance: {Error}", accountInfo.Error?.Message);
+                    throw new Exception($"Unable to retrieve account info: {accountInfo.Error?.Message}");
+                }
 
+                var balances = accountInfo.Data.Balances
+                    .Where(b => b.Total > 0m); // Only include non-zero balances
+
+                if (tickers != null && tickers.Any())
+                {
+                    balances = balances.Where(b => tickers.Contains(b.Asset));
+                }
+
+                var result = balances.ToList();
+                _logger.LogInformation("Successfully retrieved {Count} balances from Binance", result.Count);
+                return ResultWrapper<IEnumerable<BinanceBalance>>.Success(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving exchange balances: {Message}", ex.Message);
+                return ResultWrapper<IEnumerable<BinanceBalance>>.Failure(FailureReason.ExchangeApiError, $"Failed to retrieve exchange balances: {ex.Message}");
+            }
+        }
         Task<decimal> IBinanceService.GetFiatBalanceAsync(string symbol)
         {
             //throw new NotImplementedException();

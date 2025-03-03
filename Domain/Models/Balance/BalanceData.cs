@@ -10,8 +10,9 @@ namespace Domain.Models.Balance
         [BsonRepresentation(BsonType.ObjectId)]
         public ObjectId SubscriptionId { get; set; }
         [BsonRepresentation(BsonType.ObjectId)]
-        public ObjectId CoinId { get; set; }
-        public decimal Quantity { get; set; }
-        public IEnumerable<ObjectId> Orders { get; set; } = Enumerable.Empty<ObjectId>();
+        public ObjectId AssetId { get; set; }
+        public decimal Available { get; set; } = decimal.Zero;
+        public decimal Locked { get; set; } = decimal.Zero;
+        public IEnumerable<ObjectId> Transactions { get; set; } = Enumerable.Empty<ObjectId>();
     }
 }

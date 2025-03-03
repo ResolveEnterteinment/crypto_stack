@@ -1,4 +1,5 @@
-﻿using Domain.DTOs;
+﻿using Application.Contracts.Requests.Subscription;
+using Domain.DTOs;
 using Domain.Interfaces;
 using Domain.Models.Subscription;
 using MongoDB.Bson;
@@ -8,7 +9,8 @@ namespace Infrastructure.Services
 {
     public interface ISubscriptionService : IRepository<SubscriptionData>
     {
-        public Task<ResultWrapper<IReadOnlyCollection<CoinAllocationData>>> GetAllocationsAsync(ObjectId subscriptionId);
+        public Task<ResultWrapper<ObjectId>> ProcessSubscriptionRequest(SubscriptionRequest request);
+        public Task<ResultWrapper<IReadOnlyCollection<AllocationData>>> GetAllocationsAsync(ObjectId subscriptionId);
         public Task<UpdateResult> CancelAsync(ObjectId subscriptionId);
         public Task<IEnumerable<SubscriptionData>> GetUserSubscriptionsAsync(ObjectId userId);
     }

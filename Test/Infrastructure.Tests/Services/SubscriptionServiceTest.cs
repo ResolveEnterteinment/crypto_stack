@@ -64,10 +64,10 @@ namespace Infrastructure.Tests.Services
         {
             // Arrange: Create a SubscriptionData with a list of coin allocations.
             var subscriptionId = ObjectId.GenerateNewId();
-            var coinAllocations = new List<CoinAllocationData>
+            var coinAllocations = new List<AllocationData>
             {
-                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 50 },
-                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 50 }
+                new AllocationData { AssetId = ObjectId.GenerateNewId(), PercentAmount = 50 },
+                new AllocationData { AssetId = ObjectId.GenerateNewId(), PercentAmount = 50 }
             };
 
             var subscriptionData = new SubscriptionData
@@ -77,7 +77,7 @@ namespace Infrastructure.Tests.Services
                 UserId = ObjectId.GenerateNewId(),
                 Interval = "Monthly",
                 Amount = 50,
-                CoinAllocations = coinAllocations
+                Allocations = coinAllocations
             };
 
             SetupFindAsyncSubscription(_mockCollection, subscriptionData);
@@ -138,10 +138,10 @@ namespace Infrastructure.Tests.Services
         {
             // Arrange: Create a SubscriptionData with a list of coin allocations.
             var userId = ObjectId.GenerateNewId();
-            var coinAllocations = new List<CoinAllocationData>
+            var coinAllocations = new List<AllocationData>
             {
-                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 60 },
-                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 40 }
+                new AllocationData { AssetId = ObjectId.GenerateNewId(), PercentAmount = 60 },
+                new AllocationData { AssetId = ObjectId.GenerateNewId(), PercentAmount = 40 }
             };
 
             var subscriptionData = new SubscriptionData
@@ -149,7 +149,7 @@ namespace Infrastructure.Tests.Services
                 UserId = userId,
                 Interval = "Monthly",
                 Amount = 100,
-                CoinAllocations = coinAllocations
+                Allocations = coinAllocations
             };
 
             SetupFindAsyncSubscription(_mockCollection, subscriptionData);
@@ -163,7 +163,7 @@ namespace Infrastructure.Tests.Services
             Assert.NotNull(subscriptionsList);
             Assert.Single(subscriptionsList);
             Assert.Equal(100, subscriptionsList[0].Amount);
-            Assert.Equal(2, subscriptionsList[0].CoinAllocations.Count());
+            Assert.Equal(2, subscriptionsList[0].Allocations.Count());
         }
         [Fact]
         public async Task GetUserSubscriptionsAsync_WhenNoSubscriptions_ReturnsEmptyList()
@@ -186,10 +186,10 @@ namespace Infrastructure.Tests.Services
         {
             // Arrange: Create a SubscriptionData with a list of coin allocations.
             var userId = ObjectId.GenerateNewId();
-            var coinAllocations = new List<CoinAllocationData>
+            var coinAllocations = new List<AllocationData>
             {
-                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 60 },
-                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 40 }
+                new AllocationData { AssetId = ObjectId.GenerateNewId(), PercentAmount = 60 },
+                new AllocationData { AssetId = ObjectId.GenerateNewId(), PercentAmount = 40 }
             };
 
             var subscriptionData = new SubscriptionData
@@ -197,31 +197,18 @@ namespace Infrastructure.Tests.Services
                 UserId = userId,
                 Interval = "Monthly",
                 Amount = 100,
-                CoinAllocations = coinAllocations,
-                Balances = new List<BalanceData>()
-                {
-                    new BalanceData
-                    {
-                        CoinId = coinAllocations[0].CoinId,
-                        Quantity = 0
-                    },
-                    new BalanceData
-                    {
-                        CoinId = coinAllocations[1].CoinId,
-                        Quantity = 0
-                    },
-                }
+                Allocations = coinAllocations
             };
 
             var updateBalances = new List<BalanceData>()
             {
                 new BalanceData {
-                    CoinId = coinAllocations[0].CoinId,
-                    Quantity = 0.003m
+                    CoinId = coinAllocations[0].AssetId,
+                    Total = 0.003m
                 },
                 new BalanceData {
-                    CoinId = coinAllocations[1].CoinId,
-                    Quantity = 1.7m
+                    CoinId = coinAllocations[1].AssetId,
+                    Total = 1.7m
                 }
             };
 
@@ -241,10 +228,10 @@ namespace Infrastructure.Tests.Services
         {
             // Arrange: Create a SubscriptionData with a list of coin allocations.
             var userId = ObjectId.GenerateNewId();
-            var coinAllocations = new List<CoinAllocationData>
+            var coinAllocations = new List<AllocationData>
             {
-                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 60 },
-                new CoinAllocationData { CoinId = ObjectId.GenerateNewId(), PercentAmount = 40 }
+                new AllocationData { AssetId = ObjectId.GenerateNewId(), PercentAmount = 60 },
+                new AllocationData { AssetId = ObjectId.GenerateNewId(), PercentAmount = 40 }
             };
 
             var subscriptionData = new SubscriptionData
@@ -252,31 +239,31 @@ namespace Infrastructure.Tests.Services
                 UserId = userId,
                 Interval = "Monthly",
                 Amount = 100,
-                CoinAllocations = coinAllocations,
-                Balances = new List<BalanceData>()
+                Allocations = coinAllocations,
+                Balances = new List<ExchangeBalanceData>()
                 {
-                    new BalanceData
+                    new ExchangeBalanceData
                     {
-                        CoinId = coinAllocations[0].CoinId,
-                        Quantity = 0
+                        CoinId = coinAllocations[0].AssetId,
+                        Total = 0
                     },
-                    new BalanceData
+                    new ExchangeBalanceData
                     {
-                        CoinId = coinAllocations[1].CoinId,
-                        Quantity = 0
+                        CoinId = coinAllocations[1].AssetId,
+                        Total = 0
                     },
                 }
             };
 
-            var updateBalances = new List<BalanceData>()
+            var updateBalances = new List<ExchangeBalanceData>()
             {
-                new BalanceData {
-                    CoinId = coinAllocations[0].CoinId,
-                    Quantity = 0.003m
+                new ExchangeBalanceData {
+                    CoinId = coinAllocations[0].AssetId,
+                    Total = 0.003m
                 },
-                new BalanceData {
-                    CoinId = coinAllocations[1].CoinId,
-                    Quantity = 1.7m
+                new ExchangeBalanceData {
+                    CoinId = coinAllocations[1].AssetId,
+                    Total = 1.7m
                 }
             };
 

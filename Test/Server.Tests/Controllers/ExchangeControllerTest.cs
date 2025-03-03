@@ -2,7 +2,7 @@
 using crypto_investment_project.Server.Controllers;
 using Domain.Constants;
 using Domain.DTOs;
-using Domain.Models.Transaction;
+using Domain.Models.Payment;
 using Infrastructure.Tests.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -46,7 +46,7 @@ namespace Server.Tests.Controllers
             });
 
             var mockExchangeService = new Mock<IExchangeService>();
-            mockExchangeService.Setup(x => x.ProcessTransaction(It.IsAny<TransactionData>()))
+            mockExchangeService.Setup(x => x.ProcessTransaction(It.IsAny<PaymentData>()))
                                .ReturnsAsync(expectedResponses);
 
             var controller = new ExchangeController(mockExchangeService.Object);

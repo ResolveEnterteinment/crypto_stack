@@ -3,7 +3,6 @@ using Binance.Net.Objects.Models.Spot;
 using BinanceLibrary;
 using Domain.Constants;
 using Domain.DTOs;
-using Domain.Models.Balance;
 using Domain.Models.Crypto;
 using Domain.Models.Exchange;
 using Domain.Models.Subscription;
@@ -58,12 +57,12 @@ namespace Infrastructure.Tests.Services
         }
 
         // Helper to setup IMongoCollection<CoinData>'s FindAsync using FakeAsyncCursor.
-        private static void SetupFindAsync(Mock<IMongoCollection<CoinData>> collectionMock, IEnumerable<CoinData> data)
+        private static void SetupFindAsync(Mock<IMongoCollection<AssetData>> collectionMock, IEnumerable<AssetData> data)
         {
-            var fakeCursor = new FakeAsyncCursor<CoinData>(data);
+            var fakeCursor = new FakeAsyncCursor<AssetData>(data);
             collectionMock.Setup(x => x.FindAsync(
-                It.IsAny<FilterDefinition<CoinData>>(),
-                It.IsAny<FindOptions<CoinData, CoinData>>(),
+                It.IsAny<FilterDefinition<AssetData>>(),
+                It.IsAny<FindOptions<AssetData, AssetData>>(),
                 It.IsAny<CancellationToken>()))
                 .ReturnsAsync(fakeCursor);
         }
@@ -78,10 +77,10 @@ namespace Infrastructure.Tests.Services
                 IOptions<MongoDbSettings> mongoDbSettings,
                 IMongoClient mongoClient,
                 ISubscriptionService subscriptionService,
-                ICoinService coinService,
+                IAssetService assetService,
                 ILogger<ExchangeService> logger,
                 IBinanceService testBinanceService)
-                : base(binanceSettings, mongoDbSettings, mongoClient, subscriptionService, coinService, logger)
+                : base(binanceSettings, mongoDbSettings, mongoClient, subscriptionService, assetService, logger)
             {
                 _testBinanceService = testBinanceService;
                 CreateBinanceService(null, _testBinanceService);
@@ -97,8 +96,8 @@ namespace Infrastructure.Tests.Services
             var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest();
             var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
             var coinAllocation = TestDataFactory.CreateDefaultCoinAllocation();
-            var allocations = new List<CoinAllocationData> { coinAllocation };
-            var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.CoinId);
+            var allocations = new List<AllocationData> { coinAllocation };
+            var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.AssetId);
             var fakeOrder = TestDataFactory.CreateDefaultOrder();
 
             var mockBinanceService = new Mock<IBinanceService>();
@@ -107,14 +106,14 @@ namespace Infrastructure.Tests.Services
 
             var mockSubscriptionService = new Mock<ISubscriptionService>();
             mockSubscriptionService.Setup(x => x.GetAllocationsAsync(transactionData.SubscriptionId))
-                                   .ReturnsAsync(ResultWrapper<IReadOnlyCollection<CoinAllocationData>>.Success(allocations));
-            mockSubscriptionService.Setup(x => x.UpdateBalancesAsync(It.IsAny<ObjectId>(), It.IsAny<IEnumerable<BalanceData>>()))
-                                        .Returns(Task.FromResult(ResultWrapper<IReadOnlyCollection<BalanceData>>.Success(new List<BalanceData>())));
+                                   .ReturnsAsync(ResultWrapper<IReadOnlyCollection<AllocationData>>.Success(allocations));
+            mockSubscriptionService.Setup(x => x.UpdateBalancesAsync(It.IsAny<ObjectId>(), It.IsAny<IEnumerable<ExchangeBalanceData>>()))
+                                        .Returns(Task.FromResult(ResultWrapper<IReadOnlyCollection<ExchangeBalanceData>>.Success(new List<ExchangeBalanceData>())));
 
-            var mockCoinService = new Mock<ICoinService>();
-            mockCoinService.Setup(x => x.GetByIdAsync(coinAllocation.CoinId))
+            var mockCoinService = new Mock<IAssetService>();
+            mockCoinService.Setup(x => x.GetByIdAsync(coinAllocation.AssetId))
                            .ReturnsAsync(coinData);
-            mockCoinService.Setup(x => x.GetCryptoFromSymbolAsync("BTCUSDT"))
+            mockCoinService.Setup(x => x.GetFromSymbolAsync("BTCUSDT"))
                            .ReturnsAsync(coinData);
 
             _mockExchangeOrderCollection.Setup(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default))
@@ -153,8 +152,8 @@ namespace Infrastructure.Tests.Services
             var exchangeRequest = TestDataFactory.CreateDefaultExchangeRequest(netAmount: 0);
             var transactionData = TestDataFactory.CreateDefaultTransactionData(exchangeRequest);
             var coinAllocation = TestDataFactory.CreateDefaultCoinAllocation();
-            var allocations = new List<CoinAllocationData> { coinAllocation };
-            var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.CoinId);
+            var allocations = new List<AllocationData> { coinAllocation };
+            var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.AssetId);
             var fakeOrder = TestDataFactory.CreateDefaultOrder();
 
             var mockBinanceService = new Mock<IBinanceService>();
@@ -163,14 +162,14 @@ namespace Infrastructure.Tests.Services
 
             var mockSubscriptionService = new Mock<ISubscriptionService>();
             mockSubscriptionService.Setup(x => x.GetAllocationsAsync(transactionData.SubscriptionId))
-                                   .ReturnsAsync(ResultWrapper<IReadOnlyCollection<CoinAllocationData>>.Success(allocations));
-            mockSubscriptionService.Setup(x => x.UpdateBalancesAsync(It.IsAny<ObjectId>(), It.IsAny<IEnumerable<BalanceData>>()))
-                                        .Returns(Task.FromResult(ResultWrapper<IReadOnlyCollection<BalanceData>>.Success(new List<BalanceData>())));
+                                   .ReturnsAsync(ResultWrapper<IReadOnlyCollection<AllocationData>>.Success(allocations));
+            mockSubscriptionService.Setup(x => x.UpdateBalancesAsync(It.IsAny<ObjectId>(), It.IsAny<IEnumerable<ExchangeBalanceData>>()))
+                                        .Returns(Task.FromResult(ResultWrapper<IReadOnlyCollection<ExchangeBalanceData>>.Success(new List<ExchangeBalanceData>())));
 
-            var mockCoinService = new Mock<ICoinService>();
-            mockCoinService.Setup(x => x.GetByIdAsync(coinAllocation.CoinId))
+            var mockCoinService = new Mock<IAssetService>();
+            mockCoinService.Setup(x => x.GetByIdAsync(coinAllocation.AssetId))
                            .ReturnsAsync(coinData);
-            mockCoinService.Setup(x => x.GetCryptoFromSymbolAsync("BTCUSDT"))
+            mockCoinService.Setup(x => x.GetFromSymbolAsync("BTCUSDT"))
                            .ReturnsAsync(coinData);
 
             _mockExchangeOrderCollection.Setup(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default))
@@ -204,12 +203,12 @@ namespace Infrastructure.Tests.Services
 
             var mockSubscriptionService = new Mock<ISubscriptionService>();
             mockSubscriptionService.Setup(x => x.GetAllocationsAsync(transactionData.SubscriptionId))
-                                   .ReturnsAsync(ResultWrapper<IReadOnlyCollection<CoinAllocationData>>.Failure(FailureReason.ValidationError, "Subscription allocations can not be empty/null."));
-            mockSubscriptionService.Setup(x => x.UpdateBalancesAsync(It.IsAny<ObjectId>(), It.IsAny<IEnumerable<BalanceData>>()))
-                                        .Returns(Task.FromResult(ResultWrapper<IReadOnlyCollection<BalanceData>>.Success(new List<BalanceData>())));
+                                   .ReturnsAsync(ResultWrapper<IReadOnlyCollection<AllocationData>>.Failure(FailureReason.ValidationError, "Subscription allocations can not be empty/null."));
+            mockSubscriptionService.Setup(x => x.UpdateBalancesAsync(It.IsAny<ObjectId>(), It.IsAny<IEnumerable<ExchangeBalanceData>>()))
+                                        .Returns(Task.FromResult(ResultWrapper<IReadOnlyCollection<ExchangeBalanceData>>.Success(new List<ExchangeBalanceData>())));
 
             var mockBinanceService = new Mock<IBinanceService>();
-            var mockCoinService = new Mock<ICoinService>();
+            var mockCoinService = new Mock<IAssetService>();
 
             _mockExchangeOrderCollection.Setup(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default))
                                         .Returns(Task.CompletedTask);
@@ -242,10 +241,10 @@ namespace Infrastructure.Tests.Services
 
             // Create an allocation with PercentAmount set to 120 (out of range).
             var coinAllocation = TestDataFactory.CreateDefaultCoinAllocation(percentAmount: 120);
-            var allocations = new List<CoinAllocationData> { coinAllocation };
+            var allocations = new List<AllocationData> { coinAllocation };
 
             // Create fake coin data (will not be used because the allocation is invalid).
-            var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.CoinId);
+            var coinData = TestDataFactory.CreateDefaultCoinData(coinAllocation.AssetId);
             var fakeOrder = TestDataFactory.CreateDefaultOrder();
 
             // Setup mocks for IBinanceService.
@@ -257,17 +256,17 @@ namespace Infrastructure.Tests.Services
             // Setup mock for ISubscriptionService.
             var mockSubscriptionService = new Mock<ISubscriptionService>();
             mockSubscriptionService.Setup(x => x.GetAllocationsAsync(transactionData.SubscriptionId))
-                                   .ReturnsAsync(ResultWrapper<IReadOnlyCollection<CoinAllocationData>>.Success(allocations));
-            mockSubscriptionService.Setup(x => x.UpdateBalancesAsync(It.IsAny<ObjectId>(), It.IsAny<IEnumerable<BalanceData>>()))
-                                        .Returns(Task.FromResult(ResultWrapper<IReadOnlyCollection<BalanceData>>.Success(new List<BalanceData>())));
+                                   .ReturnsAsync(ResultWrapper<IReadOnlyCollection<AllocationData>>.Success(allocations));
+            mockSubscriptionService.Setup(x => x.UpdateBalancesAsync(It.IsAny<ObjectId>(), It.IsAny<IEnumerable<ExchangeBalanceData>>()))
+                                        .Returns(Task.FromResult(ResultWrapper<IReadOnlyCollection<ExchangeBalanceData>>.Success(new List<ExchangeBalanceData>())));
 
             // Setup mocks for ICoinService.
-            var mockCoinService = new Mock<ICoinService>();
+            var mockCoinService = new Mock<IAssetService>();
             mockCoinService
-                .Setup(x => x.GetByIdAsync(coinAllocation.CoinId))
+                .Setup(x => x.GetByIdAsync(coinAllocation.AssetId))
                 .ReturnsAsync(coinData);
             mockCoinService
-                .Setup(x => x.GetCryptoFromSymbolAsync("BTCUSDT"))
+                .Setup(x => x.GetFromSymbolAsync("BTCUSDT"))
                 .ReturnsAsync(coinData);
 
             // Setup a mock IMongoCollection for ExchangeOrderData.
@@ -339,10 +338,10 @@ namespace Infrastructure.Tests.Services
             var coinId1 = ObjectId.GenerateNewId();
             var coinId2 = ObjectId.GenerateNewId();
             // First allocation: 30%, returns null coin data.
-            var coinAllocation1 = new CoinAllocationData { CoinId = coinId1, PercentAmount = 30 };
+            var coinAllocation1 = new AllocationData { AssetId = coinId1, PercentAmount = 30 };
             // Second allocation: 70%, returns valid coin data.
-            var coinAllocation2 = new CoinAllocationData { CoinId = coinId2, PercentAmount = 70 };
-            var allocations = new List<CoinAllocationData> { coinAllocation1, coinAllocation2 };
+            var coinAllocation2 = new AllocationData { AssetId = coinId2, PercentAmount = 70 };
+            var allocations = new List<AllocationData> { coinAllocation1, coinAllocation2 };
 
             // For first allocation, GetCoinDataAsync returns null.
             // For second allocation, return valid coin data.
@@ -368,18 +367,18 @@ namespace Infrastructure.Tests.Services
 
             var mockSubscriptionService = new Mock<ISubscriptionService>();
             mockSubscriptionService.Setup(x => x.GetAllocationsAsync(transactionData.SubscriptionId))
-                                   .ReturnsAsync(ResultWrapper<IReadOnlyCollection<CoinAllocationData>>.Success(allocations));
-            mockSubscriptionService.Setup(x => x.UpdateBalancesAsync(It.IsAny<ObjectId>(), It.IsAny<IEnumerable<BalanceData>>()))
-                                        .Returns(Task.FromResult(ResultWrapper<IReadOnlyCollection<BalanceData>>.Success(new List<BalanceData>())));
+                                   .ReturnsAsync(ResultWrapper<IReadOnlyCollection<AllocationData>>.Success(allocations));
+            mockSubscriptionService.Setup(x => x.UpdateBalancesAsync(It.IsAny<ObjectId>(), It.IsAny<IEnumerable<ExchangeBalanceData>>()))
+                                        .Returns(Task.FromResult(ResultWrapper<IReadOnlyCollection<ExchangeBalanceData>>.Success(new List<ExchangeBalanceData>())));
 
-            var mockCoinService = new Mock<ICoinService>();
+            var mockCoinService = new Mock<IAssetService>();
             // First allocation: return null.
             mockCoinService.Setup(x => x.GetByIdAsync(coinId1))
-                           .ReturnsAsync((CoinData?)null);
+                           .ReturnsAsync((AssetData?)null);
             // Second allocation: return valid coin data.
             mockCoinService.Setup(x => x.GetByIdAsync(coinId2))
                            .ReturnsAsync(coinData2);
-            mockCoinService.Setup(x => x.GetCryptoFromSymbolAsync("BTCUSDT"))
+            mockCoinService.Setup(x => x.GetFromSymbolAsync("BTCUSDT"))
                            .ReturnsAsync(coinData2);
 
             _mockExchangeOrderCollection.Setup(x => x.InsertOneAsync(It.IsAny<ExchangeOrderData>(), null, default))

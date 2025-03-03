@@ -9,7 +9,10 @@ namespace Domain.Interfaces
         Task<T> GetByIdAsync(ObjectId id);
         Task<List<T>> GetAllAsync(FilterDefinition<T> filter = null);
         Task<InsertResult> InsertOneAsync(T entity);
-        Task<UpdateResult> UpdateAsync(ObjectId id, object updatedFields);
+        Task<InsertResult> InsertOneAsync(IClientSessionHandle session, T entity);
+        Task<UpdateResult> UpdateOneAsync(ObjectId id, object updatedFields);
+        Task<UpdateResult> UpdateOneAsync(IClientSessionHandle session, ObjectId id, object updatedFields);
         Task<DeleteResult> DeleteAsync(ObjectId id);
+        Task<DeleteResult> DeleteAsync(IClientSessionHandle session, ObjectId id);
     }
 }

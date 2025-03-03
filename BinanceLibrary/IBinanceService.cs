@@ -1,4 +1,5 @@
 ﻿using Binance.Net.Objects.Models.Spot;
+using Domain.DTOs;
 using MongoDB.Bson;
 
 namespace BinanceLibrary
@@ -9,5 +10,6 @@ namespace BinanceLibrary
         public Task<BinancePlacedOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity, ObjectId subscriptionId);
         public Task<decimal> GetFiatBalanceAsync(string symbol);
         public Task<BinancePlacedOrder> GetOrderInfoAsync(long orderId);
+        public Task<ResultWrapper<IEnumerable<BinanceBalance>>> GetBalancesAsync(IEnumerable<string>? tickers = null);
     }
 }

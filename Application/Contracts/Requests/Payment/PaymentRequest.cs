@@ -1,13 +1,11 @@
-﻿namespace Application.Contracts.Requests.Exchange
+﻿namespace Application.Contracts.Requests.Payment
 {
-    public class ExchangeRequest
+    public class PaymentRequest
     {
-
-        public required string Id { get; set; }
-        public required DateTime CreateTime { get; set; }
         public required string UserId { get; set; }
         public required string SubscriptionId { get; set; }
-        public required string PaymentProviderId { get; set; }
+        public required string PaymentId { get; set; }
+        public required string Currency { get; set; }
         public required decimal TotalAmount { get; set; }
         public required decimal PaymentProviderFee { get; set; }
         public required decimal PlatformFee { get; set; }

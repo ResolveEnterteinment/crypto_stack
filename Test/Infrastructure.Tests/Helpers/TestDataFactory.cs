@@ -1,40 +1,37 @@
 ﻿// File: TestDataFactory.cs
-using Application.Contracts.Requests.Exchange;
+using Application.Contracts.Requests.Payment;
 using Binance.Net.Objects.Models.Spot;
 using Domain.Models.Crypto;
 using Domain.Models.Subscription;
-using Domain.Models.Transaction;
 using MongoDB.Bson;
 
 namespace Infrastructure.Tests.Helpers
 {
     public static class TestDataFactory
     {
-        public static ExchangeRequest CreateDefaultExchangeRequest(decimal netAmount = 100m)
+        public static PaymentRequest CreateDefaultExchangeRequest(long netAmount = 100)
         {
-            return new ExchangeRequest
+            return new PaymentRequest
             {
-                Id = ObjectId.GenerateNewId().ToString(),
-                CreateTime = DateTime.UtcNow,
                 UserId = ObjectId.GenerateNewId().ToString(),
                 SubscriptionId = ObjectId.GenerateNewId().ToString(),
-                PaymentProviderId = "pp1",
+                PaymentId = "pp1",
                 TotalAmount = 103,
-                PaymentProviderFee = 2m,
+                PaymentProviderFee = 2,
                 PlatformFee = 1,
                 NetAmount = netAmount,
+                Currency = "USD",
                 Status = "Pending"
             };
         }
 
-        public static TransactionData CreateDefaultTransactionData(ExchangeRequest request)
+        public static Domain.Models.Payment.PaymentData CreateDefaultTransactionData(PaymentRequest request)
         {
-            TransactionData transactionData = new()
+            Domain.Models.Payment.PaymentData transactionData = new()
             {
                 UserId = new ObjectId(request.UserId),
                 SubscriptionId = new ObjectId(request.SubscriptionId),
-                TransactionId = ObjectId.Parse(request.Id),
-                PaymentProviderId = request.PaymentProviderId,
+                PaymentProviderId = request.PaymentId,
                 PaymentProviderFee = request.PaymentProviderFee,
                 TotalAmount = request.TotalAmount,
                 PlatformFee = request.PlatformFee,
@@ -44,18 +41,18 @@ namespace Infrastructure.Tests.Helpers
             return transactionData;
         }
 
-        public static CoinAllocationData CreateDefaultCoinAllocation(uint percentAmount = 100, ObjectId? coinId = null)
+        public static AllocationData CreateDefaultCoinAllocation(uint percentAmount = 100, ObjectId? coinId = null)
         {
-            return new CoinAllocationData
+            return new AllocationData
             {
-                CoinId = coinId ?? ObjectId.GenerateNewId(),
+                AssetId = coinId ?? ObjectId.GenerateNewId(),
                 PercentAmount = percentAmount
             };
         }
 
-        public static CoinData CreateDefaultCoinData(ObjectId coinId)
+        public static AssetData CreateDefaultCoinData(ObjectId coinId)
         {
-            return new CoinData
+            return new AssetData
             {
                 _id = coinId,
                 CreateTime = DateTime.UtcNow,
@@ -82,14 +79,14 @@ namespace Infrastructure.Tests.Helpers
                 Status = Binance.Net.Enums.OrderStatus.Filled,
             };
         }
-        public static SubscriptionData CreateDefaultSubscription()
+        public static Domain.Models.Subscription.SubscriptionData CreateDefaultSubscription()
         {
-            return new SubscriptionData
+            return new Domain.Models.Subscription.SubscriptionData
             {
                 UserId = ObjectId.GenerateNewId(),
                 Interval = "Monthly",
                 Amount = 100,
-                CoinAllocations = new List<CoinAllocationData>(){
+                Allocations = new List<AllocationData>(){
                     CreateDefaultCoinAllocation(60),
                     CreateDefaultCoinAllocation(40)
                 }

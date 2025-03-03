@@ -1,7 +1,6 @@
 using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
 using Domain.Models.Payment;
-using Infrastructure.Services;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 
@@ -9,18 +8,17 @@ namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    public class ExchangeController(IExchangeService exchangeService, IAssetService assetService) : ControllerBase
+    public class TestController(IExchangeService exchangeService) : ControllerBase
     {
         private readonly IExchangeService _exchangeService = exchangeService;
-        private readonly IAssetService _assetService = assetService;
 
         [HttpPost]
-        [Route("payment")]
-        public async Task<IActionResult> Payment([FromBody] PaymentRequest paymentRequest)
+        [Route("newTransaction")]
+        public async Task<IActionResult> Post([FromBody] PaymentRequest paymentRequest)
         {
             if (paymentRequest is null)
             {
-                return BadRequest("A valid payment is required.");
+                return BadRequest("A valid transaction is required.");
             }
             PaymentData paymentData = new()
             {
@@ -40,25 +38,7 @@ namespace crypto_investment_project.Server.Controllers
             }
             catch (Exception ex)
             {
-                var message = string.Format("Unable to process payment. {0}", ex.Message);
-                return BadRequest(message);
-            }
-        }
-
-        [HttpPost]
-        [Route("reset")]
-        public async Task<IActionResult> ResetBalances()
-        {
-            try
-            {
-                var supportedAssetsResult = await _assetService.GetSupportedTickersAsync();
-                var filter = supportedAssetsResult.IsSuccess ? supportedAssetsResult.Data : null;
-                var result = await _exchangeService.ResetBalances(filter);
-                return !result.IsSuccess ? throw new Exception(result.ErrorMessage) : (IActionResult)Ok(result.Data);
-            }
-            catch (Exception ex)
-            {
-                var message = string.Format("Unable to reset balances. {0}", ex.Message);
+                var message = string.Format("Exchange order could not be initiated. {0}", ex.Message);
                 return BadRequest(message);
             }
         }

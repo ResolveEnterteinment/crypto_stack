@@ -13,12 +13,12 @@ namespace Infrastructure.Tests.Services
 {
     public class CoinServiceTests
     {
-        private readonly Mock<IMongoCollection<CoinData>> _mockCollection;
+        private readonly Mock<IMongoCollection<AssetData>> _mockCollection;
         private readonly Mock<IMongoDatabase> _mockDatabase;
         private readonly Mock<IMongoClient> _mockMongoClient;
         private readonly IOptions<MongoDbSettings> _mongoDbSettings;
         private readonly HttpClient _httpClient;
-        private readonly ILogger<CoinService> _logger;
+        private readonly ILogger<AssetService> _logger;
         private readonly IConfiguration _configuration;
 
         public CoinServiceTests()
@@ -32,18 +32,18 @@ namespace Infrastructure.Tests.Services
             _httpClient = new HttpClient();
 
             var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
-            _logger = loggerFactory.CreateLogger<CoinService>();
+            _logger = loggerFactory.CreateLogger<AssetService>();
 
             var inMemorySettings = new Dictionary<string, string>();
             _configuration = new ConfigurationBuilder()
                 .AddInMemoryCollection(inMemorySettings)
                 .Build();
 
-            _mockCollection = new Mock<IMongoCollection<CoinData>>();
+            _mockCollection = new Mock<IMongoCollection<AssetData>>();
             _mockDatabase = new Mock<IMongoDatabase>();
             _mockMongoClient = new Mock<IMongoClient>();
 
-            _mockDatabase.Setup(db => db.GetCollection<CoinData>("coins", null))
+            _mockDatabase.Setup(db => db.GetCollection<AssetData>("coins", null))
                 .Returns(_mockCollection.Object);
 
             _mockMongoClient.Setup(client => client.GetDatabase(_mongoDbSettings.Value.DatabaseName, null))
@@ -51,12 +51,12 @@ namespace Infrastructure.Tests.Services
         }
 
         // Helper to setup FindAsync instead of FindSync
-        private void SetupFindAsync(Mock<IMongoCollection<CoinData>> collectionMock, IEnumerable<CoinData> data)
+        private void SetupFindAsync(Mock<IMongoCollection<AssetData>> collectionMock, IEnumerable<AssetData> data)
         {
-            var fakeCursor = new FakeAsyncCursor<CoinData>(data);
+            var fakeCursor = new FakeAsyncCursor<AssetData>(data);
             collectionMock.Setup(x => x.FindAsync(
-                It.IsAny<FilterDefinition<CoinData>>(),
-                It.IsAny<FindOptions<CoinData, CoinData>>(),
+                It.IsAny<FilterDefinition<AssetData>>(),
+                It.IsAny<FindOptions<AssetData, AssetData>>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(fakeCursor);
         }
@@ -64,12 +64,12 @@ namespace Infrastructure.Tests.Services
         [Fact]
         public async Task GetCryptoFromSymbolAsync_WithNullOrEmptySymbol_ReturnsNull()
         {
-            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _logger);
+            var coinService = new AssetService(_mongoDbSettings, _mockMongoClient.Object, _logger);
 
-            var resultEmpty = await coinService.GetCryptoFromSymbolAsync("");
+            var resultEmpty = await coinService.GetFromSymbolAsync("");
             Assert.Null(resultEmpty);
 
-            var resultNull = await coinService.GetCryptoFromSymbolAsync(null!);
+            var resultNull = await coinService.GetFromSymbolAsync(null!);
             Assert.Null(resultNull);
         }
 
@@ -77,23 +77,23 @@ namespace Infrastructure.Tests.Services
         public async Task GetCryptoFromSymbolAsync_WhenCoinNotFound_ReturnsNull()
         {
             // Setup to return an empty list (simulate no coin found)
-            SetupFindAsync(_mockCollection, new List<CoinData>());
-            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _logger);
+            SetupFindAsync(_mockCollection, new List<AssetData>());
+            var coinService = new AssetService(_mongoDbSettings, _mockMongoClient.Object, _logger);
             string testSymbol = "BTCUSDT";
 
-            var result = await coinService.GetCryptoFromSymbolAsync(testSymbol);
+            var result = await coinService.GetFromSymbolAsync(testSymbol);
 
             Assert.Null(result);
             _mockCollection.Verify(x => x.FindAsync(
-                It.IsAny<FilterDefinition<CoinData>>(),
-                It.IsAny<FindOptions<CoinData, CoinData>>(),
+                It.IsAny<FilterDefinition<AssetData>>(),
+                It.IsAny<FindOptions<AssetData, AssetData>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
 
         [Fact]
         public async Task GetCryptoFromSymbolAsync_WhenCoinFound_ReturnsCoinData()
         {
-            var expectedCoin = new CoinData
+            var expectedCoin = new AssetData
             {
                 _id = ObjectId.GenerateNewId(),
                 Name = "Bitcoin",
@@ -104,40 +104,40 @@ namespace Infrastructure.Tests.Services
                 CreateTime = DateTime.UtcNow
             };
 
-            SetupFindAsync(_mockCollection, new List<CoinData> { expectedCoin });
-            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _logger);
+            SetupFindAsync(_mockCollection, new List<AssetData> { expectedCoin });
+            var coinService = new AssetService(_mongoDbSettings, _mockMongoClient.Object, _logger);
             string testSymbol = "BTCUSDT";
 
-            var result = await coinService.GetCryptoFromSymbolAsync(testSymbol);
+            var result = await coinService.GetFromSymbolAsync(testSymbol);
 
             Assert.NotNull(result);
             Assert.Equal(expectedCoin._id, result!._id);
             _mockCollection.Verify(x => x.FindAsync(
-                It.IsAny<FilterDefinition<CoinData>>(),
-                It.IsAny<FindOptions<CoinData, CoinData>>(),
+                It.IsAny<FilterDefinition<AssetData>>(),
+                It.IsAny<FindOptions<AssetData, AssetData>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
 
         [Fact]
         public async Task GetCoinDataAsync_WhenCoinNotFound_ReturnsNull()
         {
-            SetupFindAsync(_mockCollection, new List<CoinData>());
-            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _logger);
+            SetupFindAsync(_mockCollection, new List<AssetData>());
+            var coinService = new AssetService(_mongoDbSettings, _mockMongoClient.Object, _logger);
             var coinId = ObjectId.GenerateNewId();
 
             var result = await coinService.GetByIdAsync(coinId);
 
             Assert.Null(result);
             _mockCollection.Verify(x => x.FindAsync(
-                It.IsAny<FilterDefinition<CoinData>>(),
-                It.IsAny<FindOptions<CoinData, CoinData>>(),
+                It.IsAny<FilterDefinition<AssetData>>(),
+                It.IsAny<FindOptions<AssetData, AssetData>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
 
         [Fact]
         public async Task GetCoinDataAsync_WhenCoinFound_ReturnsCoinData()
         {
-            var expectedCoin = new CoinData
+            var expectedCoin = new AssetData
             {
                 _id = ObjectId.GenerateNewId(),
                 Name = "Ethereum",
@@ -148,8 +148,8 @@ namespace Infrastructure.Tests.Services
                 CreateTime = DateTime.UtcNow
             };
 
-            SetupFindAsync(_mockCollection, new List<CoinData> { expectedCoin });
-            var coinService = new CoinService(_mongoDbSettings, _mockMongoClient.Object, _logger);
+            SetupFindAsync(_mockCollection, new List<AssetData> { expectedCoin });
+            var coinService = new AssetService(_mongoDbSettings, _mockMongoClient.Object, _logger);
             var coinId = expectedCoin._id;
 
             var result = await coinService.GetByIdAsync(coinId);
@@ -157,8 +157,8 @@ namespace Infrastructure.Tests.Services
             Assert.NotNull(result);
             Assert.Equal(expectedCoin._id, result!._id);
             _mockCollection.Verify(x => x.FindAsync(
-                It.IsAny<FilterDefinition<CoinData>>(),
-                It.IsAny<FindOptions<CoinData, CoinData>>(),
+                It.IsAny<FilterDefinition<AssetData>>(),
+                It.IsAny<FindOptions<AssetData, AssetData>>(),
                 It.IsAny<CancellationToken>()), Times.Once);
         }
     }

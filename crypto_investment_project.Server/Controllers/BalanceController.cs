@@ -23,10 +23,11 @@ namespace crypto_investment_project.Server.Controllers
             if (balances.IsSuccess)
             {
                 var query = balances?.Data?
-                .GroupBy(b => b.CoinId, (id, bal) => new
+                .GroupBy(b => b.AssetId, (id, bal) => new
                 {
                     CoinId = id.ToString(),
-                    Quantity = bal.Select(b => b.Quantity).Sum()
+                    Available = bal.Select(b => b.Available).Sum(),
+                    Locked = bal.Select(b => b.Locked).Sum(),
                 });
                 return Ok(query);
             }
@@ -49,10 +50,11 @@ namespace crypto_investment_project.Server.Controllers
             if (balances.IsSuccess)
             {
                 var query = balances?.Data?
-                .GroupBy(b => b.CoinId, (id, bal) => new
+                .GroupBy(b => b.AssetId, (id, bal) => new
                 {
                     CoinId = id.ToString(),
-                    Quantity = bal.Select(b => b.Quantity).Sum()
+                    Available = bal.Select(b => b.Available).Sum(),
+                    Locked = bal.Select(b => b.Locked).Sum(),
                 });
                 return Ok(query);
             }

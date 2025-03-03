@@ -1,10 +1,12 @@
 ﻿namespace Domain.Constants
 {
-    public class SubscriptionIntervalConstants
+    public class SubscriptionInterval
     {
-        public const string Daily = "Daily";
-        public const string Weekly = "Weekly";
-        public const string Monthly = "Monthly";
+        public const string OneTime = "ONE-TIME";
+        public const string Daily = "DAILY";
+        public const string Weekly = "WEEKLY";
+        public const string Monthly = "MONTHLY";
+        public const string Yearly = "YEARLY";
         /*Daily = 10,
         Weekly = 20,
         EveryTwoWeeks = 30,
