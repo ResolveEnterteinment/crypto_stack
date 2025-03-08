@@ -81,7 +81,8 @@ namespace StripeLibrary
                     }
 
                     // Step 6: Return the fee (converted from cents to decimal)
-                    return balanceTransaction.Fee / 100m;
+                    var chargeAmount = Math.Round((decimal)((balanceTransaction.Fee / balanceTransaction.ExchangeRate)), 0, MidpointRounding.AwayFromZero);
+                    return chargeAmount / 100m;
                 }
                 catch (InvalidOperationException ex)
                 {
