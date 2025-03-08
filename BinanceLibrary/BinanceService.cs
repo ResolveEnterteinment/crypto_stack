@@ -13,6 +13,15 @@ namespace BinanceLibrary
     public class BinanceService : IBinanceService
     {
         private readonly BinanceRestClient _binanceClient;
+        private string? MapBinanceStatus(Binance.Net.Enums.OrderStatus status) => status switch
+        {
+            Binance.Net.Enums.OrderStatus.PendingNew or Binance.Net.Enums.OrderStatus.PendingNew => OrderStatus.Pending,
+            Binance.Net.Enums.OrderStatus.Filled => OrderStatus.Filled,
+            Binance.Net.Enums.OrderStatus.PartiallyFilled => OrderStatus.PartiallyFilled,
+            Binance.Net.Enums.OrderStatus.Canceled or Binance.Net.Enums.OrderStatus.Rejected or Binance.Net.Enums.OrderStatus.Expired => OrderStatus.Failed,
+            _ => null
+        };
+
         protected readonly ILogger _logger;
         public BinanceService(IOptions<BinanceSettings> binanceSettings, ILogger logger)
         {
@@ -60,11 +69,22 @@ namespace BinanceLibrary
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
         /// <returns>The order details if successful; otherwise, null.</returns>
-        public async Task<BinancePlacedOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity, ObjectId subscriptionId)
+        public async Task<PlacedExchangeOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity, ObjectId subscriptionId)
         {
             try
             {
-                return await PlaceOrder(symbol, quantity, subscriptionId);
+                var placedBinanceOrder = await PlaceOrder(symbol, quantity, subscriptionId);
+                var placedOrder = new PlacedExchangeOrder()
+                {
+                    Symbol = symbol,
+                    QuoteQuantity = placedBinanceOrder.QuoteQuantity,
+                    QuoteQuantityFilled = placedBinanceOrder.QuoteQuantityFilled,
+                    Price = placedBinanceOrder.AverageFillPrice,
+                    QuantityFilled = placedBinanceOrder.QuantityFilled,
+                    OrderId = placedBinanceOrder.Id,
+                    Status = MapBinanceStatus(placedBinanceOrder.Status),
+                };
+                return placedOrder;
             }
             catch (Exception)
             {
@@ -79,15 +99,25 @@ namespace BinanceLibrary
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
         /// <returns>The order details if successful; otherwise, null.</returns>
-        public async Task<BinancePlacedOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity, ObjectId subscriptionId)
+        public async Task<PlacedExchangeOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity, ObjectId subscriptionId)
         {
             try
             {
-                return await PlaceOrder(symbol, quantity, subscriptionId, Binance.Net.Enums.OrderSide.Sell);
+                var placedBinanceOrder = await PlaceOrder(symbol, quantity, subscriptionId, Binance.Net.Enums.OrderSide.Sell);
+                var placedOrder = new PlacedExchangeOrder()
+                {
+                    Symbol = symbol,
+                    QuoteQuantity = placedBinanceOrder.QuoteQuantity,
+                    QuoteQuantityFilled = placedBinanceOrder.QuoteQuantityFilled,
+                    Price = placedBinanceOrder.AverageFillPrice,
+                    QuantityFilled = placedBinanceOrder.QuantityFilled,
+                    OrderId = placedBinanceOrder.Id,
+                    Status = MapBinanceStatus(placedBinanceOrder.Status),
+                };
+                return placedOrder;
             }
             catch (Exception)
             {
-
                 throw;
             }
         }
@@ -132,10 +162,19 @@ namespace BinanceLibrary
             return ResultWrapper<BinanceBalance>.Success(balanceResult.Data.FirstOrDefault());
         }
 
-        Task<BinancePlacedOrder> IBinanceService.GetOrderInfoAsync(long orderId)
+        public async Task<PlacedExchangeOrder> GetOrderInfoAsync(long orderId)
         {
             //throw new NotImplementedException();
-            return Task.FromResult(new BinancePlacedOrder() { });
+            return await Task.FromResult(new PlacedExchangeOrder()
+            {
+                OrderId = orderId,
+                Symbol = "BTCUSDT",
+                QuoteQuantity = 0,
+                QuoteQuantityFilled = 0,
+                QuantityFilled = 0,
+                Price = 0,
+                Status = "Filled"
+            });
         }
     }
 }

@@ -1,7 +1,5 @@
 ﻿using Application.Interfaces;
 using AspNetCore.Identity.MongoDbCore.Infrastructure;
-//using Binance.Net.Enums;
-using Binance.Net.Objects.Models.Spot;
 using BinanceLibrary;
 using Domain.Constants;
 using Domain.DTOs;
@@ -26,26 +24,16 @@ namespace Domain.Services
         protected IBinanceService _binanceService;
 
         private readonly IEventService _eventService;
-        private readonly IPaymentService _paymentService;
         private readonly ISubscriptionService _subscriptionService;
         private readonly IBalanceService _balanceService;
         private readonly ITransactionService _transactionService;
         private readonly IAssetService _assetService;
-        private string? MapBinanceStatus(Binance.Net.Enums.OrderStatus status) => status switch
-        {
-            Binance.Net.Enums.OrderStatus.PendingNew or Binance.Net.Enums.OrderStatus.PendingNew => OrderStatus.Pending,
-            Binance.Net.Enums.OrderStatus.Filled => OrderStatus.Filled,
-            Binance.Net.Enums.OrderStatus.PartiallyFilled => OrderStatus.PartiallyFilled,
-            Binance.Net.Enums.OrderStatus.Canceled or Binance.Net.Enums.OrderStatus.Rejected or Binance.Net.Enums.OrderStatus.Expired => OrderStatus.Failed,
-            _ => null
-        };
 
         public ExchangeService(
             IOptions<BinanceSettings> binanceSettings,
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
             IEventService eventService,
-            IPaymentService paymentService,
             ISubscriptionService subscriptionService,
             IBalanceService balanceService,
             ITransactionService transactionService,
@@ -54,7 +42,6 @@ namespace Domain.Services
         {
             _binanceService = new BinanceService(binanceSettings, logger); //CreateBinanceService(binanceSettings, logger);
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
-            _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
             _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
@@ -112,7 +99,7 @@ namespace Domain.Services
             }
         }
 
-        public async Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(ObjectId assetId, string assetTicker, decimal quantity, ObjectId subcriptionId, string side = Domain.Constants.OrderSide.Buy, string type = "MARKET")
+        public async Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(ObjectId assetId, string assetTicker, decimal quantity, ObjectId subcriptionId, string side = OrderSide.Buy, string type = "MARKET")
         {
             try
             {
@@ -123,44 +110,33 @@ namespace Domain.Services
 
                 if (string.IsNullOrEmpty(assetTicker))
                 {
-                    throw new ArgumentException("Coin ticker cannot be null or empty.", nameof(assetTicker));
+                    throw new ArgumentException("Asset ticker cannot be null or empty.", nameof(assetTicker));
                 }
 
-                BinancePlacedOrder order = new();
+                PlacedExchangeOrder placedOrder;
                 var symbol = assetTicker + "USDT";
 
-                if (side == Domain.Constants.OrderSide.Buy)
+                if (side == OrderSide.Buy)
                 {
                     //Returns BinancePlacedOrder, otherwise throws Exception
-                    order = await _binanceService.PlaceSpotMarketBuyOrder(symbol, quantity, subcriptionId);
+                    placedOrder = await _binanceService.PlaceSpotMarketBuyOrder(symbol, quantity, subcriptionId);
                 }
-                else if (side == Domain.Constants.OrderSide.Sell)
+                else if (side == OrderSide.Sell)
                 {
                     //Returns BinancePlacedOrder, otherwise throws Exception
-                    order = await _binanceService.PlaceSpotMarketSellOrder(symbol, quantity, subcriptionId);
+                    placedOrder = await _binanceService.PlaceSpotMarketSellOrder(symbol, quantity, subcriptionId);
                 }
                 else
                 {
                     throw new ArgumentException("Invalid order side. Allowed values are BUY or SELL.", nameof(side));
                 }
 
-                var placedOrder = new PlacedExchangeOrder()
-                {
-                    AssetId = assetId,
-                    QuoteQuantity = order.QuoteQuantity,
-                    QuoteQuantityFilled = order.QuoteQuantityFilled,
-                    Price = order.AverageFillPrice,
-                    QuantityFilled = order.QuantityFilled,
-                    OrderId = order.Id,
-                    Status = MapBinanceStatus(order.Status),
-                };
-
                 if (placedOrder.Status == OrderStatus.Failed)
                 {
-                    return ResultWrapper<PlacedExchangeOrder>.Failure(FailureReason.ExchangeApiError, $"Order failed with status {order.Status}");
+                    return ResultWrapper<PlacedExchangeOrder>.Failure(FailureReason.ExchangeApiError, $"Order failed with status {placedOrder.Status}");
                 }
 
-                _logger.LogInformation("Order placed successfully for symbol: {Symbol}, OrderId: {OrderId}, Status: {Status}", symbol, order.Id, order.Status);
+                _logger.LogInformation("Order placed successfully for symbol: {Symbol}, OrderId: {OrderId}, Status: {Status}", symbol, placedOrder.OrderId, placedOrder.Status);
                 return ResultWrapper<PlacedExchangeOrder>.Success(placedOrder);
             }
             catch (Exception ex)
@@ -254,7 +230,7 @@ namespace Domain.Services
                                     PaymentId = payment._id,
                                     SubscriptionId = payment.SubscriptionId,
                                     PlacedOrderId = placedOrder.Data?.OrderId,
-                                    AssetId = placedOrder.Data.AssetId,
+                                    AssetId = alloc.AssetId,
                                     QuoteQuantity = placedOrder.Data.QuoteQuantity,
                                     QuoteQuantityFilled = placedOrder.Data.QuoteQuantityFilled,
                                     Quantity = placedOrder.Data.QuantityFilled,
@@ -273,7 +249,7 @@ namespace Domain.Services
                                 {
                                     UserId = payment.UserId,
                                     SubscriptionId = payment.SubscriptionId,
-                                    AssetId = placedOrder.Data.AssetId,
+                                    AssetId = alloc.AssetId,
                                     Available = placedOrder.Data.QuantityFilled
                                 }, session);
 
@@ -356,7 +332,7 @@ namespace Domain.Services
                 try
                 {
                     if (order.PlacedOrderId is null) throw new ArgumentNullException(nameof(order.PlacedOrderId));
-                    BinancePlacedOrder exchangeOrder = await _binanceService.GetOrderInfoAsync((long)order.PlacedOrderId); // TO-DO: Create GetOrderStatus dunction
+                    PlacedExchangeOrder exchangeOrder = await _binanceService.GetOrderInfoAsync((long)order.PlacedOrderId); // TO-DO: Create GetOrderStatus dunction
 
                     if (exchangeOrder is null) throw new ArgumentNullException(nameof(exchangeOrder));
 
@@ -372,9 +348,9 @@ namespace Domain.Services
                         Price = exchangeOrder.Price
                     });
 
-                    if (exchangeOrder.Status == Binance.Net.Enums.OrderStatus.Rejected || exchangeOrder.Status == Binance.Net.Enums.OrderStatus.Canceled || exchangeOrder.Status == Binance.Net.Enums.OrderStatus.Expired)
+                    if (exchangeOrder.Status == OrderStatus.Failed)
                         await HandleFailedOrderAsync(order);
-                    else if (exchangeOrder.Status == Binance.Net.Enums.OrderStatus.PartiallyFilled)
+                    else if (exchangeOrder.Status == OrderStatus.PartiallyFilled)
                         await HandlePartiallyFilledOrderAsync(order);
                 }
                 catch (Exception ex)

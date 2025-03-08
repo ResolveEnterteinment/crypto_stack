@@ -13,6 +13,5 @@ namespace Domain.Models.Balance
         public ObjectId AssetId { get; set; }
         public decimal Available { get; set; } = decimal.Zero;
         public decimal Locked { get; set; } = decimal.Zero;
-        public IEnumerable<ObjectId> Transactions { get; set; } = Enumerable.Empty<ObjectId>();
     }
 }

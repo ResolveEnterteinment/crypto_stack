@@ -92,7 +92,6 @@ namespace Domain.Services
                     var balance = await GetOneAsync(filter);
                     var updateAvailable = balance.Available + updateBalance.Available;
                     var updateLocked = balance.Locked + updateBalance.Locked;
-                    var updateOrders = balance.Transactions.Append(orderId).ToList();
                     var updateFields = new
                     {
                         Available = updateAvailable,
@@ -103,7 +102,6 @@ namespace Domain.Services
                 }
                 catch (Exception)
                 {
-                    updateBalance.Transactions.Append(orderId);
                     await InsertOneAsync(updateBalance);
                 }
 
