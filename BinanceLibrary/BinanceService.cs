@@ -142,7 +142,7 @@ namespace BinanceLibrary
                 }
 
                 var result = balances.ToList();
-                _logger.LogInformation("Successfully retrieved {Count} balances from Binance", result.Count);
+                _logger.LogInformation("Successfully retrieved {Count} balance(s) from Binance", result.Count);
                 return ResultWrapper<IEnumerable<BinanceBalance>>.Success(result);
             }
             catch (Exception ex)
@@ -159,7 +159,9 @@ namespace BinanceLibrary
             {
                 return ResultWrapper<BinanceBalance>.Failure(balanceResult.FailureReason, balanceResult.ErrorMessage);
             }
-            return ResultWrapper<BinanceBalance>.Success(balanceResult.Data.FirstOrDefault());
+            var balance = balanceResult.Data.FirstOrDefault();
+            _logger.LogInformation($"{symbol} balance: from Binance: {balance}");
+            return ResultWrapper<BinanceBalance>.Success(balance);
         }
 
         public async Task<PlacedExchangeOrder> GetOrderInfoAsync(long orderId)

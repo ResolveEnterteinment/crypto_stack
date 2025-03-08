@@ -10,7 +10,7 @@ namespace Domain.Controllers
     [Route("api/[controller]")]
     public class PaymentWebhookController : ControllerBase
     {
-        private readonly IAssetService _assetService;
+        //private readonly IAssetService _assetService;
         private readonly IPaymentService _paymentService;
         private readonly ILogger<PaymentWebhookController> _logger;
 
@@ -20,7 +20,7 @@ namespace Domain.Controllers
             ILogger<PaymentWebhookController> logger)
         {
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
-            _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
+            //_assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -52,9 +52,12 @@ namespace Domain.Controllers
             try
             {
                 var totalAmount = paymentIntent.Amount / 100m;
-                var paymentFee = (totalAmount * 0.029m) + 0.30m;
-                var platformFee = totalAmount * 0.01m;
-                var netAmount = totalAmount - paymentFee - platformFee;
+
+                // Get Stripe fee dynamically via StripeService
+                var paymentFee = await _paymentService.GetFeeAsync(paymentIntent.Id);
+                var netAmountAfterStripe = totalAmount - paymentFee;
+                var platformFee = totalAmount * 0.01m; // Your 1% fee
+                var netAmount = netAmountAfterStripe - platformFee;
 
                 var paymentRequest = new PaymentRequest
                 {
@@ -69,7 +72,6 @@ namespace Domain.Controllers
                     Status = paymentIntent.Status
                 };
 
-                // Validate required fields
                 if (string.IsNullOrWhiteSpace(paymentRequest.UserId) || string.IsNullOrWhiteSpace(paymentRequest.SubscriptionId))
                 {
                     _logger.LogWarning("Missing metadata in PaymentIntent {PaymentId}: UserId or SubscriptionId", paymentIntent.Id);

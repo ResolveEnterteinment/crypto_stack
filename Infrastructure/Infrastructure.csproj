@@ -25,6 +25,7 @@
     <ProjectReference Include="..\Application\Application.csproj" />
     <ProjectReference Include="..\BinanceLibrary\BinanceLibrary.csproj" />
     <ProjectReference Include="..\Domain\Domain.csproj" />
+    <ProjectReference Include="..\StripeLibrary\StripeLibrary.csproj" />
   </ItemGroup>
 
 </Project>

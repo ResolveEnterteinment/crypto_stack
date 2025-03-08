@@ -21,6 +21,7 @@ namespace Domain.Services
 {
     public class ExchangeService : BaseService<ExchangeOrderData>, IExchangeService, INotificationHandler<PaymentReceivedEvent>
     {
+        private readonly string _reserveStableAssetTicker;
         protected IBinanceService _binanceService;
 
         private readonly IEventService _eventService;
@@ -30,6 +31,7 @@ namespace Domain.Services
         private readonly IAssetService _assetService;
 
         public ExchangeService(
+            IOptions<ExchangeSettings> exchangeSettings,
             IOptions<BinanceSettings> binanceSettings,
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
@@ -40,6 +42,7 @@ namespace Domain.Services
             IAssetService assetService,
             ILogger<ExchangeService> logger) : base(mongoClient, mongoDbSettings, "exchange_orders", logger)
         {
+            _reserveStableAssetTicker = exchangeSettings.Value.ReserveStableAssetTicker;
             _binanceService = new BinanceService(binanceSettings, logger); //CreateBinanceService(binanceSettings, logger);
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
@@ -214,10 +217,15 @@ namespace Domain.Services
                         var remainingQuoteOrderQuantity = quoteOrderQuantity - previousOrdersSum;
 
                         var symbol = alloc.AssetTicker + "USDT";
-                        var placedOrder = await PlaceExchangeOrderAsync(alloc.AssetId, alloc.AssetTicker, remainingQuoteOrderQuantity, payment.SubscriptionId);
-                        if (!placedOrder.IsSuccess || placedOrder.Data is null || placedOrder.Data.Status == OrderStatus.Failed)
-                            throw new Exception($"Unable to place order: {placedOrder.ErrorMessage}");
-
+                        var placedOrderResult = await PlaceExchangeOrderAsync(alloc.AssetId, alloc.AssetTicker, remainingQuoteOrderQuantity, payment.SubscriptionId);
+                        if (!placedOrderResult.IsSuccess || placedOrderResult.Data is null || placedOrderResult.Data.Status == OrderStatus.Failed)
+                            throw new Exception($"Unable to place order: {placedOrderResult.ErrorMessage}");
+                        var placedOrder = placedOrderResult.Data;
+                        var dust = placedOrder.QuoteQuantity - placedOrder.QuoteQuantityFilled;
+                        if (placedOrder.Status == OrderStatus.Filled && dust > 0m)
+                        {
+                            await HandleDustAsync(placedOrder);
+                        }
                         // Atomic insert of transaction and event
                         using (var session = await _mongoClient.StartSessionAsync())
                         {
@@ -229,13 +237,14 @@ namespace Domain.Services
                                     UserId = payment.UserId,
                                     PaymentId = payment._id,
                                     SubscriptionId = payment.SubscriptionId,
-                                    PlacedOrderId = placedOrder.Data?.OrderId,
+                                    PlacedOrderId = placedOrder?.OrderId,
                                     AssetId = alloc.AssetId,
-                                    QuoteQuantity = placedOrder.Data.QuoteQuantity,
-                                    QuoteQuantityFilled = placedOrder.Data.QuoteQuantityFilled,
-                                    Quantity = placedOrder.Data.QuantityFilled,
-                                    Price = placedOrder.Data.Price,
-                                    Status = placedOrder.Data.Status
+                                    QuoteQuantity = placedOrder.QuoteQuantity,
+                                    QuoteQuantityFilled = placedOrder.QuoteQuantityFilled,
+                                    QuoteQuantityDust = dust,
+                                    Quantity = placedOrder.QuantityFilled,
+                                    Price = placedOrder.Price,
+                                    Status = placedOrder.Status
                                 }, session);
 
                                 if (!insertOrderResult.IsAcknowledged)
@@ -250,7 +259,7 @@ namespace Domain.Services
                                     UserId = payment.UserId,
                                     SubscriptionId = payment.SubscriptionId,
                                     AssetId = alloc.AssetId,
-                                    Available = placedOrder.Data.QuantityFilled
+                                    Available = placedOrder.QuantityFilled
                                 }, session);
 
                                 if (updateBalanceResult is null || !updateBalanceResult.IsSuccess)
@@ -264,9 +273,9 @@ namespace Domain.Services
                                 {
                                     BalanceId = updateBalanceResult.Data._id,
                                     SourceName = "Exchange",
-                                    SourceId = placedOrder.Data.OrderId.ToString(),
+                                    SourceId = placedOrder.OrderId.ToString(),
                                     Action = "Buy",
-                                    Available = placedOrder.Data.QuantityFilled,
+                                    Available = placedOrder.QuantityFilled,
                                     Locked = 0m
                                 }, session);
 
@@ -285,14 +294,14 @@ namespace Domain.Services
                                 _logger.LogError(ex, "Failed to atomically insert exchange order and transaction.");
                             }
                             orderResults.Add(OrderResult.Success(
-                                    placedOrder.Data.OrderId,
+                                    placedOrder.OrderId,
                                     alloc.AssetId.ToString(),
-                                    placedOrder.Data.QuoteQuantity,
-                                    placedOrder.Data.QuantityFilled,
-                                    placedOrder.Data.Status
+                                    placedOrder.QuoteQuantity,
+                                    placedOrder.QuantityFilled,
+                                    placedOrder.Status
                                     ));
                         }
-                        _logger.LogInformation("Order created for {Symbol}, OrderId: {OrderId}", symbol, placedOrder.Data.OrderId);
+                        _logger.LogInformation("Order created for {Symbol}, OrderId: {OrderId}", symbol, placedOrder.OrderId);
                     }
                     catch (Exception ex)
                     {
@@ -312,7 +321,7 @@ namespace Domain.Services
         public async Task<ResultWrapper<bool>> CheckExchangeBalanceAsync(decimal amount)
         {
             // Check exchange fiat balance
-            var balanceData = await _binanceService.GetBalanceAsync("USDT");
+            var balanceData = await _binanceService.GetBalanceAsync(_reserveStableAssetTicker);
             if (!balanceData.IsSuccess)
             {
                 return ResultWrapper<bool>.Failure(FailureReason.DatabaseError, "Unable to fetch exchange balances.");
@@ -360,6 +369,16 @@ namespace Domain.Services
             }
         }
 
+        private async Task HandleDustAsync(PlacedExchangeOrder order)
+        {
+            /*
+             * Add a clause: “Residual quantities below the exchange’s minimum trade size may be retained by [Platform Name] as part of transaction processing.
+             * Users may opt to convert dust to a designated asset (e.g., Platform Coin?) periodically.”
+             * Get user consent during signup.
+            */
+            await Task.CompletedTask;
+        }
+
         private async Task HandleFailedOrderAsync(ExchangeOrderData order)
         {
             if (order.RetryCount >= 3)
@@ -379,6 +398,7 @@ namespace Domain.Services
                 SubscriptionId = order.SubscriptionId,
                 AssetId = order.AssetId,
                 QuoteQuantity = order.QuoteQuantity,
+                QuoteQuantityDust = 0,
                 Status = OrderStatus.Queued,
                 PreviousOrderId = order._id,
                 RetryCount = order.RetryCount + 1
@@ -402,6 +422,7 @@ namespace Domain.Services
                     SubscriptionId = order.SubscriptionId,
                     AssetId = order.AssetId,
                     QuoteQuantity = remainingQty,
+                    QuoteQuantityDust = 0,
                     Status = OrderStatus.Queued,
                     RetryCount = order.RetryCount + 1,
                     PreviousOrderId = order._id
@@ -476,6 +497,7 @@ namespace Domain.Services
                         }
 
                         var order = sellOrderResult.Data;
+                        var dust = order.QuoteQuantity - order.QuoteQuantityFilled;
                         var orderData = new ExchangeOrderData
                         {
                             UserId = ObjectId.Empty, // System-initiated reset, no user
@@ -485,6 +507,7 @@ namespace Domain.Services
                             AssetId = assetResult.Data._id,
                             QuoteQuantity = order.QuoteQuantity,
                             QuoteQuantityFilled = order.QuoteQuantityFilled,
+                            QuoteQuantityDust = dust,
                             Quantity = order.QuantityFilled,
                             Price = order.Price,
                             Status = order.Status

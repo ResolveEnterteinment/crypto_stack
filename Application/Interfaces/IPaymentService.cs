@@ -9,5 +9,6 @@ namespace Application.Interfaces
     public interface IPaymentService : IRepository<PaymentData>
     {
         public Task<ResultWrapper<ObjectId>> ProcessPaymentRequest(PaymentRequest request);
+        public Task<decimal> GetFeeAsync(string paymentId);
     }
 }

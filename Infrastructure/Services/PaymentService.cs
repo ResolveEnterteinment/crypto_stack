@@ -10,15 +10,19 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using StripeLibrary;
 
 namespace Domain.Services
 {
     public class PaymentService : BaseService<PaymentData>, IPaymentService
     {
+        private readonly IStripeService _stripeService;
         private readonly IAssetService _assetService;
         private readonly IEventService _eventService;
 
+
         public PaymentService(
+            IOptions<StripeSettings> stripeSettings,
             IAssetService assetService,
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
@@ -26,6 +30,7 @@ namespace Domain.Services
             IEventService eventService)
             : base(mongoClient, mongoDbSettings, "payments", logger)
         {
+            _stripeService = new StripeService(stripeSettings, logger);
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
         }
@@ -120,6 +125,10 @@ namespace Domain.Services
                 _logger.LogError(ex, "Failed to process payment request: {Message}", ex.Message);
                 return ResultWrapper<ObjectId>.Failure(FailureReason.From(ex), ex.Message);
             }
+        }
+        public async Task<decimal> GetFeeAsync(string paymentId)
+        {
+            return await _stripeService.GetStripeFeeAsync(paymentId);
         }
     }
 }

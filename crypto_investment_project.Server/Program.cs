@@ -18,7 +18,8 @@ MongoDbIdentityConfigurationHelper.Configure(builder);
 // Configure settings sections
 builder.Services.Configure<MongoDbSettings>(builder.Configuration.GetSection("MongoDB"));
 builder.Services.Configure<BinanceSettings>(builder.Configuration.GetSection("Binance"));
-builder.Services.Configure<TrailSettings>(builder.Configuration.GetSection("Trail"));
+builder.Services.Configure<StripeSettings>(builder.Configuration.GetSection("Stripe"));
+builder.Services.Configure<ExchangeSettings>(builder.Configuration.GetSection("Exchange"));
 
 // Add controllers with Newtonsoft.Json
 builder.Services.AddControllers()
@@ -53,9 +54,6 @@ builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IUserService, UserService>();
 
 var app = builder.Build();
-
-//var binanceSettings = builder.Services.BuildServiceProvider().GetRequiredService<IOptions<BinanceSettings>>().Value;
-//Console.WriteLine($"Binance ApiKey: {binanceSettings.ApiKey}");
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
