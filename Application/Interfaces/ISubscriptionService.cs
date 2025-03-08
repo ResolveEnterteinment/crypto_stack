@@ -5,7 +5,7 @@ using Domain.Models.Subscription;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
-namespace Infrastructure.Services
+namespace Domain.Services
 {
     public interface ISubscriptionService : IRepository<SubscriptionData>
     {

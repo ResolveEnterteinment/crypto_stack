@@ -1,4 +1,5 @@
-﻿using MediatR;
+﻿using Domain.Models.Payment;
+using MediatR;
 using MongoDB.Bson;
 
 namespace Domain.Events
@@ -6,11 +7,11 @@ namespace Domain.Events
     // Event for MediatR
     public class PaymentReceivedEvent : BaseEvent, INotification
     {
-        public ObjectId PaymentId { get; }
-        public PaymentReceivedEvent(ObjectId paymentId, ObjectId storedEventId)
+        public PaymentData Payment { get; }
+        public PaymentReceivedEvent(PaymentData payment, ObjectId storedEventId)
         {
             EventId = storedEventId;
-            PaymentId = paymentId;
+            Payment = payment;
         }
     }
 }

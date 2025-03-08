@@ -9,41 +9,23 @@ using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
-namespace Infrastructure.Services
+namespace Domain.Services
 {
     public class SubscriptionService : BaseService<SubscriptionData>, ISubscriptionService
     {
         private readonly IBalanceService _balanceService;
+        private readonly IAssetService _assetService;
 
         public SubscriptionService(
             IBalanceService balanceService,
+            IAssetService assetService,
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
             ILogger<SubscriptionService> logger)
             : base(mongoClient, mongoDbSettings, "subscriptions", logger)
         {
             _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
-        }
-
-        protected override async Task OnInsertAsync(ObjectId insertedId)
-        {
-            var subscriptionData = await GetByIdAsync(insertedId);
-            if (subscriptionData == null)
-            {
-                _logger.LogError("Inserted subscription {SubscriptionId} not found post-insert", insertedId);
-                return;
-            }
-
-            var userId = subscriptionData.UserId;
-            var assetsResult = await GetAllocationsAsync(insertedId);
-            if (!assetsResult.IsSuccess)
-            {
-                _logger.LogWarning("Failed to get allocations for subscription {SubscriptionId}: {Error}", insertedId, assetsResult.ErrorMessage);
-                return;
-            }
-
-            var assets = assetsResult.Data.Select(alloc => alloc.AssetId);
-            await _balanceService.InitBalances(userId, insertedId, assets);
+            _assetService = assetService ?? throw new ArgumentNullException(nameof(_assetService));
         }
 
         public async Task<ResultWrapper<ObjectId>> ProcessSubscriptionRequest(SubscriptionRequest request)
@@ -51,6 +33,7 @@ namespace Infrastructure.Services
             try
             {
                 // Validate request
+                #region Validate
                 if (request == null)
                 {
                     throw new ArgumentNullException("Subscription request cannot be null.");
@@ -87,13 +70,15 @@ namespace Infrastructure.Services
                 {
                     throw new ArgumentOutOfRangeException("Amount must be greater than zero.");
                 }
+                #endregion Validate
 
                 var subscriptionData = new SubscriptionData
                 {
                     UserId = userId,
-                    Allocations = request.Allocations.Select(allocRequest => new AllocationData
+                    Allocations = (IEnumerable<AllocationData>)request.Allocations.Select(async allocRequest => new AllocationData
                     {
                         AssetId = ObjectId.Parse(allocRequest.AssetId), // Safe due to prior validation
+                        AssetTicker = (await _assetService.GetByIdAsync(ObjectId.Parse(allocRequest.AssetId))).Ticker,
                         PercentAmount = allocRequest.PercentAmount
                     }),
                     Interval = request.Interval,
@@ -107,20 +92,26 @@ namespace Infrastructure.Services
                 {
                     throw new MongoException("Failed to insert subscription into database.");
                 }
-
+                var insertedId = result.InsertedId.AsObjectId;
+                var assetsResult = await GetAllocationsAsync(insertedId);
+                if (!assetsResult.IsSuccess)
+                {
+                    _logger.LogWarning("Failed to get allocations for subscription {SubscriptionId}: {Error}", insertedId, assetsResult.ErrorMessage);
+                    throw new KeyNotFoundException($"Failed to get allocations for subscription {insertedId}: {assetsResult.ErrorMessage}");
+                }
+                var assets = assetsResult.Data.Select(alloc => alloc.AssetId);
+                var initBalancesResult = await _balanceService.InitBalances(userId, insertedId, assets);
+                if (!initBalancesResult.IsSuccess)
+                {
+                    throw new Exception($"Unable to init balances");
+                }
                 _logger.LogInformation("Successfully inserted subscription {SubscriptionId}", result.InsertedId);
                 return ResultWrapper<ObjectId>.Success(result.InsertedId.AsObjectId);
             }
             catch (Exception ex)
             {
-                string reason = ex switch
-                {
-                    ArgumentException => FailureReason.ValidationError,
-                    MongoException => FailureReason.DatabaseError,
-                    _ => FailureReason.Unknown
-                };
-                _logger.LogError(ex, "Failed to process subscription request: {Message}", ex.Message);
-                return ResultWrapper<ObjectId>.Failure(reason, ex.Message);
+                _logger.LogError($"Failed to process subscription request: {ex.Message}");
+                return ResultWrapper<ObjectId>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
 
@@ -141,14 +132,8 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                string reason = ex switch
-                {
-                    ArgumentException => FailureReason.ValidationError,
-                    KeyNotFoundException => FailureReason.DataNotFound,
-                    _ => FailureReason.Unknown
-                };
                 _logger.LogError(ex, "Fetch subscription failed: {Message}", ex.Message);
-                return ResultWrapper<IReadOnlyCollection<AllocationData>>.Failure(reason, ex.Message);
+                return ResultWrapper<IReadOnlyCollection<AllocationData>>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
 

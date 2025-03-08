@@ -121,10 +121,15 @@ namespace BinanceLibrary
                 return ResultWrapper<IEnumerable<BinanceBalance>>.Failure(FailureReason.ExchangeApiError, $"Failed to retrieve exchange balances: {ex.Message}");
             }
         }
-        Task<decimal> IBinanceService.GetFiatBalanceAsync(string symbol)
+        public async Task<ResultWrapper<BinanceBalance>> GetBalanceAsync(string symbol)
         {
             //throw new NotImplementedException();
-            return Task.FromResult(1000m);
+            var balanceResult = await GetBalancesAsync(new List<string>().Append(symbol));
+            if (!balanceResult.IsSuccess)
+            {
+                return ResultWrapper<BinanceBalance>.Failure(balanceResult.FailureReason, balanceResult.ErrorMessage);
+            }
+            return ResultWrapper<BinanceBalance>.Success(balanceResult.Data.FirstOrDefault());
         }
 
         Task<BinancePlacedOrder> IBinanceService.GetOrderInfoAsync(long orderId)

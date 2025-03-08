@@ -11,7 +11,7 @@ using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
-namespace Infrastructure.Services
+namespace Domain.Services
 {
     public class PaymentService : BaseService<PaymentData>, IPaymentService
     {
@@ -86,46 +86,39 @@ namespace Infrastructure.Services
                     session.StartTransaction();
                     try
                     {
-                        var insertPaymentResult = await InsertOneAsync(session, paymentData);
+                        var insertPaymentResult = await InsertOneAsync(paymentData, session);
+                        if (!insertPaymentResult.IsAcknowledged || insertPaymentResult.InsertedId is null)
+                        {
+                            throw new MongoException(insertPaymentResult.ErrorMessage);
+                        }
                         var storedEvent = new EventData
                         {
                             EventType = typeof(PaymentReceivedEvent).Name,
                             Payload = insertPaymentResult.InsertedId.ToString()
                         };
-                        storedEventResult = await _eventService.InsertOneAsync(session, storedEvent);
+                        storedEventResult = await _eventService.InsertOneAsync(storedEvent, session);
+                        if (!storedEventResult.IsAcknowledged || storedEventResult.InsertedId is null)
+                        {
+                            throw new MongoException(storedEventResult.ErrorMessage);
+                        }
                         await session.CommitTransactionAsync();
                         _logger.LogInformation($"Successfully inserted payment {insertPaymentResult.InsertedId} and event {storedEventResult.InsertedId}");
                     }
                     catch (Exception ex)
                     {
-                        storedEventResult = new InsertResult()
-                        {
-                            IsAcknowledged = false,
-                            InsertedId = null,
-                            ErrorMessage = ex.Message,
-                        };
                         await session.AbortTransactionAsync();
                         _logger.LogError(ex, "Failed to atomically insert transaction and event");
                         throw; // Trigger Stripe retry
                     }
+                    // Publish event after commit
+                    await _eventService.Publish(new PaymentReceivedEvent(paymentData, storedEventResult.InsertedId.AsObjectId));
+                    return ResultWrapper<ObjectId>.Success(storedEventResult.InsertedId.AsObjectId);
                 }
-
-                // Publish event after commit
-                await _eventService.Publish(new PaymentReceivedEvent(paymentData._id, storedEventResult.InsertedId.AsObjectId));
-                return ResultWrapper<ObjectId>.Success(storedEventResult.InsertedId.AsObjectId);
             }
             catch (Exception ex)
             {
-                string reason = ex switch
-                {
-                    ArgumentNullException => FailureReason.ValidationError,
-                    ArgumentOutOfRangeException => FailureReason.ValidationError,
-                    ArgumentException => FailureReason.ValidationError,
-                    MongoException => FailureReason.DatabaseError,
-                    _ => FailureReason.Unknown
-                };
                 _logger.LogError(ex, "Failed to process payment request: {Message}", ex.Message);
-                return ResultWrapper<ObjectId>.Failure(reason, ex.Message);
+                return ResultWrapper<ObjectId>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
     }

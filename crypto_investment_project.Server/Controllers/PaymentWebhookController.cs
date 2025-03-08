@@ -1,10 +1,10 @@
 using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
-using Infrastructure.Services;
+using Domain.Services;
 using Microsoft.AspNetCore.Mvc;
 using Stripe;
 
-namespace Infrastructure.Controllers
+namespace Domain.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
@@ -28,6 +28,7 @@ namespace Infrastructure.Controllers
         [Route("stripe")]
         public async Task<IActionResult> HandleWebhook([FromBody] Event stripeEvent)
         {
+            #region Validate
             if (stripeEvent == null)
             {
                 _logger.LogWarning("Received null Stripe event");
@@ -40,15 +41,16 @@ namespace Infrastructure.Controllers
                 return Ok();
             }
 
+            var paymentIntent = stripeEvent.Data.Object as PaymentIntent;
+            if (paymentIntent == null)
+            {
+                _logger.LogWarning("Failed to cast event data to PaymentIntent");
+                return BadRequest("Invalid event data: Expected PaymentIntent.");
+            }
+            #endregion Validate
+
             try
             {
-                var paymentIntent = stripeEvent.Data.Object as PaymentIntent;
-                if (paymentIntent == null)
-                {
-                    _logger.LogWarning("Failed to cast event data to PaymentIntent");
-                    return BadRequest("Invalid event data: Expected PaymentIntent.");
-                }
-
                 var totalAmount = paymentIntent.Amount / 100m;
                 var paymentFee = (totalAmount * 0.029m) + 0.30m;
                 var platformFee = totalAmount * 0.01m;

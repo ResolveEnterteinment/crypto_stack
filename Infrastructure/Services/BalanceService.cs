@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
-namespace Infrastructure.Services
+namespace Domain.Services
 {
     public class BalanceService : BaseService<BalanceData>, IBalanceService
     {
@@ -18,7 +18,6 @@ namespace Infrastructure.Services
             ILogger<BalanceService> logger) : base(mongoClient, mongoDbSettings, "balances", logger)
         {
         }
-
         public async Task<ResultWrapper<IEnumerable<BalanceData>>> GetAllBySubscriptionIdAsync(ObjectId subscriptionId)
         {
             try
@@ -33,14 +32,7 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                string reason = ex switch
-                {
-                    ArgumentNullException => FailureReason.DatabaseError,
-                    ArgumentException => FailureReason.ValidationError,
-                    KeyNotFoundException => FailureReason.DataNotFound,
-                    _ => FailureReason.Unknown
-                };
-                return ResultWrapper<IEnumerable<BalanceData>>.Failure(reason, ex.Message);
+                return ResultWrapper<IEnumerable<BalanceData>>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
         public async Task<ResultWrapper<IEnumerable<BalanceData>>> GetAllByUserIdAsync(ObjectId userId)
@@ -57,21 +49,16 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                string reason = ex switch
-                {
-                    ArgumentNullException => FailureReason.DatabaseError,
-                    ArgumentException => FailureReason.ValidationError,
-                    KeyNotFoundException => FailureReason.DataNotFound,
-                    _ => FailureReason.Unknown
-                };
-                return ResultWrapper<IEnumerable<BalanceData>>.Failure(reason, ex.Message);
+                return ResultWrapper<IEnumerable<BalanceData>>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
 
-        public async Task<bool> InitBalances(ObjectId userId, ObjectId subscriptionId, IEnumerable<ObjectId> assets)
+        public async Task<ResultWrapper<IEnumerable<ObjectId>>> InitBalances(ObjectId userId, ObjectId subscriptionId, IEnumerable<ObjectId> assets)
         {
             try
             {
+                //TO-DO: Add Atomicity
+                var insertedBalanceIds = new List<ObjectId>();
                 foreach (var asset in assets)
                 {
                     var result = await InsertOneAsync(new BalanceData()
@@ -80,17 +67,22 @@ namespace Infrastructure.Services
                         SubscriptionId = subscriptionId,
                         AssetId = asset
                     });
+                    if (!result.IsAcknowledged)
+                    {
+                        throw new MongoException($"Failed to insert BalanceData");
+                    }
+                    insertedBalanceIds.Add(result.InsertedId.AsObjectId);
                 }
-                return true;
+                return ResultWrapper<IEnumerable<ObjectId>>.Success(insertedBalanceIds);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to initialize balances fro subscription #{subscriptionId}: {ex.Message}");
-                return false;
+                _logger.LogError($"Failed to initialize balances for subscription #{subscriptionId}: {ex.Message}");
+                return ResultWrapper<IEnumerable<ObjectId>>.Failure(FailureReason.DatabaseError, $"Failed to initialize balances for subscription #{subscriptionId}: {ex.Message}");
             }
         }
 
-        public async Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(ObjectId orderId, ObjectId subscriptionId, BalanceData updateBalance)
+        public async Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(ObjectId orderId, ObjectId subscriptionId, BalanceData updateBalance, IClientSessionHandle session)
         {
             try
             {
@@ -106,7 +98,7 @@ namespace Infrastructure.Services
                         Available = updateAvailable,
                         Locked = updateLocked
                     };
-                    await UpdateOneAsync(balance._id, updateFields);
+                    await UpdateOneAsync(balance._id, updateFields, session);
                     return ResultWrapper<BalanceData>.Success(balance);
                 }
                 catch (Exception)
@@ -120,60 +112,8 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                string reason = ex switch
-                {
-                    ArgumentException => FailureReason.ValidationError,
-                    KeyNotFoundException => FailureReason.DataNotFound,
-                    MongoException => FailureReason.DatabaseError,
-                    _ when ex.Message.Contains("insert") => FailureReason.DatabaseError,
-                    _ when ex.Message.Contains("update") => FailureReason.DatabaseError,
-                    _ => FailureReason.Unknown
-                };
                 _logger.LogError(ex, "Unable to update subscription balances: {Message}", ex.Message);
-                return ResultWrapper<BalanceData>.Failure(reason, ex.Message);
-            }
-        }
-        public async Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(IClientSessionHandle session, ObjectId orderId, ObjectId subscriptionId, BalanceData updateBalance)
-        {
-            try
-            {
-                try
-                {
-                    var filter = Builders<BalanceData>.Filter.Where(b => (b.SubscriptionId == subscriptionId && b.AssetId == updateBalance.AssetId));
-                    var balance = await GetOneAsync(filter);
-                    var updateAvailable = balance.Available + updateBalance.Available;
-                    var updateLocked = balance.Locked + updateBalance.Locked;
-                    var updateOrders = balance.Transactions.Append(orderId).ToList();
-                    var updateFields = new
-                    {
-                        Available = updateAvailable,
-                        Locked = updateLocked
-                    };
-                    await UpdateOneAsync(session, balance._id, updateFields);
-                    return ResultWrapper<BalanceData>.Success(balance);
-                }
-                catch (Exception)
-                {
-                    updateBalance.Transactions.Append(orderId);
-                    await InsertOneAsync(session, updateBalance);
-                }
-
-                _logger.LogInformation($"Updated subscription #{subscriptionId} balance.");
-                return ResultWrapper<BalanceData>.Success(updateBalance);
-            }
-            catch (Exception ex)
-            {
-                string reason = ex switch
-                {
-                    ArgumentException => FailureReason.ValidationError,
-                    KeyNotFoundException => FailureReason.DataNotFound,
-                    MongoException => FailureReason.DatabaseError,
-                    _ when ex.Message.Contains("insert") => FailureReason.DatabaseError,
-                    _ when ex.Message.Contains("update") => FailureReason.DatabaseError,
-                    _ => FailureReason.Unknown
-                };
-                _logger.LogError(ex, "Unable to update subscription balances: {Message}", ex.Message);
-                return ResultWrapper<BalanceData>.Failure(reason, ex.Message);
+                return ResultWrapper<BalanceData>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
     }

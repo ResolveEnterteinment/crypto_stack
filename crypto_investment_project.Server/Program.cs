@@ -2,8 +2,7 @@ using Application.Interfaces;
 using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using crypto_investment_project.Server.Helpers;
 using Domain.DTOs;
-using Infrastructure.Services;
-using Microsoft.Extensions.Options;
+using Domain.Services;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
@@ -19,6 +18,7 @@ MongoDbIdentityConfigurationHelper.Configure(builder);
 // Configure settings sections
 builder.Services.Configure<MongoDbSettings>(builder.Configuration.GetSection("MongoDB"));
 builder.Services.Configure<BinanceSettings>(builder.Configuration.GetSection("Binance"));
+builder.Services.Configure<TrailSettings>(builder.Configuration.GetSection("Trail"));
 
 // Add controllers with Newtonsoft.Json
 builder.Services.AddControllers()
@@ -46,6 +46,7 @@ builder.Services.AddSingleton<IAssetService, AssetService>();
 builder.Services.AddSingleton<IBalanceService, BalanceService>();
 builder.Services.AddSingleton<ITransactionService, TransactionService>();
 builder.Services.AddSingleton<IEventService, EventService>();
+//builder.Services.AddSingleton<ITrailService, TrailService>();
 builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(EventService).Assembly));
 
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
@@ -53,8 +54,8 @@ builder.Services.AddScoped<IUserService, UserService>();
 
 var app = builder.Build();
 
-var binanceSettings = builder.Services.BuildServiceProvider().GetRequiredService<IOptions<BinanceSettings>>().Value;
-Console.WriteLine($"Binance ApiKey: {binanceSettings.ApiKey}");
+//var binanceSettings = builder.Services.BuildServiceProvider().GetRequiredService<IOptions<BinanceSettings>>().Value;
+//Console.WriteLine($"Binance ApiKey: {binanceSettings.ApiKey}");
 
 app.UseDefaultFiles();
 app.UseStaticFiles();

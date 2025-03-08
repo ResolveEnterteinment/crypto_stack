@@ -2,7 +2,7 @@
 using Domain.Interfaces;
 using Domain.Models.Crypto;
 
-namespace Infrastructure.Services
+namespace Domain.Services
 {
     public interface IAssetService : IRepository<AssetData>
     {

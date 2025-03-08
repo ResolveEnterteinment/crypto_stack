@@ -8,8 +8,8 @@ namespace BinanceLibrary
     {
         public Task<BinancePlacedOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity, ObjectId subscriptionId);
         public Task<BinancePlacedOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity, ObjectId subscriptionId);
-        public Task<decimal> GetFiatBalanceAsync(string symbol);
         public Task<BinancePlacedOrder> GetOrderInfoAsync(long orderId);
         public Task<ResultWrapper<IEnumerable<BinanceBalance>>> GetBalancesAsync(IEnumerable<string>? tickers = null);
+        public Task<ResultWrapper<BinanceBalance>> GetBalanceAsync(string ticker);
     }
 }

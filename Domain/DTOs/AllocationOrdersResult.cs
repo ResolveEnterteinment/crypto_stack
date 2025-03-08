@@ -13,7 +13,7 @@
             Orders = orders;
             TotalOrders = orders.Count;
             SuccessfulOrders = orders.Count(o => o.IsSuccess);
-            IsSuccess = SuccessfulOrders == TotalOrders;
+            IsSuccess = Orders.Any() && SuccessfulOrders == TotalOrders;
             ErrorSummary = IsSuccess ? null : $"Failed to process {TotalOrders - SuccessfulOrders} out of {TotalOrders} orders.";
         }
     }

@@ -1,5 +1,5 @@
 using Application.Contracts.Requests.Subscription;
-using Infrastructure.Services;
+using Domain.Services;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 

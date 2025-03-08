@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
-namespace Infrastructure.Services
+namespace Domain.Services
 {
     public class EventService : BaseService<EventData>, IEventService
     {

@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
-namespace Infrastructure.Services
+namespace Domain.Services
 {
     public class AssetService : BaseService<AssetData>, IAssetService
     {
@@ -53,18 +53,8 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                string reason = ex switch
-                {
-                    ArgumentOutOfRangeException => FailureReason.ValidationError,
-                    ArgumentException => FailureReason.ValidationError,
-                    KeyNotFoundException => FailureReason.DataNotFound,
-                    MongoException => FailureReason.DatabaseError,
-                    _ when ex.Message.Contains("Binance") => FailureReason.ExchangeApiError,
-                    _ when ex.Message.Contains("insert") => FailureReason.DatabaseError,
-                    _ => FailureReason.Unknown
-                };
                 _logger.LogError(ex, "Unable to fetch crypto for symbol: {Symbol}", symbol);
-                return ResultWrapper<AssetData>.Failure(reason, ex.Message);
+                return ResultWrapper<AssetData>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
 
@@ -95,18 +85,8 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                string reason = ex switch
-                {
-                    ArgumentOutOfRangeException => FailureReason.ValidationError,
-                    ArgumentException => FailureReason.ValidationError,
-                    KeyNotFoundException => FailureReason.DataNotFound,
-                    MongoException => FailureReason.DatabaseError,
-                    _ when ex.Message.Contains("Binance") => FailureReason.ExchangeApiError,
-                    _ when ex.Message.Contains("insert") => FailureReason.DatabaseError,
-                    _ => FailureReason.Unknown
-                };
                 _logger.LogError(ex, "Unable to fetch crypto for symbol: {Symbol}", ticker);
-                return ResultWrapper<AssetData>.Failure(reason, ex.Message);
+                return ResultWrapper<AssetData>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
 
@@ -128,18 +108,8 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                string reason = ex switch
-                {
-                    ArgumentOutOfRangeException => FailureReason.ValidationError,
-                    ArgumentException => FailureReason.ValidationError,
-                    KeyNotFoundException => FailureReason.DataNotFound,
-                    MongoException => FailureReason.DatabaseError,
-                    _ when ex.Message.Contains("Binance") => FailureReason.ExchangeApiError,
-                    _ when ex.Message.Contains("insert") => FailureReason.DatabaseError,
-                    _ => FailureReason.Unknown
-                };
                 _logger.LogError(ex, "Unable to fetch supported assets");
-                return ResultWrapper<IEnumerable<string>>.Failure(reason, ex.Message);
+                return ResultWrapper<IEnumerable<string>>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
     }

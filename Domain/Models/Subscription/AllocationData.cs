@@ -7,6 +7,7 @@ namespace Domain.Models.Subscription
     {
         [BsonRepresentation(BsonType.ObjectId)]
         public required ObjectId AssetId { get; set; }
+        public required string AssetTicker { get; set; }
         public required uint PercentAmount { get; set; } // 0-100
     }
 }

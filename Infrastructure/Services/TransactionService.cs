@@ -1,14 +1,14 @@
 ﻿using Application.Interfaces;
 using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using Domain.DTOs;
-using Domain.Models;
+using Domain.Models.Transaction;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
-namespace Infrastructure.Services
+namespace Domain.Services
 {
-    public class TransactionService : BaseService<BaseTransaction>, ITransactionService
+    public class TransactionService : BaseService<TransactionData>, ITransactionService
     {
         public TransactionService(
             IOptions<MongoDbSettings> mongoDbSettings,
@@ -18,9 +18,16 @@ namespace Infrastructure.Services
 
         }
 
-        public async Task<InsertResult> AddTransaction(BaseTransaction transaction)
+        public async Task<InsertResult> AddTransactionAsync(TransactionData transaction, IClientSessionHandle? session = null)
         {
-            return await InsertOneAsync(transaction);
+            if (session == null)
+            {
+                return await InsertOneAsync(transaction);
+            }
+            else
+            {
+                return await InsertOneAsync(transaction, session);
+            }
         }
     }
 }

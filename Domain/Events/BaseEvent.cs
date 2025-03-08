@@ -7,5 +7,6 @@ namespace Domain.Events
     {
         [BsonRepresentation(BsonType.ObjectId)]
         public ObjectId EventId { get; set; }
+        public ObjectId? TrailId { get; set; }
     }
 }

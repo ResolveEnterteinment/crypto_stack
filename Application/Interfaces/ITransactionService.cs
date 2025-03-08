@@ -1,10 +1,12 @@
 ﻿using Domain.DTOs;
-using Domain.Models;
+using Domain.Interfaces;
+using Domain.Models.Transaction;
+using MongoDB.Driver;
 
 namespace Application.Interfaces
 {
-    public interface ITransactionService
+    public interface ITransactionService : IRepository<TransactionData>
     {
-        public Task<InsertResult> AddTransaction(BaseTransaction transaction);
+        public Task<InsertResult> AddTransactionAsync(TransactionData transaction, IClientSessionHandle? session = null);
     }
 }

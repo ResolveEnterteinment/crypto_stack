@@ -2,7 +2,6 @@
 using Application.Contracts.Responses.Auth;
 using Application.Interfaces;
 using Domain.Models.Authentication;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using System.Net;
@@ -24,7 +23,7 @@ namespace crypto_investment_project.Server.Controllers
 
         [HttpPost]
         [Route("roles")]
-        [Authorize("ADMIN")]
+        //[Authorize("ADMIN")]
         public async Task<IActionResult> CreateRole([FromBody] CreateRoleRequest request)
         {
             var appRole = new ApplicationRole { Name = request.Role };

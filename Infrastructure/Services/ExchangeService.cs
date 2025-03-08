@@ -6,10 +6,12 @@ using BinanceLibrary;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.Events;
+using Domain.Exceptions;
+using Domain.Modals.Event;
 using Domain.Models.Balance;
-using Domain.Models.Crypto;
 using Domain.Models.Exchange;
 using Domain.Models.Payment;
+using Domain.Models.Transaction;
 using MediatR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -17,7 +19,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using Polly;
 
-namespace Infrastructure.Services
+namespace Domain.Services
 {
     public class ExchangeService : BaseService<ExchangeOrderData>, IExchangeService, INotificationHandler<PaymentReceivedEvent>
     {
@@ -27,6 +29,7 @@ namespace Infrastructure.Services
         private readonly IPaymentService _paymentService;
         private readonly ISubscriptionService _subscriptionService;
         private readonly IBalanceService _balanceService;
+        private readonly ITransactionService _transactionService;
         private readonly IAssetService _assetService;
         private string? MapBinanceStatus(Binance.Net.Enums.OrderStatus status) => status switch
         {
@@ -45,6 +48,7 @@ namespace Infrastructure.Services
             IPaymentService paymentService,
             ISubscriptionService subscriptionService,
             IBalanceService balanceService,
+            ITransactionService transactionService,
             IAssetService assetService,
             ILogger<ExchangeService> logger) : base(mongoClient, mongoDbSettings, "exchange_orders", logger)
         {
@@ -53,6 +57,7 @@ namespace Infrastructure.Services
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
+            _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
         }
 
@@ -61,15 +66,15 @@ namespace Infrastructure.Services
             return refService ?? new BinanceService(settings, logger);
         }
 
-        public async Task Handle(PaymentReceivedEvent notification, CancellationToken cancellationToken)
+        public async Task Handle(PaymentReceivedEvent paymentNotification, CancellationToken cancellationToken)
         {
-            _logger.LogInformation($"Notification {notification.GetType().Name} received with payment id #{notification.PaymentId} and event id #{notification.EventId}");
+            _logger.LogInformation($"Notification {paymentNotification.GetType().Name} received with payment id #{paymentNotification.Payment} and event id #{paymentNotification.EventId}");
             try
             {
-                var payment = await _paymentService.GetByIdAsync(notification.PaymentId);
+                var payment = paymentNotification.Payment;
                 if (payment == null)
                 {
-                    _logger.LogWarning($"Payment not found: {notification.PaymentId}");
+                    _logger.LogWarning($"Invalid payment data.Payment can not be null: {paymentNotification.Payment}");
                     return;
                 }
 
@@ -79,7 +84,7 @@ namespace Infrastructure.Services
                     .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
                         onRetry: (ex, time, retryCount, context) =>
                             _logger.LogWarning("Retry {RetryCount} for PaymentId: {PaymentId} due to {Exception}",
-                                retryCount, notification.PaymentId, ex.Message));
+                                retryCount, paymentNotification.Payment, ex.Message));
 
                 // Execute with retries
                 await policy.ExecuteAsync(async () =>
@@ -87,28 +92,27 @@ namespace Infrastructure.Services
                     var result = await ProcessPayment(payment);
                     if (!result.IsSuccess)
                     {
-                        throw new Exception($"Order processing failed: {string.Join(", ", result.Orders.Where(o => !o.IsSuccess).Select(o => $"Asset id #{o.CoinId}: {o.ErrorMessage}"))}");
+                        throw new Exception($"Order processing failed: {string.Join(", ", result.Data.Where(o => !o.IsSuccess).Select(o => $"Asset id #{o.CoinId}: {o.ErrorMessage}"))}");
                     }
                 });
 
-                var eventData = await _eventService.GetByIdAsync(notification.EventId);
                 // Mark event as processed
-                await _eventService.UpdateOneAsync(eventData._id, new
+                await _eventService.UpdateOneAsync(paymentNotification.EventId, new
                 {
                     Processed = true,
                     ProcessedAt = DateTime.UtcNow
                 });
 
-                _logger.LogInformation("Successfully processed PaymentId: {PaymentId}", notification.PaymentId);
+                _logger.LogInformation("Successfully processed payment: {PaymentId}", paymentNotification.Payment._id);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to process PaymentReceivedEvent for PaymentId: {notification.PaymentId} after retries: {ex.Message}");
+                _logger.LogError($"Failed to process PaymentReceivedEvent for PaymentId: {paymentNotification.Payment} after retries: {ex.Message}");
                 // Event remains unprocessed in MongoDB for recovery
             }
         }
 
-        public async Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(AssetData coin, decimal quantity, ObjectId subcriptionId, string side = Domain.Constants.OrderSide.Buy, string type = "MARKET")
+        public async Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(ObjectId assetId, string assetTicker, decimal quantity, ObjectId subcriptionId, string side = Domain.Constants.OrderSide.Buy, string type = "MARKET")
         {
             try
             {
@@ -117,13 +121,13 @@ namespace Infrastructure.Services
                     throw new ArgumentOutOfRangeException(nameof(quantity), $"Quantity must be greater than zero. Provided value is {quantity}");
                 }
 
-                if (string.IsNullOrEmpty(coin.Ticker))
+                if (string.IsNullOrEmpty(assetTicker))
                 {
-                    throw new ArgumentException("Coin ticker cannot be null or empty.", nameof(coin));
+                    throw new ArgumentException("Coin ticker cannot be null or empty.", nameof(assetTicker));
                 }
 
                 BinancePlacedOrder order = new();
-                var symbol = coin.Ticker + "USDT";
+                var symbol = assetTicker + "USDT";
 
                 if (side == Domain.Constants.OrderSide.Buy)
                 {
@@ -142,7 +146,7 @@ namespace Infrastructure.Services
 
                 var placedOrder = new PlacedExchangeOrder()
                 {
-                    CryptoId = coin._id,
+                    AssetId = assetId,
                     QuoteQuantity = order.QuoteQuantity,
                     QuoteQuantityFilled = order.QuoteQuantityFilled,
                     Price = order.AverageFillPrice,
@@ -156,179 +160,189 @@ namespace Infrastructure.Services
                     return ResultWrapper<PlacedExchangeOrder>.Failure(FailureReason.ExchangeApiError, $"Order failed with status {order.Status}");
                 }
 
-                _logger.LogInformation("Order created successfully for symbol: {Symbol}, OrderId: {OrderId}, Status: {Status}", symbol, order.Id, order.Status);
+                _logger.LogInformation("Order placed successfully for symbol: {Symbol}, OrderId: {OrderId}, Status: {Status}", symbol, order.Id, order.Status);
                 return ResultWrapper<PlacedExchangeOrder>.Success(placedOrder);
             }
             catch (Exception ex)
             {
-                string reason = ex switch
-                {
-                    ArgumentOutOfRangeException => FailureReason.ValidationError,
-                    ArgumentException => FailureReason.ValidationError,
-                    KeyNotFoundException => FailureReason.DataNotFound,
-                    MongoException => FailureReason.DatabaseError,
-                    _ when ex.Message.Contains("Binance") => FailureReason.ExchangeApiError,
-                    _ when ex.Message.Contains("insert") => FailureReason.DatabaseError,
-                    _ => FailureReason.Unknown
-                };
                 _logger.LogError(ex, "Failed to create order: {Message}", ex.Message);
-                return ResultWrapper<PlacedExchangeOrder>.Failure(reason, $"{ex.Message}");
+                return ResultWrapper<PlacedExchangeOrder>.Failure(FailureReason.From(ex), $"{ex.Message}");
             }
         }
 
-        public async Task<AllocationOrdersResult> ProcessPayment(PaymentData payment)
+        public async Task<ResultWrapper<IEnumerable<OrderResult>>> ProcessPayment(PaymentData payment)
         {
             var orderResults = new List<OrderResult>();
             var netAmount = payment.NetAmount;
 
-            if (netAmount <= 0m)
+            try
             {
-                orderResults.Add(OrderResult.Failure(null, FailureReason.ValidationError, $"Invalid transaction net amount. Must be greater than zero. Provided value is {netAmount}"));
-                return new AllocationOrdersResult(orderResults.AsReadOnly());
-            }
-
-            // Check exchange fiat balance
-            if (!await CheckExchangeBalanceAsync(netAmount))
-            {
-                _logger.LogWarning("Insufficient fiat balance for {Required}", netAmount);
-                orderResults.Add(OrderResult.Failure(null, FailureReason.InsufficientBalance, $"Insufficient exchange balance for {netAmount}"));
-                //RequestFunding();
-                return new AllocationOrdersResult(orderResults.AsReadOnly());
-            }
-
-            var fetchAllocationsResult = await _subscriptionService.GetAllocationsAsync(payment.SubscriptionId);
-            if (!fetchAllocationsResult.IsSuccess || fetchAllocationsResult.Data is null || !fetchAllocationsResult.Data.Any())
-            {
-                orderResults.Add(OrderResult.Failure(null, FailureReason.ValidationError, $"Unable to fetch coin allocations: {fetchAllocationsResult.ErrorMessage}"));
-                return new AllocationOrdersResult(orderResults.AsReadOnly());
-            }
-
-
-            foreach (var alloc in fetchAllocationsResult.Data)
-            {
-                try
+                if (netAmount <= 0m)
                 {
-                    if (alloc.PercentAmount <= 0 || alloc.PercentAmount > 100)
-                        throw new ArgumentOutOfRangeException(nameof(alloc.PercentAmount), "Allocation must be between 0-100.");
-
-                    decimal quoteOrderQuantity = netAmount * (alloc.PercentAmount / 100m);
-                    if (quoteOrderQuantity <= 0)
-                        throw new ArgumentException($"Quote order quantity must be positive. Value: {quoteOrderQuantity}");
-
-                    //First check if there are previous orders already processed with this payment.
-
-                    var filter = new FilterDefinitionBuilder<ExchangeOrderData>()
-                        .Where(o => o.TransactionId == payment._id && o.CryptoId == alloc.AssetId && (o.Status == OrderStatus.Filled || o.Status == OrderStatus.PartiallyFilled));
-
-                    var previousFilledOrders = await GetAllAsync(filter);
-                    decimal previousOrdersSum = previousFilledOrders?.Sum(o => o.QuoteQuantityFilled) ?? 0m;
-                    var remainingQuoteOrderQuantity = quoteOrderQuantity - previousOrdersSum;
-
-                    var coinData = await _assetService.GetByIdAsync(alloc.AssetId);
-                    if (coinData is null)
-                        throw new KeyNotFoundException($"Unable to fetch coin #{alloc.AssetId} data.");
-
-                    var symbol = coinData.Ticker + "USDT";
-                    var placedOrder = await PlaceExchangeOrderAsync(coinData, remainingQuoteOrderQuantity, payment.SubscriptionId);
-                    if (!placedOrder.IsSuccess || placedOrder.Data?.Status == OrderStatus.Failed)
-                        throw new Exception($"Unable to place order. Reason: {placedOrder.ErrorMessage}");
-                    // Atomic insert of transaction and event
-                    using (var session = await _mongoClient.StartSessionAsync())
-                    {
-                        session.StartTransaction();
-                        try
-                        {
-                            var insertOrderData = new ExchangeOrderData()
-                            {
-                                UserId = payment.UserId,
-                                TransactionId = payment._id,
-                                OrderId = placedOrder.Data?.OrderId,
-                                CryptoId = placedOrder.Data.CryptoId,
-                                QuoteQuantity = placedOrder.Data.QuoteQuantity,
-                                QuoteQuantityFilled = placedOrder.Data.QuoteQuantityFilled,
-                                Quantity = placedOrder.Data.QuantityFilled,
-                                Price = placedOrder.Data.Price,
-                                Status = placedOrder.Data.Status
-                            };
-
-                            var insertResult = await InsertOneAsync(session, insertOrderData);
-                            if (!insertResult.IsAcknowledged)
-                            {
-                                //TO-DO: Fallback save ExchangeOrderData locally to reconcile later.
-                                _logger.LogError($"Failed to create order record: {insertResult?.ErrorMessage}");
-                                throw new MongoException($"Failed to create order record: {insertResult?.ErrorMessage}");
-                            }
-
-                            BalanceData updateBalance = new BalanceData()
-                            {
-                                UserId = payment.UserId,
-                                SubscriptionId = payment.SubscriptionId,
-                                AssetId = placedOrder.Data.CryptoId,
-                                Available = placedOrder.Data.QuantityFilled
-                            };
-                            var updateBalanceResult = await _balanceService.UpsertBalanceAsync(session, insertOrderData._id, payment.SubscriptionId, updateBalance);
-                            if (!updateBalanceResult.IsSuccess)
-                            {
-                                //TO-DO: Fallback save update BalanceData locally to reconcile later.
-                                _logger.LogError($"Failed to update balances: {updateBalanceResult.ErrorMessage}");
-                                throw new MongoException($"Failed to update balances: {updateBalanceResult?.ErrorMessage}");
-                            }
-
-                            await session.CommitTransactionAsync();
-
-                            orderResults.Add(OrderResult.Success(
-                                placedOrder.Data.OrderId,
-                                true,
-                                true,
-                                coinData._id.ToString(),
-                                placedOrder.Data.QuoteQuantity,
-                                placedOrder.Data.QuantityFilled,
-                                placedOrder.Data.Status
-                                ));
-                        }
-                        catch (Exception ex)
-                        {
-                            await session.AbortTransactionAsync();
-                            _logger.LogError(ex, "Failed to atomically insert transaction and event");
-                            orderResults.Add(OrderResult.Success(
-                                placedOrder.Data.OrderId,
-                                false,
-                                false,
-                                coinData._id.ToString(),
-                                placedOrder.Data.QuoteQuantity,
-                                placedOrder.Data.QuantityFilled,
-                                placedOrder.Data.Status
-                                ));
-                        }
-                    }
-
-                    _logger.LogInformation("Order created for {Symbol}, OrderId: {OrderId}", symbol, placedOrder.Data.OrderId);
+                    throw new ArgumentOutOfRangeException($"Invalid transaction net amount. Must be greater than zero. Provided value is {netAmount}");
                 }
-                catch (Exception ex)
+
+                // Check exchange fiat balance
+
+                var checkBlanceResult = await CheckExchangeBalanceAsync(netAmount);
+                if (!checkBlanceResult.IsSuccess)
                 {
-                    string reason = ex switch
+                    throw new MongoException(checkBlanceResult.ErrorMessage);
+                }
+                if (checkBlanceResult.Data is false)
+                {
+                    //RequestFunding();
+                    _logger.LogWarning("Insufficient balance for {Required}", netAmount);
+                    var storedEvent = new EventData
                     {
-                        ArgumentOutOfRangeException => FailureReason.ValidationError,
-                        ArgumentException => FailureReason.ValidationError,
-                        KeyNotFoundException => FailureReason.DataNotFound,
-                        MongoException => FailureReason.DatabaseError,
-                        _ when ex.Message.Contains("Binance") => FailureReason.ExchangeApiError,
-                        _ when ex.Message.Contains("insert") => FailureReason.DatabaseError,
-                        _ when ex.Message.Contains("update") => FailureReason.DatabaseError,
-                        _ => FailureReason.Unknown
+                        EventType = typeof(RequestfundingEvent).Name,
+                        Payload = netAmount.ToString()
                     };
-                    orderResults.Add(OrderResult.Failure(alloc?.AssetId.ToString(), reason, ex.Message));
-                    _logger.LogError(ex, "Failed to process order: {Message}", ex.Message);
+                    var storedEventResult = await _eventService.InsertOneAsync(storedEvent);
+                    if (!storedEventResult.IsAcknowledged || storedEventResult.InsertedId is null)
+                    {
+                        throw new MongoException($"Failed to store {storedEvent.EventType} event data with payload {storedEvent.Payload}.");
+                    }
+                    await _eventService.Publish(new RequestfundingEvent(netAmount, storedEventResult.InsertedId.AsObjectId));
+                    throw new InsufficientBalanceException($"Insufficient balance. Unable to process payment {payment._id}.");
                 }
+
+                var fetchAllocationsResult = await _subscriptionService.GetAllocationsAsync(payment.SubscriptionId);
+                if (!fetchAllocationsResult.IsSuccess || fetchAllocationsResult.Data is null || !fetchAllocationsResult.Data.Any())
+                {
+                    orderResults.Add(OrderResult.Failure(null, FailureReason.ValidationError, $"Unable to fetch asset allocations: {fetchAllocationsResult.ErrorMessage}"));
+                    throw new MongoException($"Unable to fetch asset allocations: {fetchAllocationsResult.ErrorMessage}");
+                }
+
+                foreach (var alloc in fetchAllocationsResult.Data)
+                {
+                    try
+                    {
+                        if (alloc.PercentAmount <= 0 || alloc.PercentAmount > 100)
+                            throw new ArgumentOutOfRangeException(nameof(alloc.PercentAmount), "Allocation must be between 0-100.");
+
+                        decimal quoteOrderQuantity = netAmount * (alloc.PercentAmount / 100m);
+                        if (quoteOrderQuantity <= 0m)
+                            throw new ArgumentException($"Quote order quantity must be positive. Value: {quoteOrderQuantity}");
+
+                        //First check if there are previous orders already processed with this payment.
+
+                        var prevOrdersFilter = new FilterDefinitionBuilder<ExchangeOrderData>()
+                            .Where(o => o.PaymentId == payment._id && o.AssetId == alloc.AssetId && (o.Status == OrderStatus.Filled || o.Status == OrderStatus.PartiallyFilled));
+
+                        var previousFilledOrders = await GetAllAsync(prevOrdersFilter);
+                        if (previousFilledOrders is null)
+                            throw new MongoException($"Unable to fetch previous filled orders for subscription #{payment.SubscriptionId}, asset #{alloc.AssetId} data.");
+
+                        decimal previousOrdersSum = previousFilledOrders.Sum(o => o.QuoteQuantityFilled) ?? 0m;
+                        var remainingQuoteOrderQuantity = quoteOrderQuantity - previousOrdersSum;
+
+                        var symbol = alloc.AssetTicker + "USDT";
+                        var placedOrder = await PlaceExchangeOrderAsync(alloc.AssetId, alloc.AssetTicker, remainingQuoteOrderQuantity, payment.SubscriptionId);
+                        if (!placedOrder.IsSuccess || placedOrder.Data is null || placedOrder.Data.Status == OrderStatus.Failed)
+                            throw new Exception($"Unable to place order: {placedOrder.ErrorMessage}");
+
+                        // Atomic insert of transaction and event
+                        using (var session = await _mongoClient.StartSessionAsync())
+                        {
+                            session.StartTransaction();
+                            try
+                            {
+                                var insertOrderResult = await InsertOneAsync(new ExchangeOrderData()
+                                {
+                                    UserId = payment.UserId,
+                                    PaymentId = payment._id,
+                                    SubscriptionId = payment.SubscriptionId,
+                                    PlacedOrderId = placedOrder.Data?.OrderId,
+                                    AssetId = placedOrder.Data.AssetId,
+                                    QuoteQuantity = placedOrder.Data.QuoteQuantity,
+                                    QuoteQuantityFilled = placedOrder.Data.QuoteQuantityFilled,
+                                    Quantity = placedOrder.Data.QuantityFilled,
+                                    Price = placedOrder.Data.Price,
+                                    Status = placedOrder.Data.Status
+                                }, session);
+
+                                if (!insertOrderResult.IsAcknowledged)
+                                {
+                                    //TO-DO: Fallback save ExchangeOrderData locally to reconcile later.
+                                    _logger.LogError($"Failed to create order record: {insertOrderResult?.ErrorMessage}");
+                                    throw new MongoException($"Failed to create order record: {insertOrderResult?.ErrorMessage}");
+                                }
+
+                                var updateBalanceResult = await _balanceService.UpsertBalanceAsync(insertOrderResult.InsertedId.AsObjectId, payment.SubscriptionId, new BalanceData()
+                                {
+                                    UserId = payment.UserId,
+                                    SubscriptionId = payment.SubscriptionId,
+                                    AssetId = placedOrder.Data.AssetId,
+                                    Available = placedOrder.Data.QuantityFilled
+                                }, session);
+
+                                if (updateBalanceResult is null || !updateBalanceResult.IsSuccess)
+                                {
+                                    //TO-DO: Fallback save update BalanceData locally to reconcile later.
+                                    _logger.LogError($"Failed to update balances: {updateBalanceResult.ErrorMessage}");
+                                    throw new MongoException($"Failed to update balances: {updateBalanceResult?.ErrorMessage}");
+                                }
+
+                                var insertTransactionResult = await _transactionService.InsertOneAsync(new TransactionData()
+                                {
+                                    BalanceId = updateBalanceResult.Data._id,
+                                    SourceName = "Exchange",
+                                    SourceId = placedOrder.Data.OrderId.ToString(),
+                                    Action = "Buy",
+                                    Available = placedOrder.Data.QuantityFilled,
+                                    Locked = 0m
+                                }, session);
+
+                                if (!insertTransactionResult.IsAcknowledged)
+                                {
+                                    //TO-DO: Fallback save ExchangeOrderData locally to reconcile later.
+                                    _logger.LogError($"Failed to create transaction record: {insertTransactionResult?.ErrorMessage}");
+                                    throw new MongoException($"Failed to create transaction record: {insertTransactionResult?.ErrorMessage}");
+                                }
+
+                                await session.CommitTransactionAsync();
+                            }
+                            catch (Exception ex)
+                            {
+                                await session.AbortTransactionAsync();
+                                _logger.LogError(ex, "Failed to atomically insert exchange order and transaction.");
+                            }
+                            orderResults.Add(OrderResult.Success(
+                                    placedOrder.Data.OrderId,
+                                    alloc.AssetId.ToString(),
+                                    placedOrder.Data.QuoteQuantity,
+                                    placedOrder.Data.QuantityFilled,
+                                    placedOrder.Data.Status
+                                    ));
+                        }
+                        _logger.LogInformation("Order created for {Symbol}, OrderId: {OrderId}", symbol, placedOrder.Data.OrderId);
+                    }
+                    catch (Exception ex)
+                    {
+                        orderResults.Add(OrderResult.Failure(alloc?.AssetId.ToString(), FailureReason.From(ex), ex.Message));
+                        _logger.LogError(ex, "Failed to process order: {Message}", ex.Message);
+                    }
+                }
+                return ResultWrapper<IEnumerable<OrderResult>>.Success(orderResults);
             }
-            return new AllocationOrdersResult(orderResults.AsReadOnly());
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to process payment: {Message}", ex.Message);
+                return ResultWrapper<IEnumerable<OrderResult>>.Failure(FailureReason.From(ex), $"{ex.Message}");
+            }
         }
 
-        public async Task<bool> CheckExchangeBalanceAsync(decimal amount)
+        public async Task<ResultWrapper<bool>> CheckExchangeBalanceAsync(decimal amount)
         {
             // Check exchange fiat balance
-            decimal fiatBalance = await _binanceService.GetFiatBalanceAsync("USDT");
-            return (fiatBalance >= amount);
+            var balanceData = await _binanceService.GetBalanceAsync("USDT");
+            if (!balanceData.IsSuccess)
+            {
+                return ResultWrapper<bool>.Failure(FailureReason.DatabaseError, "Unable to fetch exchange balances.");
+            }
+            decimal fiatBalance = balanceData.Data?.Available ?? 0m;
+            return ResultWrapper<bool>.Success(fiatBalance >= amount);
         }
 
         // Reconciliation method for WebSocket reliability
@@ -341,8 +355,8 @@ namespace Infrastructure.Services
             {
                 try
                 {
-                    if (order.OrderId is null) throw new ArgumentNullException(nameof(order.OrderId));
-                    BinancePlacedOrder exchangeOrder = await _binanceService.GetOrderInfoAsync((long)order.OrderId); // TO-DO: Create GetOrderStatus dunction
+                    if (order.PlacedOrderId is null) throw new ArgumentNullException(nameof(order.PlacedOrderId));
+                    BinancePlacedOrder exchangeOrder = await _binanceService.GetOrderInfoAsync((long)order.PlacedOrderId); // TO-DO: Create GetOrderStatus dunction
 
                     if (exchangeOrder is null) throw new ArgumentNullException(nameof(exchangeOrder));
 
@@ -365,7 +379,7 @@ namespace Infrastructure.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to reconcile order {OrderId}: {Message}", order.OrderId, ex.Message);
+                    _logger.LogError(ex, "Failed to reconcile order {OrderId}: {Message}", order.PlacedOrderId, ex.Message);
                 }
             }
         }
@@ -374,7 +388,7 @@ namespace Infrastructure.Services
         {
             if (order.RetryCount >= 3)
             {
-                _logger.LogError("Max retries reached for OrderId: {OrderId}", order.OrderId);
+                _logger.LogError("Max retries reached for OrderId: {OrderId}", order.PlacedOrderId);
                 await UpdateOneAsync(order._id, new
                 {
                     Status = OrderStatus.Failed
@@ -385,15 +399,16 @@ namespace Infrastructure.Services
             var retryOrder = new ExchangeOrderData
             {
                 UserId = order.UserId,
-                TransactionId = order.TransactionId,
-                CryptoId = order.CryptoId,
+                PaymentId = order.PaymentId,
+                SubscriptionId = order.SubscriptionId,
+                AssetId = order.AssetId,
                 QuoteQuantity = order.QuoteQuantity,
                 Status = OrderStatus.Queued,
                 PreviousOrderId = order._id,
                 RetryCount = order.RetryCount + 1
             };
             await EnqueuOrderAsync(retryOrder);
-            _logger.LogInformation("Queued retry order for failed OrderId: {OrderId}", order.OrderId);
+            _logger.LogInformation("Queued retry order for failed OrderId: {OrderId}", order.PlacedOrderId);
         }
 
         private async Task HandlePartiallyFilledOrderAsync(ExchangeOrderData order)
@@ -407,15 +422,16 @@ namespace Infrastructure.Services
                 var retryOrder = new ExchangeOrderData
                 {
                     UserId = order.UserId,
-                    TransactionId = order.TransactionId,
-                    CryptoId = order.CryptoId,
+                    PaymentId = order.PaymentId,
+                    SubscriptionId = order.SubscriptionId,
+                    AssetId = order.AssetId,
                     QuoteQuantity = remainingQty,
                     Status = OrderStatus.Queued,
                     RetryCount = order.RetryCount + 1,
                     PreviousOrderId = order._id
                 };
                 await EnqueuOrderAsync(retryOrder); //TO-DO: Create EnqueueOrderAsync function
-                _logger.LogInformation("Queued partial fill order for OrderId: {OrderId}, RemainingQty: {Remaining}", order.OrderId, remainingQty);
+                _logger.LogInformation("Queued partial fill order for OrderId: {OrderId}, RemainingQty: {Remaining}", order.PlacedOrderId, remainingQty);
             }
         }
 
@@ -465,7 +481,8 @@ namespace Infrastructure.Services
                         // Sell the entire available quantity to USDT
                         var symbol = $"{balance.Asset}USDT";
                         var sellOrderResult = await PlaceExchangeOrderAsync(
-                            assetResult.Data,
+                            assetResult.Data._id,
+                            assetResult.Data.Ticker,
                             balance.Available,
                             ObjectId.Empty, // No subscription ID needed for reset
                             OrderSide.Sell,
@@ -486,9 +503,10 @@ namespace Infrastructure.Services
                         var orderData = new ExchangeOrderData
                         {
                             UserId = ObjectId.Empty, // System-initiated reset, no user
-                            TransactionId = ObjectId.Empty, // No specific transaction
-                            OrderId = order.OrderId,
-                            CryptoId = assetResult.Data._id,
+                            PaymentId = ObjectId.Empty, // No specific transaction
+                            SubscriptionId = ObjectId.Empty,
+                            PlacedOrderId = order.OrderId,
+                            AssetId = assetResult.Data._id,
                             QuoteQuantity = order.QuoteQuantity,
                             QuoteQuantityFilled = order.QuoteQuantityFilled,
                             Quantity = order.QuantityFilled,
@@ -510,8 +528,6 @@ namespace Infrastructure.Services
 
                         orderResults.Add(OrderResult.Success(
                             order.OrderId,
-                            true,
-                            true,
                             assetResult.Data._id.ToString(),
                             order.QuoteQuantity,
                             order.QuantityFilled,

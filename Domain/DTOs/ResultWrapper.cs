@@ -4,8 +4,8 @@
     {
         public bool IsSuccess { get; }
         public T? Data { get; }
-        public string? FailureReason { get; }  // Null if successful
-        public string? ErrorMessage { get; }           // Detailed error if failed
+        public string? FailureReason { get; }   // Null if successful
+        public string? ErrorMessage { get; }    // Detailed error if failed
 
         private ResultWrapper(bool isSuccess, T? data, string? failureReason = null, string? errorMessage = null)
         {

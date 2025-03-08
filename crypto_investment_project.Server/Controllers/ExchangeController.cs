@@ -1,7 +1,7 @@
 using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
 using Domain.Models.Payment;
-using Infrastructure.Services;
+using Domain.Services;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 

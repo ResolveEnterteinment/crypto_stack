@@ -8,7 +8,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using System.Reflection;
 
-namespace Infrastructure.Services
+namespace Domain.Services
 {
     public abstract class BaseService<T> : IRepository<T> where T : class
     {
@@ -30,18 +30,13 @@ namespace Infrastructure.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        protected virtual async Task OnInsertAsync(ObjectId insertId)
-        {
-            await Task.CompletedTask;
-        }
-
         public async Task<T> GetByIdAsync(ObjectId id)
         {
             var filter = Builders<T>.Filter.Eq("_id", id);
             return await _collection.Find(filter).FirstOrDefaultAsync();
         }
 
-        public async Task<List<T>> GetAllAsync(FilterDefinition<T> filter = null)
+        public async Task<List<T>> GetAllAsync(FilterDefinition<T>? filter = null)
         {
             filter ??= Builders<T>.Filter.Empty;
             return await _collection.Find(filter).ToListAsync();
@@ -49,25 +44,25 @@ namespace Infrastructure.Services
 
         public async Task<T> GetOneAsync(FilterDefinition<T> filter)
         {
-            try
-            {
-                return await _collection.Find(filter).FirstOrDefaultAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to get one entity of type {Type}", typeof(T).Name);
-                throw;
-            }
+            return await _collection.Find(filter).FirstOrDefaultAsync();
         }
 
-        public async Task<InsertResult> InsertOneAsync(T entity)
+        public async Task<InsertResult> InsertOneAsync(T entity, IClientSessionHandle? session = null)
         {
             try
             {
                 ArgumentNullException.ThrowIfNull(entity, nameof(entity));
 
                 // If entity doesn't have an _id, MongoDB will generate one
-                await _collection.InsertOneAsync(entity).ConfigureAwait(false);
+                if (session == null)
+                {
+                    await _collection.InsertOneAsync(entity).ConfigureAwait(false);
+
+                }
+                else
+                {
+                    await _collection.InsertOneAsync(session, entity).ConfigureAwait(false);
+                }
 
                 var baseEntity = entity as BaseEntity;
                 if (baseEntity == null)
@@ -83,60 +78,9 @@ namespace Infrastructure.Services
                     InsertedId = insertedId // Store as string in InsertResult
                 };
 
-                if (insertedId != ObjectId.Empty)
+                if (insertedId == ObjectId.Empty)
                 {
-                    await OnInsertAsync(insertedId);
-                    _logger.LogInformation("Successfully inserted entity of type {Type} with ID: {Id}", typeof(T).Name, insertedId);
-                }
-                else
-                {
-                    _logger.LogWarning("Inserted entity of type {Type} has no valid _id", typeof(T).Name);
-                }
-
-                return insertResult;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to insert entity of type {Type}", typeof(T).Name);
-                return new InsertResult
-                {
-                    IsAcknowledged = false,
-                    InsertedId = null,
-                    ErrorMessage = ex.Message
-                };
-            }
-        }
-        public async Task<InsertResult> InsertOneAsync(IClientSessionHandle session, T entity)
-        {
-            try
-            {
-                ArgumentNullException.ThrowIfNull(entity, nameof(entity));
-
-                // If entity doesn't have an _id, MongoDB will generate one
-                await _collection.InsertOneAsync(session, entity).ConfigureAwait(false);
-
-                var baseEntity = entity as BaseEntity;
-                if (baseEntity == null)
-                {
-                    _logger.LogError("Entity of type {Type} does not inherit from BaseEntity", typeof(T).Name);
-                    throw new ArgumentNullException(nameof(baseEntity));
-                }
-
-                var insertedId = baseEntity._id; // ObjectId from the entity
-                var insertResult = new InsertResult
-                {
-                    IsAcknowledged = true,
-                    InsertedId = insertedId // Store as string in InsertResult
-                };
-
-                if (insertedId != ObjectId.Empty)
-                {
-                    await OnInsertAsync(insertedId);
-                    _logger.LogInformation("Successfully inserted entity of type {Type} with ID: {Id}", typeof(T).Name, insertedId);
-                }
-                else
-                {
-                    _logger.LogWarning("Inserted entity of type {Type} has no valid _id", typeof(T).Name);
+                    throw new MongoException($"Inserted entity of type {typeof(T).Name} has no valid _id");
                 }
 
                 return insertResult;
@@ -153,7 +97,7 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<UpdateResult> UpdateOneAsync(ObjectId id, object updatedFields)
+        public async Task<UpdateResult> UpdateOneAsync(ObjectId id, object updatedFields, IClientSessionHandle? session = null)
         {
             if (updatedFields == null)
             {
@@ -165,27 +109,15 @@ namespace Infrastructure.Services
 
             try
             {
-                return await _collection.UpdateOneAsync(filter, updateDefinition).ConfigureAwait(false);
-            }
-            catch (MongoException ex)
-            {
-                _logger.LogError(ex, "Failed to update entity with ID {Id}", id);
-                throw new InvalidOperationException($"Failed to update entity with ID {id}.", ex);
-            }
-        }
-        public async Task<UpdateResult> UpdateOneAsync(IClientSessionHandle session, ObjectId id, object updatedFields)
-        {
-            if (updatedFields == null)
-            {
-                throw new ArgumentNullException(nameof(updatedFields), "Updated fields cannot be null.");
-            }
+                if (session == null)
+                {
+                    return await _collection.UpdateOneAsync(filter, updateDefinition).ConfigureAwait(false);
 
-            var updateDefinition = BuildUpdateDefinition(updatedFields);
-            var filter = Builders<T>.Filter.Eq("_id", id);
-
-            try
-            {
-                return await _collection.UpdateOneAsync(session, filter, updateDefinition).ConfigureAwait(false);
+                }
+                else
+                {
+                    return await _collection.UpdateOneAsync(session, filter, updateDefinition).ConfigureAwait(false);
+                }
             }
             catch (MongoException ex)
             {
@@ -194,25 +126,19 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<DeleteResult> DeleteAsync(ObjectId id)
+        public async Task<DeleteResult> DeleteAsync(ObjectId id, IClientSessionHandle? session = null)
         {
             var filter = Builders<T>.Filter.Eq("_id", id);
             try
             {
-                return await _collection.DeleteOneAsync(filter).ConfigureAwait(false);
-            }
-            catch (MongoException ex)
-            {
-                _logger.LogError(ex, "Failed to delete entity with ID {Id}", id);
-                throw new InvalidOperationException($"Failed to delete entity with ID {id}.", ex);
-            }
-        }
-        public async Task<DeleteResult> DeleteAsync(IClientSessionHandle session, ObjectId id)
-        {
-            var filter = Builders<T>.Filter.Eq("_id", id);
-            try
-            {
-                return await _collection.DeleteOneAsync(session, filter).ConfigureAwait(false);
+                if (session == null)
+                {
+                    return await _collection.DeleteOneAsync(filter).ConfigureAwait(false);
+                }
+                else
+                {
+                    return await _collection.DeleteOneAsync(session, filter).ConfigureAwait(false);
+                }
             }
             catch (MongoException ex)
             {

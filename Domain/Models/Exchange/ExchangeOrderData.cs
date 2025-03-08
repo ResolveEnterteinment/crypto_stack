@@ -8,11 +8,13 @@ namespace Domain.Models.Exchange
         [BsonRepresentation(BsonType.ObjectId)]
         public required ObjectId UserId { get; set; }
         [BsonRepresentation(BsonType.ObjectId)]
-        public required ObjectId TransactionId { get; set; }
+        public required ObjectId PaymentId { get; set; }
         [BsonRepresentation(BsonType.ObjectId)]
-        public required ObjectId CryptoId { get; set; }
+        public required ObjectId SubscriptionId { get; set; }
+        [BsonRepresentation(BsonType.ObjectId)]
+        public required ObjectId AssetId { get; set; }
         public required decimal QuoteQuantity { get; set; }
-        public long? OrderId { get; set; }
+        public long? PlacedOrderId { get; set; }
         public decimal? QuoteQuantityFilled { get; set; }
         public decimal? Price { get; set; }
         public decimal? Quantity { get; set; }
