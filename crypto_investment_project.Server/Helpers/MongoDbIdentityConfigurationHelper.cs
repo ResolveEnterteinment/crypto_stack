@@ -58,13 +58,13 @@ namespace crypto_investment_project.Server.Helpers
                 IdentityOptionsAction = options =>
                 {
                     // Password options.
-                    options.Password.RequireDigit = true;
+                    /*options.Password.RequireDigit = true;
                     options.Password.RequireUppercase = true;
                     options.Password.RequireNonAlphanumeric = true;
                     options.Password.RequiredLength = 6;
 
                     // Sign-in options.
-                    options.SignIn.RequireConfirmedEmail = true;
+                    options.SignIn.RequireConfirmedEmail = true;*/
 
                     // Lockout options.
                     options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
@@ -85,7 +85,7 @@ namespace crypto_investment_project.Server.Helpers
                 .AddDefaultTokenProviders();
 
             // Optionally, register the custom MongoDbContext for injection elsewhere.
-            builder.Services.AddSingleton<CustomMongoDbContext>(mongoDbContext);
+            //builder.Services.AddSingleton<CustomMongoDbContext>(mongoDbContext);
         }
     }
 }
