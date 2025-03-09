@@ -26,9 +26,9 @@ namespace crypto_investment_project.Server.Controllers
             }
 
             // Validate request
-            if (string.IsNullOrWhiteSpace(subscriptionRequest.UserId) || !ObjectId.TryParse(subscriptionRequest.UserId, out _))
+            if (string.IsNullOrWhiteSpace(subscriptionRequest.UserId) || !Guid.TryParse(subscriptionRequest.UserId, out _))
             {
-                return BadRequest("UserId must be a valid ObjectId.");
+                return BadRequest("UserId must be a valid Guid.");
             }
 
             if (subscriptionRequest.Allocations == null || !subscriptionRequest.Allocations.Any())
@@ -37,10 +37,10 @@ namespace crypto_investment_project.Server.Controllers
             }
 
             var invalidAllocation = subscriptionRequest.Allocations.FirstOrDefault(a =>
-                string.IsNullOrWhiteSpace(a.AssetId) || !ObjectId.TryParse(a.AssetId, out _) || a.PercentAmount > 100);
+                string.IsNullOrWhiteSpace(a.AssetId) || !Guid.TryParse(a.AssetId, out _) || a.PercentAmount > 100);
             if (invalidAllocation != null)
             {
-                return BadRequest($"Invalid allocation: AssetId must be a valid ObjectId and PercentAmount must be 0-100. Found AssetId: {invalidAllocation.AssetId}, PercentAmount: {invalidAllocation.PercentAmount}");
+                return BadRequest($"Invalid allocation: AssetId must be a valid Guid and PercentAmount must be 0-100. Found AssetId: {invalidAllocation.AssetId}, PercentAmount: {invalidAllocation.PercentAmount}");
             }
 
             if (string.IsNullOrWhiteSpace(subscriptionRequest.Interval))

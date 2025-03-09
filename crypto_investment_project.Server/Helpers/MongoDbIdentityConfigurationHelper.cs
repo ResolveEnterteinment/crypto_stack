@@ -2,6 +2,7 @@
 using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using Domain.Models.Authentication;
 using Microsoft.AspNetCore.Identity;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDbGenericRepository;
 

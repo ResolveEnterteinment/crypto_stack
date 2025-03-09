@@ -5,8 +5,7 @@ namespace Domain.Models.Subscription
 {
     public class SubscriptionData : BaseEntity
     {
-        [BsonRepresentation(BsonType.ObjectId)]
-        public required ObjectId UserId { get; set; }
+        public required Guid UserId { get; set; }
         public required IEnumerable<AllocationData> Allocations { get; set; }
         public required string Interval { get; set; }
         public required int Amount { get; set; }

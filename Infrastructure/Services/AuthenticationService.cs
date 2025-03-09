@@ -88,7 +88,7 @@ namespace Domain.Services
                     signingCredentials: creds
                     );
 
-                var userData = await _userService.GetAsync(ObjectId.Parse(user.Id.ToString()));
+                var userData = await _userService.GetAsync(user.Id);
 
                 if (userData == null)
                 {
@@ -161,7 +161,7 @@ namespace Domain.Services
 
                 var userData = await _userService.CreateAsync(new UserData()
                 {
-                    _id = ObjectId.Parse(user.Id.ToString()),
+                    Id = user.Id,
                     CreateTime = DateTime.UtcNow,
                     FullName = request.FullName,
                     Email = request.Email,

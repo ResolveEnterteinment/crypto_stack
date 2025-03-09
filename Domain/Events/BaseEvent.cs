@@ -5,8 +5,7 @@ namespace Domain.Events
 {
     public class BaseEvent
     {
-        [BsonRepresentation(BsonType.ObjectId)]
-        public ObjectId EventId { get; set; }
-        public ObjectId? TrailId { get; set; }
+        public Guid EventId { get; set; }
+        public Guid? TrailId { get; set; }
     }
 }

@@ -9,9 +9,9 @@ namespace Domain.Services
 {
     public interface ISubscriptionService : IRepository<SubscriptionData>
     {
-        public Task<ResultWrapper<ObjectId>> ProcessSubscriptionRequest(SubscriptionRequest request);
-        public Task<ResultWrapper<IReadOnlyCollection<AllocationData>>> GetAllocationsAsync(ObjectId subscriptionId);
-        public Task<UpdateResult> CancelAsync(ObjectId subscriptionId);
-        public Task<IEnumerable<SubscriptionData>> GetUserSubscriptionsAsync(ObjectId userId);
+        public Task<ResultWrapper<Guid>> ProcessSubscriptionRequest(SubscriptionRequest request);
+        public Task<ResultWrapper<IReadOnlyCollection<AllocationData>>> GetAllocationsAsync(Guid subscriptionId);
+        public Task<UpdateResult> CancelAsync(Guid subscriptionId);
+        public Task<IEnumerable<SubscriptionData>> GetUserSubscriptionsAsync(Guid userId);
     }
 }

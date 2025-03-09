@@ -8,8 +8,8 @@ namespace Application.Interfaces
 {
     public interface IPaymentService : IRepository<PaymentData>
     {
-        public Task<ResultWrapper<ObjectId>> ProcessChargeUpdatedEventAsync(ChargeRequest charge);
-        public Task<ResultWrapper<ObjectId>> ProcessPaymentIntentSucceededEvent(PaymentIntentRequest request);
+        public Task<ResultWrapper<Guid>> ProcessChargeUpdatedEventAsync(ChargeRequest charge);
+        public Task<ResultWrapper<Guid>> ProcessPaymentIntentSucceededEvent(PaymentIntentRequest request);
         public Task<decimal> GetFeeAsync(string paymentId);
     }
 }

@@ -93,7 +93,7 @@ namespace Domain.Services
                     ProcessedAt = DateTime.UtcNow
                 });
 
-                _logger.LogInformation("Successfully processed payment: {PaymentId}", paymentNotification.Payment._id);
+                _logger.LogInformation("Successfully processed payment: {PaymentId}", paymentNotification.Payment.Id);
             }
             catch (Exception ex)
             {
@@ -102,7 +102,7 @@ namespace Domain.Services
             }
         }
 
-        public async Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(ObjectId assetId, string assetTicker, decimal quantity, ObjectId subcriptionId, string side = OrderSide.Buy, string type = "MARKET")
+        public async Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(Guid assetId, string assetTicker, decimal quantity, Guid subcriptionId, string side = OrderSide.Buy, string type = "MARKET")
         {
             try
             {
@@ -182,8 +182,8 @@ namespace Domain.Services
                     {
                         throw new MongoException($"Failed to store {storedEvent.EventType} event data with payload {storedEvent.Payload}.");
                     }
-                    await _eventService.Publish(new RequestfundingEvent(netAmount, storedEventResult.InsertedId.AsObjectId));
-                    throw new InsufficientBalanceException($"Insufficient balance. Unable to process payment {payment._id}.");
+                    await _eventService.Publish(new RequestfundingEvent(netAmount, storedEventResult.InsertedId.Value));
+                    throw new InsufficientBalanceException($"Insufficient balance. Unable to process payment {payment.Id}.");
                 }
 
                 var fetchAllocationsResult = await _subscriptionService.GetAllocationsAsync(payment.SubscriptionId);
@@ -207,7 +207,7 @@ namespace Domain.Services
                         //First check if there are previous orders already processed with this payment.
 
                         var prevOrdersFilter = new FilterDefinitionBuilder<ExchangeOrderData>()
-                            .Where(o => o.PaymentId == payment._id && o.AssetId == alloc.AssetId && (o.Status == OrderStatus.Filled || o.Status == OrderStatus.PartiallyFilled));
+                            .Where(o => o.PaymentId == payment.Id && o.AssetId == alloc.AssetId && (o.Status == OrderStatus.Filled || o.Status == OrderStatus.PartiallyFilled));
 
                         var previousFilledOrders = await GetAllAsync(prevOrdersFilter);
                         if (previousFilledOrders is null)
@@ -235,7 +235,7 @@ namespace Domain.Services
                                 var insertOrderResult = await InsertOneAsync(new ExchangeOrderData()
                                 {
                                     UserId = payment.UserId,
-                                    PaymentId = payment._id,
+                                    PaymentId = payment.Id,
                                     SubscriptionId = payment.SubscriptionId,
                                     PlacedOrderId = placedOrder?.OrderId,
                                     AssetId = alloc.AssetId,
@@ -254,7 +254,7 @@ namespace Domain.Services
                                     throw new MongoException($"Failed to create order record: {insertOrderResult?.ErrorMessage}");
                                 }
 
-                                var updateBalanceResult = await _balanceService.UpsertBalanceAsync(insertOrderResult.InsertedId.AsObjectId, payment.SubscriptionId, new BalanceData()
+                                var updateBalanceResult = await _balanceService.UpsertBalanceAsync(insertOrderResult.InsertedId.Value, payment.SubscriptionId, new BalanceData()
                                 {
                                     UserId = payment.UserId,
                                     SubscriptionId = payment.SubscriptionId,
@@ -271,7 +271,7 @@ namespace Domain.Services
 
                                 var insertTransactionResult = await _transactionService.InsertOneAsync(new TransactionData()
                                 {
-                                    BalanceId = updateBalanceResult.Data._id,
+                                    BalanceId = updateBalanceResult.Data.Id,
                                     SourceName = "Exchange",
                                     SourceId = placedOrder.OrderId.ToString(),
                                     Action = "Buy",
@@ -350,7 +350,7 @@ namespace Domain.Services
                         .Set(o => o.Quantity, exchangeOrder.QuantityFilled)
                         .Set(o => o.Price, exchangeOrder.Price);
 
-                    await UpdateOneAsync(order._id, new
+                    await UpdateOneAsync(order.Id, new
                     {
                         Status = exchangeOrder.Status.ToString(),
                         Quantity = exchangeOrder.QuantityFilled,
@@ -384,7 +384,7 @@ namespace Domain.Services
             if (order.RetryCount >= 3)
             {
                 _logger.LogError("Max retries reached for OrderId: {OrderId}", order.PlacedOrderId);
-                await UpdateOneAsync(order._id, new
+                await UpdateOneAsync(order.Id, new
                 {
                     Status = OrderStatus.Failed
                 });
@@ -400,7 +400,7 @@ namespace Domain.Services
                 QuoteQuantity = order.QuoteQuantity,
                 QuoteQuantityDust = 0,
                 Status = OrderStatus.Queued,
-                PreviousOrderId = order._id,
+                PreviousOrderId = order.Id,
                 RetryCount = order.RetryCount + 1
             };
             await EnqueuOrderAsync(retryOrder);
@@ -425,7 +425,7 @@ namespace Domain.Services
                     QuoteQuantityDust = 0,
                     Status = OrderStatus.Queued,
                     RetryCount = order.RetryCount + 1,
-                    PreviousOrderId = order._id
+                    PreviousOrderId = order.Id
                 };
                 await EnqueuOrderAsync(retryOrder); //TO-DO: Create EnqueueOrderAsync function
                 _logger.LogInformation("Queued partial fill order for OrderId: {OrderId}, RemainingQty: {Remaining}", order.PlacedOrderId, remainingQty);
@@ -478,10 +478,10 @@ namespace Domain.Services
                         // Sell the entire available quantity to USDT
                         var symbol = $"{balance.Asset}USDT";
                         var sellOrderResult = await PlaceExchangeOrderAsync(
-                            assetResult.Data._id,
+                            assetResult.Data.Id,
                             assetResult.Data.Ticker,
                             balance.Available,
-                            ObjectId.Empty, // No subscription ID needed for reset
+                            Guid.Empty, // No subscription ID needed for reset
                             OrderSide.Sell,
                             "MARKET"
                         );
@@ -500,11 +500,11 @@ namespace Domain.Services
                         var dust = order.QuoteQuantity - order.QuoteQuantityFilled;
                         var orderData = new ExchangeOrderData
                         {
-                            UserId = ObjectId.Empty, // System-initiated reset, no user
-                            PaymentId = ObjectId.Empty, // No specific transaction
-                            SubscriptionId = ObjectId.Empty,
+                            UserId = Guid.Empty, // System-initiated reset, no user
+                            PaymentId = Guid.Empty, // No specific transaction
+                            SubscriptionId = Guid.Empty,
                             PlacedOrderId = order.OrderId,
-                            AssetId = assetResult.Data._id,
+                            AssetId = assetResult.Data.Id,
                             QuoteQuantity = order.QuoteQuantity,
                             QuoteQuantityFilled = order.QuoteQuantityFilled,
                             QuoteQuantityDust = dust,
@@ -527,7 +527,7 @@ namespace Domain.Services
 
                         orderResults.Add(OrderResult.Success(
                             order.OrderId,
-                            assetResult.Data._id.ToString(),
+                            assetResult.Data.Id.ToString(),
                             order.QuoteQuantity,
                             order.QuantityFilled,
                             order.Status

@@ -5,12 +5,9 @@ namespace Domain.Models.Balance
 {
     public class BalanceData : BaseEntity
     {
-        [BsonRepresentation(BsonType.ObjectId)]
-        public ObjectId UserId { get; set; }
-        [BsonRepresentation(BsonType.ObjectId)]
-        public ObjectId SubscriptionId { get; set; }
-        [BsonRepresentation(BsonType.ObjectId)]
-        public ObjectId AssetId { get; set; }
+        public Guid UserId { get; set; }
+        public Guid SubscriptionId { get; set; }
+        public Guid AssetId { get; set; }
         public decimal Available { get; set; } = decimal.Zero;
         public decimal Locked { get; set; } = decimal.Zero;
     }

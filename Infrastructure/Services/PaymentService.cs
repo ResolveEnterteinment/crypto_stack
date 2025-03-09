@@ -37,8 +37,8 @@ namespace Domain.Services
         /// Processes a charge.updated event from Stripe, fetching PaymentIntent data, calculating fees, and storing payment details.
         /// </summary>
         /// <param name="charge">The Stripe Charge object from the webhook event.</param>
-        /// <returns>A ResultWrapper containing the ObjectId of the processed payment event or an error.</returns>
-        public async Task<ResultWrapper<ObjectId>> ProcessChargeUpdatedEventAsync(ChargeRequest charge)
+        /// <returns>A ResultWrapper containing the Guid of the processed payment event or an error.</returns>
+        public async Task<ResultWrapper<Guid>> ProcessChargeUpdatedEventAsync(ChargeRequest charge)
         {
             try
             {
@@ -71,10 +71,10 @@ namespace Domain.Services
                     throw new ArgumentException("PaymentIntent metadata must include userId and subscriptionId.");
                 }
 
-                if (!ObjectId.TryParse(userId, out ObjectId parsedUserId) || !ObjectId.TryParse(subscriptionId, out ObjectId parsedSubscriptionId))
+                if (!Guid.TryParse(userId, out Guid parsedUserId) || !Guid.TryParse(subscriptionId, out Guid parsedSubscriptionId))
                 {
                     _logger.LogWarning("Invalid metadata format in PaymentIntent {PaymentId}: UserId={UserId}, SubscriptionId={SubscriptionId}", paymentIntent.Id, userId, subscriptionId);
-                    throw new ArgumentException("UserId and SubscriptionId must be valid ObjectIds.");
+                    throw new ArgumentException("UserId and SubscriptionId must be valid Guids.");
                 }
                 #endregion Fetch and Validate PaymentIntent
 
@@ -95,7 +95,7 @@ namespace Domain.Services
                 #region Construct PaymentRequest
                 var paymentRequest = new PaymentIntentRequest
                 {
-                    UserId = userId,
+                    UserId = Guid.Parse(userId),
                     SubscriptionId = subscriptionId,
                     PaymentId = paymentIntent.Id,
                     TotalAmount = totalAmount,
@@ -112,7 +112,7 @@ namespace Domain.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to process charge.updated event for Charge {ChargeId}", charge.Id);
-                return ResultWrapper<ObjectId>.Failure(FailureReason.From(ex), ex.Message);
+                return ResultWrapper<Guid>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
 
@@ -120,8 +120,8 @@ namespace Domain.Services
         /// Processes a payment request, storing it atomically with an event and publishing a PaymentReceivedEvent.
         /// </summary>
         /// <param name="paymentRequest">The payment details to process.</param>
-        /// <returns>A ResultWrapper containing the ObjectId of the stored event or an error.</returns>
-        public async Task<ResultWrapper<ObjectId>> ProcessPaymentIntentSucceededEvent(PaymentIntentRequest paymentRequest)
+        /// <returns>A ResultWrapper containing the Guid of the stored event or an error.</returns>
+        public async Task<ResultWrapper<Guid>> ProcessPaymentIntentSucceededEvent(PaymentIntentRequest paymentRequest)
         {
             try
             {
@@ -130,11 +130,11 @@ namespace Domain.Services
                 {
                     throw new ArgumentNullException(nameof(paymentRequest), "Payment request cannot be null.");
                 }
-                if (string.IsNullOrWhiteSpace(paymentRequest.UserId) || !ObjectId.TryParse(paymentRequest.UserId, out ObjectId userId))
+                if (string.IsNullOrWhiteSpace(paymentRequest.UserId.ToString()))
                 {
                     throw new ArgumentException($"Invalid UserId: {paymentRequest.UserId}");
                 }
-                if (string.IsNullOrWhiteSpace(paymentRequest.SubscriptionId) || !ObjectId.TryParse(paymentRequest.SubscriptionId, out ObjectId subscriptionId))
+                if (string.IsNullOrWhiteSpace(paymentRequest.SubscriptionId) || !Guid.TryParse(paymentRequest.SubscriptionId, out Guid subscriptionId))
                 {
                     throw new ArgumentException($"Invalid SubscriptionId: {paymentRequest.SubscriptionId}");
                 }
@@ -162,13 +162,13 @@ namespace Domain.Services
                 if (existingPayment != null)
                 {
                     _logger.LogInformation("Payment {PaymentId} already processed.", paymentRequest.PaymentId);
-                    return ResultWrapper<ObjectId>.Success(existingPayment._id);
+                    return ResultWrapper<Guid>.Success(existingPayment.Id);
                 }
                 #endregion Idempotency Check
 
                 var paymentData = new PaymentData
                 {
-                    UserId = userId,
+                    UserId = paymentRequest.UserId,
                     SubscriptionId = subscriptionId,
                     PaymentProviderId = paymentRequest.PaymentId,
                     TotalAmount = paymentRequest.TotalAmount,
@@ -213,13 +213,13 @@ namespace Domain.Services
                 #endregion Atomic Transaction
 
                 // Publish event after commit
-                await _eventService.Publish(new PaymentReceivedEvent(paymentData, storedEventResult.InsertedId.AsObjectId));
-                return ResultWrapper<ObjectId>.Success(storedEventResult.InsertedId.AsObjectId);
+                await _eventService.Publish(new PaymentReceivedEvent(paymentData, storedEventResult.InsertedId.Value));
+                return ResultWrapper<Guid>.Success(storedEventResult.InsertedId.Value);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to process payment request: {Message}", ex.Message);
-                return ResultWrapper<ObjectId>.Failure(FailureReason.From(ex), ex.Message);
+                return ResultWrapper<Guid>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
 

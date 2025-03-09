@@ -51,8 +51,8 @@ namespace Domain.Services
             };
         }*/
 
-        public async Task<UserData?> GetAsync(ObjectId id) =>
-            await _usersCollection.Find(x => x._id == id).FirstOrDefaultAsync();
+        public async Task<UserData?> GetAsync(Guid id) =>
+            await _usersCollection.Find(x => x.Id == id).FirstOrDefaultAsync();
 
         public async Task<UserData?> CreateAsync(UserData newUserData)
         {
@@ -69,11 +69,11 @@ namespace Domain.Services
             }
         }
 
-        public async Task UpdateAsync(ObjectId id, UserData updatedUserData) =>
-            await _usersCollection.ReplaceOneAsync(x => x._id == id, updatedUserData);
+        public async Task UpdateAsync(Guid id, UserData updatedUserData) =>
+            await _usersCollection.ReplaceOneAsync(x => x.Id == id, updatedUserData);
 
-        public async Task RemoveAsync(ObjectId id) =>
-            await _usersCollection.DeleteOneAsync(x => x._id == id);
+        public async Task RemoveAsync(Guid id) =>
+            await _usersCollection.DeleteOneAsync(x => x.Id == id);
         #endregion CRUD END
     }
 }

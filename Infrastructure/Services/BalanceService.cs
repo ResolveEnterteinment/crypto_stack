@@ -18,7 +18,7 @@ namespace Domain.Services
             ILogger<BalanceService> logger) : base(mongoClient, mongoDbSettings, "balances", logger)
         {
         }
-        public async Task<ResultWrapper<IEnumerable<BalanceData>>> GetAllBySubscriptionIdAsync(ObjectId subscriptionId)
+        public async Task<ResultWrapper<IEnumerable<BalanceData>>> GetAllBySubscriptionIdAsync(Guid subscriptionId)
         {
             try
             {
@@ -35,7 +35,7 @@ namespace Domain.Services
                 return ResultWrapper<IEnumerable<BalanceData>>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
-        public async Task<ResultWrapper<IEnumerable<BalanceData>>> GetAllByUserIdAsync(ObjectId userId)
+        public async Task<ResultWrapper<IEnumerable<BalanceData>>> GetAllByUserIdAsync(Guid userId)
         {
             try
             {
@@ -53,12 +53,12 @@ namespace Domain.Services
             }
         }
 
-        public async Task<ResultWrapper<IEnumerable<ObjectId>>> InitBalances(ObjectId userId, ObjectId subscriptionId, IEnumerable<ObjectId> assets)
+        public async Task<ResultWrapper<IEnumerable<Guid>>> InitBalances(Guid userId, Guid subscriptionId, IEnumerable<Guid> assets)
         {
             try
             {
                 //TO-DO: Add Atomicity
-                var insertedBalanceIds = new List<ObjectId>();
+                var insertedBalanceIds = new List<Guid>();
                 foreach (var asset in assets)
                 {
                     var result = await InsertOneAsync(new BalanceData()
@@ -71,18 +71,18 @@ namespace Domain.Services
                     {
                         throw new MongoException($"Failed to insert BalanceData");
                     }
-                    insertedBalanceIds.Add(result.InsertedId.AsObjectId);
+                    insertedBalanceIds.Add(result.InsertedId.Value);
                 }
-                return ResultWrapper<IEnumerable<ObjectId>>.Success(insertedBalanceIds);
+                return ResultWrapper<IEnumerable<Guid>>.Success(insertedBalanceIds);
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Failed to initialize balances for subscription #{subscriptionId}: {ex.Message}");
-                return ResultWrapper<IEnumerable<ObjectId>>.Failure(FailureReason.DatabaseError, $"Failed to initialize balances for subscription #{subscriptionId}: {ex.Message}");
+                return ResultWrapper<IEnumerable<Guid>>.Failure(FailureReason.DatabaseError, $"Failed to initialize balances for subscription #{subscriptionId}: {ex.Message}");
             }
         }
 
-        public async Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(ObjectId orderId, ObjectId subscriptionId, BalanceData updateBalance, IClientSessionHandle session)
+        public async Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(Guid orderId, Guid subscriptionId, BalanceData updateBalance, IClientSessionHandle session)
         {
             try
             {
@@ -97,7 +97,7 @@ namespace Domain.Services
                         Available = updateAvailable,
                         Locked = updateLocked
                     };
-                    await UpdateOneAsync(balance._id, updateFields, session);
+                    await UpdateOneAsync(balance.Id, updateFields, session);
                     return ResultWrapper<BalanceData>.Success(balance);
                 }
                 catch (Exception)

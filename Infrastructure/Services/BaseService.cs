@@ -30,7 +30,7 @@ namespace Domain.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task<T> GetByIdAsync(ObjectId id)
+        public async Task<T> GetByIdAsync(Guid id)
         {
             var filter = Builders<T>.Filter.Eq("_id", id);
             return await _collection.Find(filter).FirstOrDefaultAsync();
@@ -53,7 +53,7 @@ namespace Domain.Services
             {
                 ArgumentNullException.ThrowIfNull(entity, nameof(entity));
 
-                // If entity doesn't have an _id, MongoDB will generate one
+                // If entity doesn't have an Id, MongoDB will generate one
                 if (session == null)
                 {
                     await _collection.InsertOneAsync(entity).ConfigureAwait(false);
@@ -71,16 +71,16 @@ namespace Domain.Services
                     throw new ArgumentNullException(nameof(baseEntity));
                 }
 
-                var insertedId = baseEntity._id; // ObjectId from the entity
+                var insertedId = baseEntity.Id; // Guid from the entity
                 var insertResult = new InsertResult
                 {
                     IsAcknowledged = true,
                     InsertedId = insertedId // Store as string in InsertResult
                 };
 
-                if (insertedId == ObjectId.Empty)
+                if (insertedId == Guid.Empty)
                 {
-                    throw new MongoException($"Inserted entity of type {typeof(T).Name} has no valid _id");
+                    throw new MongoException($"Inserted entity of type {typeof(T).Name} has no valid Id");
                 }
 
                 return insertResult;
@@ -97,7 +97,7 @@ namespace Domain.Services
             }
         }
 
-        public async Task<UpdateResult> UpdateOneAsync(ObjectId id, object updatedFields, IClientSessionHandle? session = null)
+        public async Task<UpdateResult> UpdateOneAsync(Guid id, object updatedFields, IClientSessionHandle? session = null)
         {
             if (updatedFields == null)
             {
@@ -126,7 +126,7 @@ namespace Domain.Services
             }
         }
 
-        public async Task<DeleteResult> DeleteAsync(ObjectId id, IClientSessionHandle? session = null)
+        public async Task<DeleteResult> DeleteAsync(Guid id, IClientSessionHandle? session = null)
         {
             var filter = Builders<T>.Filter.Eq("_id", id);
             try

@@ -1,14 +1,9 @@
-﻿using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
-
-namespace Domain.Models.Payment
+﻿namespace Domain.Models.Payment
 {
     public class PaymentData : BaseEntity
     {
-        [BsonRepresentation(BsonType.ObjectId)]
-        public required ObjectId UserId { get; set; }
-        [BsonRepresentation(BsonType.ObjectId)]
-        public required ObjectId SubscriptionId { get; set; }
+        public required Guid UserId { get; set; }
+        public required Guid SubscriptionId { get; set; }
         public required string PaymentProviderId { get; set; }
         public required decimal TotalAmount { get; set; }
         public required decimal PaymentProviderFee { get; set; }

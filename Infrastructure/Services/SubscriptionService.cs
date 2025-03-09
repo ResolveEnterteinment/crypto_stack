@@ -28,7 +28,7 @@ namespace Domain.Services
             _assetService = assetService ?? throw new ArgumentNullException(nameof(_assetService));
         }
 
-        public async Task<ResultWrapper<ObjectId>> ProcessSubscriptionRequest(SubscriptionRequest request)
+        public async Task<ResultWrapper<Guid>> ProcessSubscriptionRequest(SubscriptionRequest request)
         {
             try
             {
@@ -39,7 +39,7 @@ namespace Domain.Services
                     throw new ArgumentNullException("Subscription request cannot be null.");
                 }
 
-                if (string.IsNullOrWhiteSpace(request.UserId) || !ObjectId.TryParse(request.UserId, out ObjectId userId))
+                if (string.IsNullOrWhiteSpace(request.UserId) || !Guid.TryParse(request.UserId, out Guid userId))
                 {
                     throw new ArgumentException($"Invalid UserId: {request.UserId}");
                 }
@@ -51,7 +51,7 @@ namespace Domain.Services
 
                 foreach (var alloc in request.Allocations)
                 {
-                    if (string.IsNullOrWhiteSpace(alloc.AssetId) || !ObjectId.TryParse(alloc.AssetId, out _))
+                    if (string.IsNullOrWhiteSpace(alloc.AssetId) || !Guid.TryParse(alloc.AssetId, out _))
                     {
                         throw new ArgumentException($"Invalid AssetId: {alloc.AssetId}");
                     }
@@ -77,8 +77,8 @@ namespace Domain.Services
                     UserId = userId,
                     Allocations = (IEnumerable<AllocationData>)request.Allocations.Select(async allocRequest => new AllocationData
                     {
-                        AssetId = ObjectId.Parse(allocRequest.AssetId), // Safe due to prior validation
-                        AssetTicker = (await _assetService.GetByIdAsync(ObjectId.Parse(allocRequest.AssetId))).Ticker,
+                        AssetId = Guid.Parse(allocRequest.AssetId), // Safe due to prior validation
+                        AssetTicker = (await _assetService.GetByIdAsync(Guid.Parse(allocRequest.AssetId))).Ticker,
                         PercentAmount = allocRequest.PercentAmount
                     }),
                     Interval = request.Interval,
@@ -92,7 +92,7 @@ namespace Domain.Services
                 {
                     throw new MongoException("Failed to insert subscription into database.");
                 }
-                var insertedId = result.InsertedId.AsObjectId;
+                var insertedId = result.InsertedId.Value;
                 var assetsResult = await GetAllocationsAsync(insertedId);
                 if (!assetsResult.IsSuccess)
                 {
@@ -106,16 +106,16 @@ namespace Domain.Services
                     throw new Exception($"Unable to init balances");
                 }
                 _logger.LogInformation("Successfully inserted subscription {SubscriptionId}", result.InsertedId);
-                return ResultWrapper<ObjectId>.Success(result.InsertedId.AsObjectId);
+                return ResultWrapper<Guid>.Success(result.InsertedId.Value);
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Failed to process subscription request: {ex.Message}");
-                return ResultWrapper<ObjectId>.Failure(FailureReason.From(ex), ex.Message);
+                return ResultWrapper<Guid>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
 
-        public async Task<ResultWrapper<IReadOnlyCollection<AllocationData>>> GetAllocationsAsync(ObjectId subscriptionId)
+        public async Task<ResultWrapper<IReadOnlyCollection<AllocationData>>> GetAllocationsAsync(Guid subscriptionId)
         {
             try
             {
@@ -137,13 +137,13 @@ namespace Domain.Services
             }
         }
 
-        public async Task<UpdateResult> CancelAsync(ObjectId subscriptionId)
+        public async Task<UpdateResult> CancelAsync(Guid subscriptionId)
         {
             var updatedFields = new { IsCancelled = true };
             return await UpdateOneAsync(subscriptionId, updatedFields);
         }
 
-        public async Task<IEnumerable<SubscriptionData>> GetUserSubscriptionsAsync(ObjectId userId)
+        public async Task<IEnumerable<SubscriptionData>> GetUserSubscriptionsAsync(Guid userId)
         {
             var filter = Builders<SubscriptionData>.Filter.Eq(doc => doc.UserId, userId);
             return await GetAllAsync(filter);

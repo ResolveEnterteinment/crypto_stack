@@ -12,7 +12,7 @@ namespace Domain.DTOs
         /// <summary>
         /// The document that was inserted.
         /// </summary>
-        public BsonValue? InsertedId { get; set; }
+        public Guid? InsertedId { get; set; }
 
         /// <summary>
         /// An error message, if an exception occurred.

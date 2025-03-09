@@ -38,7 +38,7 @@ namespace BinanceLibrary
             });
         }
 
-        internal async Task<BinancePlacedOrder> PlaceOrder(string symbol, decimal quantity, ObjectId subscriptionId, Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy, Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
+        internal async Task<BinancePlacedOrder> PlaceOrder(string symbol, decimal quantity, Guid subscriptionId, Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy, Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
         {
             try
             {
@@ -69,7 +69,7 @@ namespace BinanceLibrary
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
         /// <returns>The order details if successful; otherwise, null.</returns>
-        public async Task<PlacedExchangeOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity, ObjectId subscriptionId)
+        public async Task<PlacedExchangeOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity, Guid subscriptionId)
         {
             try
             {
@@ -99,7 +99,7 @@ namespace BinanceLibrary
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
         /// <returns>The order details if successful; otherwise, null.</returns>
-        public async Task<PlacedExchangeOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity, ObjectId subscriptionId)
+        public async Task<PlacedExchangeOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity, Guid subscriptionId)
         {
             try
             {

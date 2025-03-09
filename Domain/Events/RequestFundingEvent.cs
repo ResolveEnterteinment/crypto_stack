@@ -7,7 +7,7 @@ namespace Domain.Events
     public class RequestfundingEvent : BaseEvent, INotification
     {
         public decimal Amount { get; }
-        public RequestfundingEvent(decimal amount, ObjectId storedEventId)
+        public RequestfundingEvent(decimal amount, Guid storedEventId)
         {
             EventId = storedEventId;
             Amount = amount;

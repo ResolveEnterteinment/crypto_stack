@@ -14,7 +14,7 @@ namespace crypto_investment_project.Server.Controllers
         [Route("user/{user}")]
         public async Task<IActionResult> GetUserBalances(string user)
         {
-            var isUserValid = ObjectId.TryParse(user, out var userId);
+            var isUserValid = Guid.TryParse(user, out var userId);
             if (user is null || user == string.Empty || !isUserValid)
             {
                 return ValidationProblem("A valid user is required.");
@@ -41,7 +41,7 @@ namespace crypto_investment_project.Server.Controllers
         [Route("subscription/{subscription}")]
         public async Task<IActionResult> GetSubscriptionBalances(string subscription)
         {
-            var isSubscriptionValid = ObjectId.TryParse(subscription, out var subscriptionId);
+            var isSubscriptionValid = Guid.TryParse(subscription, out var subscriptionId);
             if (subscription is null || subscription == string.Empty || !isSubscriptionValid)
             {
                 return ValidationProblem("A valid user is required.");

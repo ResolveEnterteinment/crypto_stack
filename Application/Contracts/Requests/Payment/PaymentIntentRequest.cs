@@ -2,7 +2,7 @@
 {
     public class PaymentIntentRequest
     {
-        public required string UserId { get; set; }
+        public required Guid UserId { get; set; }
         public required string SubscriptionId { get; set; }
         public required string PaymentId { get; set; }
         public required string Currency { get; set; }

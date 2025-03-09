@@ -24,8 +24,8 @@ namespace crypto_investment_project.Server.Controllers
             }
             PaymentData paymentData = new()
             {
-                UserId = new ObjectId(paymentRequest.UserId),
-                SubscriptionId = new ObjectId(paymentRequest.SubscriptionId),
+                UserId = paymentRequest.UserId,
+                SubscriptionId = new Guid(paymentRequest.SubscriptionId),
                 PaymentProviderId = paymentRequest.PaymentId,
                 PaymentProviderFee = paymentRequest.PaymentProviderFee,
                 TotalAmount = paymentRequest.TotalAmount,
