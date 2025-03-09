@@ -7,7 +7,7 @@ const LandingPage: React.FC = () => {
         <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-black text-white flex flex-col justify-center items-center">
             {/* Header */}
             <header className="absolute top-0 w-full p-6 flex justify-between items-center">
-                <h1 className="text-2xl font-bold">Crypto Invest</h1>
+                <h1 className="text-2xl font-bold">Stackfi</h1>
                 <Link to="/auth" className="text-blue-400 hover:text-blue-300">
                     Login / Sign Up
                 </Link>
@@ -31,7 +31,7 @@ const LandingPage: React.FC = () => {
 
             {/* Footer */}
             <footer className="absolute bottom-0 w-full p-4 text-center text-gray-400">
-                © 2025 Crypto Invest. All rights reserved.
+                © 2025 Stackfi. All rights reserved.
             </footer>
         </div>
     );
