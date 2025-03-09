@@ -1,6 +1,6 @@
 ﻿namespace Application.Contracts.Requests.Payment
 {
-    public class PaymentRequest
+    public class PaymentIntentRequest
     {
         public required string UserId { get; set; }
         public required string SubscriptionId { get; set; }

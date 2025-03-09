@@ -10,78 +10,73 @@ namespace Domain.Controllers
     [Route("api/[controller]")]
     public class PaymentWebhookController : ControllerBase
     {
-        //private readonly IAssetService _assetService;
         private readonly IPaymentService _paymentService;
         private readonly ILogger<PaymentWebhookController> _logger;
 
         public PaymentWebhookController(
             IPaymentService paymentService,
-            IAssetService assetService,
+            IAssetService assetService, // Retained for potential future use
             ILogger<PaymentWebhookController> logger)
         {
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
-            //_assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
+        /// <summary>
+        /// Handles incoming Stripe webhook events, specifically charge.updated, delegating processing to PaymentService.
+        /// </summary>
+        /// <param name="stripeEvent">The Stripe event received from the webhook.</param>
+        /// <returns>An IActionResult indicating the processing outcome (OK, BadRequest, or InternalServerError).</returns>
         [HttpPost]
         [Route("stripe")]
         public async Task<IActionResult> HandleWebhook([FromBody] Event stripeEvent)
         {
-            #region Validate
+            #region Validate Event
+            // Ensure the event is not null
             if (stripeEvent == null)
             {
                 _logger.LogWarning("Received null Stripe event");
                 return BadRequest("Stripe event is required.");
             }
 
-            if (stripeEvent.Type != "payment_intent.succeeded")
+            // Filter for charge.updated events only
+            if (stripeEvent.Type != "charge.updated")
             {
-                _logger.LogInformation("Received non-success event: {EventType}", stripeEvent.Type);
+                _logger.LogInformation("Received non-charge.updated event: {EventType}", stripeEvent.Type);
                 return Ok();
             }
 
-            var paymentIntent = stripeEvent.Data.Object as PaymentIntent;
-            if (paymentIntent == null)
+            // Cast event data to Charge object
+            var charge = stripeEvent.Data.Object as Charge;
+            if (charge == null)
             {
-                _logger.LogWarning("Failed to cast event data to PaymentIntent");
-                return BadRequest("Invalid event data: Expected PaymentIntent.");
+                _logger.LogWarning("Failed to cast event data to Charge");
+                return BadRequest("Invalid event data: Expected Charge.");
             }
-            #endregion Validate
+
+            // Early exit if charge is not succeeded
+            if (charge.Status != "succeeded")
+            {
+                _logger.LogInformation("Charge {ChargeId} is not succeeded. Status: {Status}", charge.Id, charge.Status);
+                return Ok();
+            }
+            #endregion Validate Event
 
             try
             {
-                var totalAmount = paymentIntent.Amount / 100m;
-
-                // Get Stripe fee dynamically via StripeService
-                var paymentFee = await _paymentService.GetFeeAsync(paymentIntent.Id);
-                var netAmountAfterStripe = totalAmount - paymentFee;
-                var platformFee = totalAmount * 0.01m; // Your 1% fee
-                var netAmount = netAmountAfterStripe - platformFee;
-
-                var paymentRequest = new PaymentRequest
+                ChargeRequest chargeRequest = new()
                 {
-                    UserId = paymentIntent.Metadata["userId"],
-                    SubscriptionId = paymentIntent.Metadata["subscriptionId"],
-                    PaymentId = paymentIntent.Id,
-                    TotalAmount = totalAmount,
-                    PaymentProviderFee = paymentFee,
-                    PlatformFee = platformFee,
-                    NetAmount = netAmount,
-                    Currency = paymentIntent.Currency,
-                    Status = paymentIntent.Status
+                    Id = charge.Id,
+                    PaymentIntentId = charge.PaymentIntentId,
+                    Amount = charge.Amount,
+                    Currency = charge.Currency
                 };
+                // Delegate payment processing to PaymentService
+                var paymentResult = await _paymentService.ProcessChargeUpdatedEventAsync(chargeRequest);
 
-                if (string.IsNullOrWhiteSpace(paymentRequest.UserId) || string.IsNullOrWhiteSpace(paymentRequest.SubscriptionId))
-                {
-                    _logger.LogWarning("Missing metadata in PaymentIntent {PaymentId}: UserId or SubscriptionId", paymentIntent.Id);
-                    return BadRequest("Missing required metadata: userId or subscriptionId.");
-                }
-
-                var paymentResult = await _paymentService.ProcessPaymentRequest(paymentRequest);
                 if (!paymentResult.IsSuccess)
                 {
-                    _logger.LogError("Failed to process payment request for PaymentId {PaymentId}: {Error}", paymentRequest.PaymentId, paymentResult.ErrorMessage);
+                    _logger.LogError("Failed to process charge.updated event for Charge {ChargeId}: {Error}", charge.Id, paymentResult.ErrorMessage);
                     throw new Exception($"Failed to handle payment webhook: {paymentResult.ErrorMessage}");
                 }
 
