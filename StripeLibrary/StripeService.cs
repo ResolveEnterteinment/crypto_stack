@@ -8,8 +8,9 @@ namespace StripeLibrary
     public class StripeService : IStripeService
     {
         private readonly StripeClient _client;
-        private readonly ChargeService _chargeService;
-        private readonly BalanceTransactionService _balanceTransactionService;
+        protected readonly ChargeService _chargeService;
+        protected readonly BalanceTransactionService _balanceTransactionService;
+        private readonly PaymentIntentService _paymentIntentService;
         private readonly ILogger _logger;
 
         public StripeService(
@@ -20,7 +21,13 @@ namespace StripeLibrary
             StripeConfiguration.ApiKey = stripeSettings.Value.ApiSecret;
             _chargeService = new ChargeService();
             _balanceTransactionService = new BalanceTransactionService();
+            _paymentIntentService = new PaymentIntentService();
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
+
+        public async Task<PaymentIntent> GetPaymentIntentAsync(string id, PaymentIntentGetOptions? options = null)
+        {
+            return await _paymentIntentService.GetAsync(id, options);
         }
 
         /// <summary>

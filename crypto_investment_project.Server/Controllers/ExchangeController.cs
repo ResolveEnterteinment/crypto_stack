@@ -16,7 +16,7 @@ namespace crypto_investment_project.Server.Controllers
 
         [HttpPost]
         [Route("payment")]
-        public async Task<IActionResult> Payment([FromBody] PaymentRequest paymentRequest)
+        public async Task<IActionResult> Payment([FromBody] PaymentIntentRequest paymentRequest)
         {
             if (paymentRequest is null)
             {
