@@ -6,7 +6,7 @@ const AuthPage = () => {
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [username, setUsername] = useState(""); // For registration
+    const [fullname, setFullname] = useState(""); // For registration
     const [error, setError] = useState("");
     const navigate = useNavigate();
 
@@ -28,7 +28,7 @@ const AuthPage = () => {
         e.preventDefault();
         try {
             const url = "v1/authenticate/register";
-            const payload = { username, email, password };
+            const payload = { fullname, email, password };
             const response = await api.post(url, payload);
 
             if (response.data.success) {
@@ -63,11 +63,11 @@ const AuthPage = () => {
                 <form onSubmit={isLogin ? handleLogin : handleRegister}>
                     {!isLogin && (
                         <div className="mb-4">
-                            <label className="block text-gray-700">Username</label>
+                            <label className="block text-gray-700">Full Name</label>
                             <input
                                 type="text"
-                                value={username}
-                                onChange={(e) => setUsername(e.target.value)}
+                                value={fullname}
+                                onChange={(e) => setFullname(e.target.value)}
                                 className="w-full p-2 border rounded-lg"
                                 required
                             />
