@@ -1,6 +1,5 @@
 using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
-using Domain.Services;
 using Microsoft.AspNetCore.Mvc;
 using Stripe;
 

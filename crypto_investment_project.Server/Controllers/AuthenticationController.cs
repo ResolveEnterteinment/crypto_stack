@@ -41,15 +41,19 @@ namespace crypto_investment_project.Server.Controllers
             return Ok(result);
         }
 
-        [HttpPost]
-        [Route("login")]
-        [ProducesResponseType((int)HttpStatusCode.OK, Type = typeof(LoginResponse))]
+        [HttpPost("login")]
+        [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(LoginResponse))]
+        [ProducesResponseType((int)HttpStatusCode.Unauthorized)]
         public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
             var result = await _authenticationService.LoginAsync(request);
 
+            if (!result.Success)
+                return Unauthorized(result.Message);
+
             return Ok(result);
         }
+
 
         [HttpGet]
         [Route("confirm-email")]

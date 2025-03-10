@@ -1,5 +1,4 @@
 ﻿using AspNetCore.Identity.MongoDbCore.Models;
-using MongoDB.Bson;
 using MongoDbGenericRepository.Attributes;
 
 namespace Domain.Models.Authentication

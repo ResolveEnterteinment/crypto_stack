@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
-namespace Domain.Services
+namespace Infrastructure.Services
 {
     public class TransactionService : BaseService<TransactionData>, ITransactionService
     {

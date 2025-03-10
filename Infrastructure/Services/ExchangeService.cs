@@ -5,7 +5,7 @@ using Domain.Constants;
 using Domain.DTOs;
 using Domain.Events;
 using Domain.Exceptions;
-using Domain.Modals.Event;
+using Domain.Models.Event;
 using Domain.Models.Balance;
 using Domain.Models.Exchange;
 using Domain.Models.Payment;
@@ -13,11 +13,10 @@ using Domain.Models.Transaction;
 using MediatR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using MongoDB.Bson;
 using MongoDB.Driver;
 using Polly;
 
-namespace Domain.Services
+namespace Infrastructure.Services
 {
     public class ExchangeService : BaseService<ExchangeOrderData>, IExchangeService, INotificationHandler<PaymentReceivedEvent>
     {

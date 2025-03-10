@@ -2,10 +2,9 @@
 using Domain.DTOs;
 using Domain.Interfaces;
 using Domain.Models.Subscription;
-using MongoDB.Bson;
 using MongoDB.Driver;
 
-namespace Domain.Services
+namespace Application.Interfaces
 {
     public interface ISubscriptionService : IRepository<SubscriptionData>
     {

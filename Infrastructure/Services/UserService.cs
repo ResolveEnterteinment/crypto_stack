@@ -3,26 +3,22 @@ using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using Domain.Models.User;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using MongoDB.Bson;
 using MongoDB.Driver;
 
-namespace Domain.Services
+namespace Infrastructure.Services
 {
     public class UserService : IUserService
     {
         private readonly IMongoCollection<UserData> _usersCollection;
         private readonly ILogger _logger;
 
-        public UserService(IOptions<MongoDbSettings> mongoDbSettings, ILogger<UserService> logger)
+        public UserService(IMongoClient mongoClient, IOptions<MongoDbSettings> mongoDbSettings, ILogger<UserService> logger)
         {
-            var mongoClient = new MongoClient(mongoDbSettings.Value.ConnectionString);
-
-            var mongoDatabase = mongoClient.GetDatabase(
-                mongoDbSettings.Value.DatabaseName);
-
-            _usersCollection = mongoDatabase.GetCollection<UserData>("userDatas");
-            _logger = logger;
+            var database = mongoClient.GetDatabase(mongoDbSettings.Value.DatabaseName);
+            _usersCollection = database.GetCollection<UserData>("userDatas");
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
+
 
         #region CRUD
         /*public async Task<FetchUsersResponse> GetPaginatedUsers(int startIndex, int fetchCount)

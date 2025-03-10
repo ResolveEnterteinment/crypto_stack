@@ -4,11 +4,10 @@ using Domain.Interfaces;
 using Domain.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using MongoDB.Bson;
 using MongoDB.Driver;
 using System.Reflection;
 
-namespace Domain.Services
+namespace Infrastructure.Services
 {
     public abstract class BaseService<T> : IRepository<T> where T : class
     {

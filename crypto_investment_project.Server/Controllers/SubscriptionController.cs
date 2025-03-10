@@ -1,7 +1,6 @@
 using Application.Contracts.Requests.Subscription;
-using Domain.Services;
+using Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
-using MongoDB.Bson;
 
 namespace crypto_investment_project.Server.Controllers
 {

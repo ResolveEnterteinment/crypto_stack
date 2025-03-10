@@ -1,5 +1,4 @@
 ﻿using Domain.Models.User;
-using MongoDB.Bson;
 
 namespace Application.Interfaces
 {

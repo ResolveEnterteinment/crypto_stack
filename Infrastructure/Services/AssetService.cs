@@ -1,4 +1,5 @@
-﻿using AspNetCore.Identity.MongoDbCore.Infrastructure;
+﻿using Application.Interfaces;
+using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.Models.Crypto;
@@ -6,7 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
-namespace Domain.Services
+namespace Infrastructure.Services
 {
     public class AssetService : BaseService<AssetData>, IAssetService
     {

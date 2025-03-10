@@ -9,12 +9,12 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using MongoDB.Bson;
+using MongoDB.Driver;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 
-namespace Domain.Services
+namespace Infrastructure.Services
 {
     public class AuthenticationService : IAuthenticationService
     {
@@ -107,14 +107,15 @@ namespace Domain.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
+                _logger.LogError(ex, "Error during user login for email: {Email}", request.Email);
 
                 string message = "";
 
-                if (ex.GetType() == typeof(TimeoutException))
+                message = ex switch
                 {
-                    message = "Timeout occured. Please try again later";
-                }
+                    TimeoutException => "Timeout occured. Please try again later",
+                    _ => "An error occurred while processing your request."
+                };
 
                 return new LoginResponse { EmailConfirmed = true, Success = false, Message = message };
             }

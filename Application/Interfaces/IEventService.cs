@@ -1,6 +1,6 @@
 ﻿using Domain.Events;
 using Domain.Interfaces;
-using Domain.Modals.Event;
+using Domain.Models.Event;
 
 namespace Application.Interfaces
 {

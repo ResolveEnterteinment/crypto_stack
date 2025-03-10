@@ -7,11 +7,10 @@ using Domain.Events;
 using Domain.Models.Payment;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using MongoDB.Bson;
 using MongoDB.Driver;
 using StripeLibrary;
 
-namespace Domain.Services
+namespace Infrastructure.Services
 {
     public class PaymentService : BaseService<PaymentData>, IPaymentService
     {
@@ -190,7 +189,7 @@ namespace Domain.Services
                         {
                             throw new MongoException(insertPaymentResult.ErrorMessage);
                         }
-                        var storedEvent = new Modals.Event.EventData
+                        var storedEvent = new Domain.Models.Event.EventData
                         {
                             EventType = typeof(PaymentReceivedEvent).Name,
                             Payload = insertPaymentResult.InsertedId.ToString()

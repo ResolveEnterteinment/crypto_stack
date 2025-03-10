@@ -1,13 +1,13 @@
 ﻿using Application.Interfaces;
 using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using Domain.Events;
-using Domain.Modals.Event;
+using Domain.Models.Event;
 using MediatR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
-namespace Domain.Services
+namespace Infrastructure.Services
 {
     public class EventService : BaseService<EventData>, IEventService
     {

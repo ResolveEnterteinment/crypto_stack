@@ -1,9 +1,7 @@
 using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
 using Domain.Models.Payment;
-using Domain.Services;
 using Microsoft.AspNetCore.Mvc;
-using MongoDB.Bson;
 
 namespace crypto_investment_project.Server.Controllers
 {

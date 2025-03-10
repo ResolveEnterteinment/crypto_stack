@@ -5,10 +5,9 @@ using Domain.DTOs;
 using Domain.Models.Balance;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using MongoDB.Bson;
 using MongoDB.Driver;
 
-namespace Domain.Services
+namespace Infrastructure.Services
 {
     public class BalanceService : BaseService<BalanceData>, IBalanceService
     {

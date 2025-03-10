@@ -1,6 +1,4 @@
-﻿using Domain.Models;
-
-namespace Domain.Modals.Event
+﻿namespace Domain.Models.Event
 {
     // Persistent event model for MongoDB
     public class EventData : BaseEntity
