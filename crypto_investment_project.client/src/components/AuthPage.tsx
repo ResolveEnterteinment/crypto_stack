@@ -1,94 +1,106 @@
-// src/components/AuthPage.tsx
-import React, { useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import api from "../services/api"
+import api from "../services/api";
 
-const AuthPage: React.FC = () => {
+const AuthPage = () => {
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [username, setUsername] = useState(""); // For registration
     const [error, setError] = useState("");
     const navigate = useNavigate();
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        setError("");
-
-        const payload = { email, password };
-        const url = isLogin
-            ? "v1/authenticate/login"
-            : "v1/authenticate/register"; // Adjust port as needed
-
         try {
+            const url = "v1/authenticate/login";
+            const payload = { email, password };
             const response = await api.post(url, payload);
-            if (isLogin) {
-                // Assuming LoginResponse has a token
-                localStorage.setItem("token", response.data.token);
-                navigate("/dashboard"); // Redirect to a dashboard (to be built later)
-            } else {
-                setError("Registration successful! Please check your email to confirm.");
-                setIsLogin(true); // Switch to login after signup
+            const { token } = response.data; // Assuming LoginResponse returns a token
+            localStorage.setItem("token", token); // Store token for authenticated requests
+            navigate("/dashboard"); // Redirect to a dashboard (to be implemented)
+        } catch (err) {
+            setError("Login failed. Check your credentials.");
+        }
+    };
+
+    const handleRegister = async (e: React.FormEvent) => {
+        e.preventDefault();
+        try {
+            const url = "v1/authenticate/register";
+            const payload = { username, email, password };
+            const response = await api.post(url, payload);
+
+            if (response.data.success) {
+                setIsLogin(true); // Switch to login after successful registration
+                setError("Registration successful! Please log in.");
             }
-        } catch (err: any) {
-            setError(err.response?.data?.message || "An error occurred");
+        } catch (err) {
+            setError("Registration failed. Try again.");
         }
     };
 
     return (
         <div className="min-h-screen bg-gray-900 flex items-center justify-center">
             <div className="bg-white p-8 rounded-lg shadow-lg w-full max-w-md">
-                <h2 className="text-3xl font-bold text-center mb-6">
-                    {isLogin ? "Login" : "Sign Up"}
-                </h2>
+                {/* Tabs */}
+                <div className="flex mb-6">
+                    <button
+                        className={`flex-1 py-2 text-lg font-semibold ${isLogin ? "border-b-2 border-blue-600" : "text-gray-500"}`}
+                        onClick={() => setIsLogin(true)}
+                    >
+                        Login
+                    </button>
+                    <button
+                        className={`flex-1 py-2 text-lg font-semibold ${!isLogin ? "border-b-2 border-blue-600" : "text-gray-500"}`}
+                        onClick={() => setIsLogin(false)}
+                    >
+                        Sign Up
+                    </button>
+                </div>
 
-                <form onSubmit={handleSubmit} className="space-y-6">
-                    <div>
-                        <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                            Email
-                        </label>
+                {/* Form */}
+                <form onSubmit={isLogin ? handleLogin : handleRegister}>
+                    {!isLogin && (
+                        <div className="mb-4">
+                            <label className="block text-gray-700">Username</label>
+                            <input
+                                type="text"
+                                value={username}
+                                onChange={(e) => setUsername(e.target.value)}
+                                className="w-full p-2 border rounded-lg"
+                                required
+                            />
+                        </div>
+                    )}
+                    <div className="mb-4">
+                        <label className="block text-gray-700">Email</label>
                         <input
-                            id="email"
                             type="email"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
-                            className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full p-2 border rounded-lg"
                             required
                         />
                     </div>
-
-                    <div>
-                        <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                            Password
-                        </label>
+                    <div className="mb-6">
+                        <label className="block text-gray-700">Password</label>
                         <input
-                            id="password"
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
-                            className="mt-1 w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full p-2 border rounded-lg"
                             required
                         />
                     </div>
-
-                    {error && <p className="text-red-500 text-sm">{error}</p>}
-
+                    {error && <p className="text-red-500 mb-4">{error}</p>}
                     <button
                         type="submit"
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-md transition duration-300"
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition"
                     >
                         {isLogin ? "Login" : "Sign Up"}
                     </button>
                 </form>
-
-                <p className="mt-4 text-center text-sm text-gray-600">
-                    {isLogin ? "Need an account?" : "Already have an account?"}
-                    <button
-                        onClick={() => setIsLogin(!isLogin)}
-                        className="ml-1 text-blue-600 hover:underline"
-                    >
-                        {isLogin ? "Sign Up" : "Login"}
-                    </button>
-                </p>
             </div>
         </div>
     );
