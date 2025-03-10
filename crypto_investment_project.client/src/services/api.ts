@@ -2,11 +2,12 @@
 import axios from "axios";
 
 const api = axios.create({
-    baseURL: "http://localhost:7144/api/v1/authenticate", // Adjust based on your back-end port
+    baseURL: import.meta.env.VITE_API_BASE_URL || "https://localhost:7144/api", // Adjust based on your back-end port
     headers: {
         "Content-Type": "application/json",
     },
 });
+
 
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem("token");

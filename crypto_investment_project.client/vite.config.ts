@@ -1,6 +1,7 @@
 import { fileURLToPath, URL } from 'node:url';
 
 import { defineConfig } from 'vite';
+import tailwindcss from '@tailwindcss/vite'
 import plugin from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path';
@@ -35,19 +36,16 @@ const target = env.ASPNETCORE_HTTPS_PORT ? `https://localhost:${env.ASPNETCORE_H
 
 // https://vitejs.dev/config/
 export default defineConfig({
-    plugins: [plugin()],
+    plugins: [
+        tailwindcss(),
+        plugin(),
+    ],
     resolve: {
         alias: {
             '@': fileURLToPath(new URL('./src', import.meta.url))
         }
     },
     server: {
-        proxy: {
-            '^/weatherforecast': {
-                target,
-                secure: false
-            }
-        },
         port: 5173,
         https: {
             key: fs.readFileSync(keyFilePath),

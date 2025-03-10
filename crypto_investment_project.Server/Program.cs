@@ -20,6 +20,9 @@ builder.Services.Configure<MongoDbSettings>(builder.Configuration.GetSection("Mo
 builder.Services.Configure<BinanceSettings>(builder.Configuration.GetSection("Binance"));
 builder.Services.Configure<StripeSettings>(builder.Configuration.GetSection("Stripe"));
 builder.Services.Configure<ExchangeSettings>(builder.Configuration.GetSection("Exchange"));
+// Fetch allowed origins from user secrets
+var allowedOrigins = builder.Configuration["AllowedOrigins"]?
+    .Split(';', StringSplitOptions.RemoveEmptyEntries) ?? Array.Empty<string>();
 
 // Add controllers with Newtonsoft.Json
 builder.Services.AddControllers()
@@ -28,6 +31,18 @@ builder.Services.AddControllers()
         options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
         options.SerializerSettings.NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore;
     });
+
+// Configure CORS with origins from configuration
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowSpecifiedOrigins", policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -54,6 +69,8 @@ builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IUserService, UserService>();
 
 var app = builder.Build();
+
+app.UseCors("AllowSpecifiedOrigins");
 
 app.UseDefaultFiles();
 app.UseStaticFiles();

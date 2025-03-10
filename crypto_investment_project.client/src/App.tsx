@@ -6,12 +6,13 @@ import AuthPage from "./components/AuthPage";
 
 const App: React.FC = () => {
     return (
+        <div>
         <Router>
             <Routes>
                 <Route path="/" element={<LandingPage />} />
                 <Route path="/auth" element={<AuthPage />} />
             </Routes>
-        </Router>
+        </Router></div>
     );
 };
 

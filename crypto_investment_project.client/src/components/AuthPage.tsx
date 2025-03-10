@@ -1,7 +1,7 @@
 // src/components/AuthPage.tsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
+import api from "../services/api"
 
 const AuthPage: React.FC = () => {
     const [isLogin, setIsLogin] = useState(true);
@@ -16,11 +16,11 @@ const AuthPage: React.FC = () => {
 
         const payload = { email, password };
         const url = isLogin
-            ? "http://localhost:5000/api/v1/authenticate/login"
-            : "http://localhost:5000/api/v1/authenticate/register"; // Adjust port as needed
+            ? "v1/authenticate/login"
+            : "v1/authenticate/register"; // Adjust port as needed
 
         try {
-            const response = await axios.post(url, payload);
+            const response = await api.post(url, payload);
             if (isLogin) {
                 // Assuming LoginResponse has a token
                 localStorage.setItem("token", response.data.token);
