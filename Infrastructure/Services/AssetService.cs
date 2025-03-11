@@ -25,6 +25,19 @@ namespace Infrastructure.Services
             ILogger<AssetService> logger)
             : base(mongoClient, mongoDbSettings, "assets", logger)
         {
+            Init();
+        }
+
+        private async void Init()
+        {
+            var btcAsset = await GetOneAsync(new FilterDefinitionBuilder<AssetData>().Eq(o => o.Ticker, "BTC"));
+            if (btcAsset is null) await InsertOneAsync(new()
+            {
+                Name = "Bitcoin",
+                Ticker = "BTC",
+                Precision = 18,
+                Symbol = "₿"
+            });
         }
 
         /// <summary>

@@ -1,12 +1,9 @@
-﻿using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
-
-namespace Domain.Models.Exchange
+﻿namespace Domain.Models.Exchange
 {
     public class ExchangeOrderData : BaseEntity
     {
         public required Guid UserId { get; set; }
-        public required Guid PaymentId { get; set; }
+        public required string PaymentProviderId { get; set; }
         public required Guid SubscriptionId { get; set; }
         public required Guid AssetId { get; set; }
         public long? PlacedOrderId { get; set; }

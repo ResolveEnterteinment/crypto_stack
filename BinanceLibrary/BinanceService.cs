@@ -6,7 +6,6 @@ using Domain.Constants;
 using Domain.DTOs;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using MongoDB.Bson;
 
 namespace BinanceLibrary
 {
@@ -38,7 +37,7 @@ namespace BinanceLibrary
             });
         }
 
-        internal async Task<BinancePlacedOrder> PlaceOrder(string symbol, decimal quantity, Guid subscriptionId, Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy, Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
+        internal async Task<BinancePlacedOrder> PlaceOrder(string symbol, decimal quantity, string paymentProviderId, Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy, Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
         {
             try
             {
@@ -48,7 +47,7 @@ namespace BinanceLibrary
                 type,
                 quantity: side == Binance.Net.Enums.OrderSide.Sell ? quantity : null, // Not used for market buy orders.
                 quoteQuantity: side == Binance.Net.Enums.OrderSide.Buy ? quantity : null,
-                newClientOrderId: subscriptionId.ToString()) //subscription id to track user orders
+                newClientOrderId: paymentProviderId.ToString()) //subscription id to track user orders
                 .ConfigureAwait(false);
                 if (!orderResult.Success)
                 {
@@ -69,11 +68,11 @@ namespace BinanceLibrary
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
         /// <returns>The order details if successful; otherwise, null.</returns>
-        public async Task<PlacedExchangeOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity, Guid subscriptionId)
+        public async Task<PlacedExchangeOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity, string paymentProviderId)
         {
             try
             {
-                var placedBinanceOrder = await PlaceOrder(symbol, quantity, subscriptionId);
+                var placedBinanceOrder = await PlaceOrder(symbol, quantity, paymentProviderId);
                 var placedOrder = new PlacedExchangeOrder()
                 {
                     Symbol = symbol,
@@ -99,11 +98,11 @@ namespace BinanceLibrary
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
         /// <returns>The order details if successful; otherwise, null.</returns>
-        public async Task<PlacedExchangeOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity, Guid subscriptionId)
+        public async Task<PlacedExchangeOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity, string paymentProviderId)
         {
             try
             {
-                var placedBinanceOrder = await PlaceOrder(symbol, quantity, subscriptionId, Binance.Net.Enums.OrderSide.Sell);
+                var placedBinanceOrder = await PlaceOrder(symbol, quantity, paymentProviderId, Binance.Net.Enums.OrderSide.Sell);
                 var placedOrder = new PlacedExchangeOrder()
                 {
                     Symbol = symbol,
@@ -177,6 +176,43 @@ namespace BinanceLibrary
                 Price = 0,
                 Status = "Filled"
             });
+        }
+        public async Task<ResultWrapper<IEnumerable<PlacedExchangeOrder>>> GetOrdersByClientOrderId(string ticker, string clientOrderId)
+        {
+            var placedExchangeOrders = new List<PlacedExchangeOrder>();
+            var symbol = $"{ticker}USDC";
+            try
+            {
+                _logger.LogInformation("Fetching exchange orders for clientOrderId: {ClientOrderId}", clientOrderId);
+                var binanceOrdersResult = await _binanceClient.SpotApi.Trading.GetOrdersAsync(symbol);
+                if (!binanceOrdersResult.Success || binanceOrdersResult.Data == null)
+                {
+                    _logger.LogError($"Failed to retrieve {symbol} orders from Binance: {binanceOrdersResult.Error?.Message}");
+                    throw new Exception(binanceOrdersResult.Error?.Message);
+                }
+
+                var binanceOrders = binanceOrdersResult.Data
+                    .Where(b => b.ClientOrderId == clientOrderId); // Only include non-zero balances
+
+                placedExchangeOrders = binanceOrders.Select(o => new PlacedExchangeOrder()
+                {
+                    Symbol = symbol,
+                    QuoteQuantity = o.QuoteQuantity,
+                    QuoteQuantityFilled = o.QuoteQuantityFilled,
+                    Price = o.AverageFillPrice,
+                    QuantityFilled = o.QuantityFilled,
+                    OrderId = o.Id,
+                    Status = MapBinanceStatus(o.Status),
+                }).ToList();
+
+                _logger.LogInformation("Successfully retrieved {Ticker} orders from Binance for ClientOrderId {ClientOrderId}", ticker, clientOrderId);
+                return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Success(placedExchangeOrders);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving exchange balances: {Message}", ex.Message);
+                return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Failure(FailureReason.ExchangeApiError, $"Failed to retrieve exchange orders: {ex.Message}");
+            }
         }
     }
 }

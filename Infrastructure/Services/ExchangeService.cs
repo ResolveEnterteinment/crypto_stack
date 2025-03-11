@@ -5,8 +5,8 @@ using Domain.Constants;
 using Domain.DTOs;
 using Domain.Events;
 using Domain.Exceptions;
-using Domain.Models.Event;
 using Domain.Models.Balance;
+using Domain.Models.Event;
 using Domain.Models.Exchange;
 using Domain.Models.Payment;
 using Domain.Models.Transaction;
@@ -101,7 +101,7 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(Guid assetId, string assetTicker, decimal quantity, Guid subcriptionId, string side = OrderSide.Buy, string type = "MARKET")
+        public async Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(Guid assetId, string assetTicker, decimal quantity, string paymentProviderId, string side = OrderSide.Buy, string type = "MARKET")
         {
             try
             {
@@ -121,12 +121,12 @@ namespace Infrastructure.Services
                 if (side == OrderSide.Buy)
                 {
                     //Returns BinancePlacedOrder, otherwise throws Exception
-                    placedOrder = await _binanceService.PlaceSpotMarketBuyOrder(symbol, quantity, subcriptionId);
+                    placedOrder = await _binanceService.PlaceSpotMarketBuyOrder(symbol, quantity, paymentProviderId);
                 }
                 else if (side == OrderSide.Sell)
                 {
                     //Returns BinancePlacedOrder, otherwise throws Exception
-                    placedOrder = await _binanceService.PlaceSpotMarketSellOrder(symbol, quantity, subcriptionId);
+                    placedOrder = await _binanceService.PlaceSpotMarketSellOrder(symbol, quantity, paymentProviderId);
                 }
                 else
                 {
@@ -203,20 +203,25 @@ namespace Infrastructure.Services
                         if (quoteOrderQuantity <= 0m)
                             throw new ArgumentException($"Quote order quantity must be positive. Value: {quoteOrderQuantity}");
 
-                        //First check if there are previous orders already processed with this payment.
+                        //First check if there are previous orders already processed with this payment in the exchange.
+                        var previousFilledSum = 0m;
+                        var previousOrdersResult = await GetPreviousFilledOrders(alloc.AssetTicker, payment.PaymentProviderId);
+                        if (!previousOrdersResult.IsSuccess || previousOrdersResult.Data is null)
+                        {
+                            throw new Exception($"Failed to fetch previous filled orders: {previousOrdersResult.ErrorMessage}");
+                        }
 
-                        var prevOrdersFilter = new FilterDefinitionBuilder<ExchangeOrderData>()
-                            .Where(o => o.PaymentId == payment.Id && o.AssetId == alloc.AssetId && (o.Status == OrderStatus.Filled || o.Status == OrderStatus.PartiallyFilled));
+                        if (previousOrdersResult.Data.Any())
+                        {
+                            previousFilledSum = previousOrdersResult.Data
+                               .Select(o => o.QuoteQuantityFilled).Sum();
+                        }
 
-                        var previousFilledOrders = await GetAllAsync(prevOrdersFilter);
-                        if (previousFilledOrders is null)
-                            throw new MongoException($"Unable to fetch previous filled orders for subscription #{payment.SubscriptionId}, asset #{alloc.AssetId} data.");
-
-                        decimal previousOrdersSum = previousFilledOrders.Sum(o => o.QuoteQuantityFilled) ?? 0m;
-                        var remainingQuoteOrderQuantity = quoteOrderQuantity - previousOrdersSum;
+                        _logger.LogInformation($"Previous orders sum: {previousFilledSum}");
+                        var remainingQuoteOrderQuantity = quoteOrderQuantity - previousFilledSum;
 
                         var symbol = alloc.AssetTicker + "USDT";
-                        var placedOrderResult = await PlaceExchangeOrderAsync(alloc.AssetId, alloc.AssetTicker, remainingQuoteOrderQuantity, payment.SubscriptionId);
+                        var placedOrderResult = await PlaceExchangeOrderAsync(alloc.AssetId, alloc.AssetTicker, remainingQuoteOrderQuantity, payment.PaymentProviderId);
                         if (!placedOrderResult.IsSuccess || placedOrderResult.Data is null || placedOrderResult.Data.Status == OrderStatus.Failed)
                             throw new Exception($"Unable to place order: {placedOrderResult.ErrorMessage}");
                         var placedOrder = placedOrderResult.Data;
@@ -234,7 +239,7 @@ namespace Infrastructure.Services
                                 var insertOrderResult = await InsertOneAsync(new ExchangeOrderData()
                                 {
                                     UserId = payment.UserId,
-                                    PaymentId = payment.Id,
+                                    PaymentProviderId = payment.PaymentProviderId,
                                     SubscriptionId = payment.SubscriptionId,
                                     PlacedOrderId = placedOrder?.OrderId,
                                     AssetId = alloc.AssetId,
@@ -317,6 +322,18 @@ namespace Infrastructure.Services
             }
         }
 
+        public async Task<ResultWrapper<IEnumerable<PlacedExchangeOrder>>> GetPreviousFilledOrders(string assetTicker, string paymentProviderId)
+        {
+            var ordersResult = await _binanceService.GetOrdersByClientOrderId(assetTicker, paymentProviderId);
+            if (ordersResult == null || !ordersResult.IsSuccess || ordersResult.Data == null)
+            {
+                return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Failure(FailureReason.ExchangeApiError, ordersResult.ErrorMessage);
+            }
+            var filledOrders = ordersResult.Data.Where(o => o.Status == OrderStatus.Filled || o.Status == OrderStatus.PartiallyFilled);
+
+            return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Success(filledOrders);
+        }
+
         public async Task<ResultWrapper<bool>> CheckExchangeBalanceAsync(decimal amount)
         {
             // Check exchange fiat balance
@@ -393,7 +410,7 @@ namespace Infrastructure.Services
             var retryOrder = new ExchangeOrderData
             {
                 UserId = order.UserId,
-                PaymentId = order.PaymentId,
+                PaymentProviderId = order.PaymentProviderId,
                 SubscriptionId = order.SubscriptionId,
                 AssetId = order.AssetId,
                 QuoteQuantity = order.QuoteQuantity,
@@ -417,7 +434,7 @@ namespace Infrastructure.Services
                 var retryOrder = new ExchangeOrderData
                 {
                     UserId = order.UserId,
-                    PaymentId = order.PaymentId,
+                    PaymentProviderId = order.PaymentProviderId,
                     SubscriptionId = order.SubscriptionId,
                     AssetId = order.AssetId,
                     QuoteQuantity = remainingQty,
@@ -480,7 +497,7 @@ namespace Infrastructure.Services
                             assetResult.Data.Id,
                             assetResult.Data.Ticker,
                             balance.Available,
-                            Guid.Empty, // No subscription ID needed for reset
+                            string.Empty, // No subscription ID needed for reset
                             OrderSide.Sell,
                             "MARKET"
                         );
@@ -500,7 +517,7 @@ namespace Infrastructure.Services
                         var orderData = new ExchangeOrderData
                         {
                             UserId = Guid.Empty, // System-initiated reset, no user
-                            PaymentId = Guid.Empty, // No specific transaction
+                            PaymentProviderId = string.Empty, // No specific transaction
                             SubscriptionId = Guid.Empty,
                             PlacedOrderId = order.OrderId,
                             AssetId = assetResult.Data.Id,
