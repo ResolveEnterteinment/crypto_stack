@@ -1,9 +1,9 @@
 // src/App.tsx
 import React from "react";
 import { BrowserRouter as Router, Route, Routes } from "react-router-dom";
-import LandingPage from "./components/LandingPage";
-import AuthPage from "./components/AuthPage";
-import DashboardPage from "./components/DashboardPage";
+import LandingPage from "./pages/LandingPage";
+import AuthPage from "./pages/AuthPage";
+import DashboardPage from "./pages/DashboardPage";
 
 const App: React.FC = () => {
     return (

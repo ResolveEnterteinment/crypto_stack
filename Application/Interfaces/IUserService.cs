@@ -4,6 +4,7 @@ namespace Application.Interfaces
 {
     public interface IUserService
     {
+        public Task<bool> CheckUserExists(Guid userId);
         Task<UserData?> GetAsync(Guid id);
         Task<UserData?> CreateAsync(UserData newUserData);
         Task UpdateAsync(Guid id, UserData updatedUserData);

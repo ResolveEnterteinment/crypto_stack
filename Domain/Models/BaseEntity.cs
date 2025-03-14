@@ -7,6 +7,6 @@ namespace Domain.Models
     {
         public Guid Id { get; set; }
         [BsonRepresentation(BsonType.DateTime)]
-        public DateTime CreateTime { get; set; } = DateTime.UtcNow;
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 }

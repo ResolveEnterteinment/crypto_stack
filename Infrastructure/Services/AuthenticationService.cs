@@ -163,7 +163,7 @@ namespace Infrastructure.Services
                 var userData = await _userService.CreateAsync(new UserData()
                 {
                     Id = user.Id,
-                    CreateTime = DateTime.UtcNow,
+                    CreatedAt = DateTime.UtcNow,
                     FullName = request.FullName,
                     Email = request.Email,
                 });

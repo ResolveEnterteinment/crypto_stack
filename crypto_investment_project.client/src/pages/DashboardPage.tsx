@@ -1,11 +1,22 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
+import Notifications from '../components/Notifications';
 
 const DashboardPage: React.FC = () => {
-  const [isModalOpen, setModalOpen] = useState(false);
+    const [isModalOpen, setModalOpen] = useState(false);
+    const [showNotifications, setShowNotifications] = useState(false);
+    const userId = 'user-id-placeholder';
 
   return (
     <div className="min-h-screen bg-gray-100 py-8 px-4 lg:px-10">
-      <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
+          <div className="flex justify-between items-center mb-6">
+              <h1 className="text-3xl font-bold">Dashboard</h1>
+              <button className="relative" onClick={() => setShowNotifications(!showNotifications)}>
+                  <span className="text-xl">🔔</span>
+                  <span className="absolute top-0 right-0 inline-block w-3 h-3 bg-red-600 rounded-full"></span>
+              </button>
+          </div>
+
+          {showNotifications && <Notifications userId={userId} />}
 
       {/* Total Balances Section */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">

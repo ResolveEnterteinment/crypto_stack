@@ -19,6 +19,15 @@ namespace Infrastructure.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
+        public async Task<bool> CheckUserExists(Guid userId)
+        {
+            var user = await GetAsync(userId);
+            if (user == null)
+            {
+                return false;
+            }
+            return true;
+        }
 
         #region CRUD
         /*public async Task<FetchUsersResponse> GetPaginatedUsers(int startIndex, int fetchCount)

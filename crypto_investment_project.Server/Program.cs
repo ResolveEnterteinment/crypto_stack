@@ -2,6 +2,7 @@ using Application.Interfaces;
 using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using crypto_investment_project.Server.Helpers;
 using Domain.DTOs;
+using Infrastructure.Hubs;
 using Infrastructure.Services;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
@@ -62,15 +63,15 @@ builder.Services.AddSingleton<IAssetService, AssetService>();
 builder.Services.AddSingleton<IBalanceService, BalanceService>();
 builder.Services.AddSingleton<ITransactionService, TransactionService>();
 builder.Services.AddSingleton<IEventService, EventService>();
-//builder.Services.AddSingleton<ITrailService, TrailService>();
-builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(EventService).Assembly));
-
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<INotificationService, NotificationService>();
+
+builder.Services.AddSignalR();
+builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(EventService).Assembly));
 
 var app = builder.Build();
 
-app.UseCors("AllowSpecifiedOrigins");
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -81,10 +82,12 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseCors("AllowSpecifiedOrigins");
 app.UseHttpsRedirection();
 app.UseAuthorization();
 
 app.MapControllers();
 app.MapFallbackToFile("/index.html");
+app.MapHub<NotificationHub>("/notificationHub"); // <-- Register the SignalR Hub
 
 app.Run();
