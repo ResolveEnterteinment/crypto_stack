@@ -27,7 +27,7 @@ namespace Infrastructure.Services
             _assetService = assetService ?? throw new ArgumentNullException(nameof(_assetService));
         }
 
-        public async Task<ResultWrapper<Guid>> ProcessSubscriptionRequest(SubscriptionRequest request)
+        public async Task<ResultWrapper<Guid>> ProcessSubscriptionCreateRequest(SubscriptionCreateRequest request)
         {
             try
             {
@@ -98,12 +98,6 @@ namespace Infrastructure.Services
                     _logger.LogWarning("Failed to get allocations for subscription {SubscriptionId}: {Error}", insertedId, assetsResult.ErrorMessage);
                     throw new KeyNotFoundException($"Failed to get allocations for subscription {insertedId}: {assetsResult.ErrorMessage}");
                 }
-                var assets = assetsResult.Data.Select(alloc => alloc.AssetId);
-                var initBalancesResult = await _balanceService.InitBalances(userId, insertedId, assets);
-                if (!initBalancesResult.IsSuccess)
-                {
-                    throw new Exception($"Unable to init balances");
-                }
                 _logger.LogInformation("Successfully inserted subscription {SubscriptionId}", result.InsertedId);
                 return ResultWrapper<Guid>.Success(result.InsertedId.Value);
             }
@@ -111,6 +105,92 @@ namespace Infrastructure.Services
             {
                 _logger.LogError($"Failed to process subscription request: {ex.Message}");
                 return ResultWrapper<Guid>.Failure(FailureReason.From(ex), ex.Message);
+            }
+        }
+        public async Task<ResultWrapper<long>> ProcessSubscriptionUpdateRequest(Guid id, SubscriptionUpdateRequest request)
+        {
+            try
+            {
+                // Validate request
+                #region Validate
+                if (id == Guid.Empty)
+                {
+                    throw new ArgumentNullException("Subscription id cannot be null.");
+                }
+                if (request == null)
+                {
+                    throw new ArgumentNullException("Subscription update request cannot be null.");
+                }
+
+                if (request.Allocations != null && !request.Allocations.Any())
+                {
+                    throw new ArgumentException("At least one allocation is required.");
+                }
+                if (request.Allocations != null && request.Allocations.Any())
+                {
+                    foreach (var alloc in request.Allocations)
+                    {
+                        if (string.IsNullOrWhiteSpace(alloc.AssetId) || !Guid.TryParse(alloc.AssetId, out _))
+                        {
+                            throw new ArgumentException($"Invalid AssetId: {alloc.AssetId}");
+                        }
+                        if (alloc.PercentAmount > 100)
+                        {
+                            throw new ArgumentOutOfRangeException($"PercentAmount must be between 0 and 100. Found: {alloc.PercentAmount}");
+                        }
+                    }
+                }
+                if (!String.IsNullOrEmpty(request.Interval))
+                {
+                    Type type = typeof(SubscriptionInterval);
+
+                    if (!SubscriptionInterval.AllValues.Contains(request.Interval))
+                    {
+                        throw new ArgumentException($"Invalid interval. Must one of {String.Join(", ", SubscriptionInterval.AllValues)}. Found:  {request.Interval}");
+                    }
+
+                }
+
+                if (request.Amount != null && request.Amount <= 0)
+                {
+                    throw new ArgumentOutOfRangeException("Amount must be greater than zero.");
+                }
+                #endregion Validate
+
+                var updateFields = new Dictionary<string, object>();
+                List<AllocationData> allocations = new List<AllocationData>();
+                if (request.Allocations != null && request.Allocations.Any())
+                {
+                    foreach (var allocation in request.Allocations)
+                    {
+                        var assetData = await _assetService.GetByIdAsync(Guid.Parse(allocation.AssetId));
+                        allocations.Add(new()
+                        {
+                            AssetId = Guid.Parse(allocation.AssetId),
+                            AssetTicker = assetData.Ticker,
+                            PercentAmount = allocation.PercentAmount,
+                        });
+                    }
+                }
+
+                if (allocations is not null && allocations.Any()) updateFields["Allocations"] = allocations;
+                if (request.Interval is not null) updateFields["Interval"] = request.Interval;
+                if (request.Amount is not null) updateFields["Amount"] = request.Amount;
+                if (request.EndDate is not null) updateFields["EndDate"] = request.EndDate;
+
+                var updateResult = await UpdateOneAsync(id, updateFields);
+                if (!updateResult.IsAcknowledged)
+                {
+                    throw new MongoException("Failed to update subscription data.");
+                }
+
+                _logger.LogInformation($"Successfully updated subscription record: {updateResult.ModifiedCount}");
+                return ResultWrapper<long>.Success(updateResult.ModifiedCount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Failed to process subscription request: {ex.Message}");
+                return ResultWrapper<long>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
 
@@ -135,17 +215,15 @@ namespace Infrastructure.Services
                 return ResultWrapper<IReadOnlyCollection<AllocationData>>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
-
+        public async Task<IEnumerable<SubscriptionData>> GetAllByUserIdAsync(Guid userId)
+        {
+            var filter = Builders<SubscriptionData>.Filter.Eq(doc => doc.UserId, userId);
+            return await GetAllAsync(filter);
+        }
         public async Task<UpdateResult> CancelAsync(Guid subscriptionId)
         {
             var updatedFields = new { IsCancelled = true };
             return await UpdateOneAsync(subscriptionId, updatedFields);
-        }
-
-        public async Task<IEnumerable<SubscriptionData>> GetUserSubscriptionsAsync(Guid userId)
-        {
-            var filter = Builders<SubscriptionData>.Filter.Eq(doc => doc.UserId, userId);
-            return await GetAllAsync(filter);
         }
     }
 }

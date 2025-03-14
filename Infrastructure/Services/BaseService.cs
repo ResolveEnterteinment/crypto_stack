@@ -31,7 +31,7 @@ namespace Infrastructure.Services
 
         public async Task<T> GetByIdAsync(Guid id)
         {
-            var filter = Builders<T>.Filter.Eq("_id", id);
+            var filter = Builders<T>.Filter.Eq("Id", id);
             return await _collection.Find(filter).FirstOrDefaultAsync();
         }
 
@@ -104,7 +104,7 @@ namespace Infrastructure.Services
             }
 
             var updateDefinition = BuildUpdateDefinition(updatedFields);
-            var filter = Builders<T>.Filter.Eq("_id", id);
+            var filter = Builders<T>.Filter.Eq("Id", id);
 
             try
             {
@@ -127,7 +127,7 @@ namespace Infrastructure.Services
 
         public async Task<DeleteResult> DeleteAsync(Guid id, IClientSessionHandle? session = null)
         {
-            var filter = Builders<T>.Filter.Eq("_id", id);
+            var filter = Builders<T>.Filter.Eq("Id", id);
             try
             {
                 if (session == null)
@@ -150,15 +150,27 @@ namespace Infrastructure.Services
         {
             var updateBuilder = Builders<T>.Update;
             var validUpdates = new List<UpdateDefinition<T>>();
-
-            var properties = updatedFields.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
-            foreach (var property in properties)
+            if (updatedFields.GetType() == typeof(Dictionary<string, object>))
             {
-                var propertyName = property.Name;
-                if (ValidPropertyNames.Contains(propertyName))
+                foreach (var field in (updatedFields as Dictionary<string, object>))
                 {
-                    var value = property.GetValue(updatedFields);
-                    validUpdates.Add(updateBuilder.Set(propertyName, value));
+                    if (ValidPropertyNames.Contains(field.Key))
+                    {
+                        validUpdates.Add(updateBuilder.Set(field.Key, field.Value));
+                    }
+                }
+            }
+            else
+            {
+                var properties = updatedFields.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+                foreach (var property in properties)
+                {
+                    var propertyName = property.Name;
+                    if (ValidPropertyNames.Contains(propertyName))
+                    {
+                        var value = property.GetValue(updatedFields);
+                        validUpdates.Add(updateBuilder.Set(propertyName, value));
+                    }
                 }
             }
 

@@ -1,6 +1,5 @@
 using Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
-using MongoDB.Bson;
 
 namespace crypto_investment_project.Server.Controllers
 {
@@ -41,12 +40,12 @@ namespace crypto_investment_project.Server.Controllers
         [Route("subscription/{subscription}")]
         public async Task<IActionResult> GetSubscriptionBalances(string subscription)
         {
-            var isSubscriptionValid = Guid.TryParse(subscription, out var subscriptionId);
+            /*var isSubscriptionValid = Guid.TryParse(subscription, out var subscriptionId);
             if (subscription is null || subscription == string.Empty || !isSubscriptionValid)
             {
                 return ValidationProblem("A valid user is required.");
             }
-            var balances = await _balanceService.GetAllBySubscriptionIdAsync(subscriptionId);
+            var balances = await _balanceService.GetAllByUserIdAsync(subscriptionId);
             if (balances.IsSuccess)
             {
                 var query = balances?.Data?
@@ -61,7 +60,8 @@ namespace crypto_investment_project.Server.Controllers
             else
             {
                 return BadRequest(balances.ErrorMessage);
-            }
+            }*/
+            throw new NotImplementedException();
         }
     }
 }

@@ -17,23 +17,6 @@ namespace Infrastructure.Services
             ILogger<BalanceService> logger) : base(mongoClient, mongoDbSettings, "balances", logger)
         {
         }
-        public async Task<ResultWrapper<IEnumerable<BalanceData>>> GetAllBySubscriptionIdAsync(Guid subscriptionId)
-        {
-            try
-            {
-                var filter = Builders<BalanceData>.Filter.Eq(b => b.SubscriptionId, subscriptionId);
-                var balances = await GetAllAsync(filter);
-                if (balances is null)
-                {
-                    throw new ArgumentNullException(nameof(balances));
-                }
-                return ResultWrapper<IEnumerable<BalanceData>>.Success(balances);
-            }
-            catch (Exception ex)
-            {
-                return ResultWrapper<IEnumerable<BalanceData>>.Failure(FailureReason.From(ex), ex.Message);
-            }
-        }
         public async Task<ResultWrapper<IEnumerable<BalanceData>>> GetAllByUserIdAsync(Guid userId)
         {
             try
@@ -63,7 +46,6 @@ namespace Infrastructure.Services
                     var result = await InsertOneAsync(new BalanceData()
                     {
                         UserId = userId,
-                        SubscriptionId = subscriptionId,
                         AssetId = asset
                     });
                     if (!result.IsAcknowledged)
@@ -76,18 +58,18 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to initialize balances for subscription #{subscriptionId}: {ex.Message}");
-                return ResultWrapper<IEnumerable<Guid>>.Failure(FailureReason.DatabaseError, $"Failed to initialize balances for subscription #{subscriptionId}: {ex.Message}");
+                _logger.LogError($"Failed to initialize balances for useer #{userId}: {ex.Message}");
+                return ResultWrapper<IEnumerable<Guid>>.Failure(FailureReason.DatabaseError, $"Failed to initialize balances for useer #{userId}: {ex.Message}");
             }
         }
 
-        public async Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(Guid orderId, Guid subscriptionId, BalanceData updateBalance, IClientSessionHandle session)
+        public async Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(Guid orderId, Guid userId, BalanceData updateBalance, IClientSessionHandle session)
         {
             try
             {
                 try
                 {
-                    var filter = Builders<BalanceData>.Filter.Where(b => (b.SubscriptionId == subscriptionId && b.AssetId == updateBalance.AssetId));
+                    var filter = Builders<BalanceData>.Filter.Where(b => (b.UserId == userId && b.AssetId == updateBalance.AssetId));
                     var balance = await GetOneAsync(filter);
                     var updateAvailable = balance.Available + updateBalance.Available;
                     var updateLocked = balance.Locked + updateBalance.Locked;
@@ -104,7 +86,7 @@ namespace Infrastructure.Services
                     await InsertOneAsync(updateBalance);
                 }
 
-                _logger.LogInformation($"Updated subscription #{subscriptionId} balance.");
+                _logger.LogInformation($"Updated subscription #{userId} balance.");
                 return ResultWrapper<BalanceData>.Success(updateBalance);
             }
             catch (Exception ex)

@@ -63,7 +63,7 @@ namespace Infrastructure.Services
                 var payment = paymentNotification.Payment;
                 if (payment == null)
                 {
-                    _logger.LogWarning($"Invalid payment data.Payment can not be null: {paymentNotification.Payment}");
+                    _logger.LogWarning($"Invalid payment data. Payment can not be null: {paymentNotification.Payment}");
                     return;
                 }
 
@@ -258,10 +258,9 @@ namespace Infrastructure.Services
                                     throw new MongoException($"Failed to create order record: {insertOrderResult?.ErrorMessage}");
                                 }
 
-                                var updateBalanceResult = await _balanceService.UpsertBalanceAsync(insertOrderResult.InsertedId.Value, payment.SubscriptionId, new BalanceData()
+                                var updateBalanceResult = await _balanceService.UpsertBalanceAsync(insertOrderResult.InsertedId.Value, payment.UserId, new BalanceData()
                                 {
                                     UserId = payment.UserId,
-                                    SubscriptionId = payment.SubscriptionId,
                                     AssetId = alloc.AssetId,
                                     Available = placedOrder.QuantityFilled
                                 }, session);
@@ -275,12 +274,14 @@ namespace Infrastructure.Services
 
                                 var insertTransactionResult = await _transactionService.InsertOneAsync(new TransactionData()
                                 {
+                                    UserId = payment.UserId,
+                                    PaymentProviderId = payment.PaymentProviderId,
+                                    SubscriptionId = payment.SubscriptionId,
                                     BalanceId = updateBalanceResult.Data.Id,
                                     SourceName = "Exchange",
                                     SourceId = placedOrder.OrderId.ToString(),
                                     Action = "Buy",
-                                    Available = placedOrder.QuantityFilled,
-                                    Locked = 0m
+                                    Quantity = placedOrder.QuantityFilled,
                                 }, session);
 
                                 if (!insertTransactionResult.IsAcknowledged)

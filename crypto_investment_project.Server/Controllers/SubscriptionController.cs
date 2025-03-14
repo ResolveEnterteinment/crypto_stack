@@ -17,8 +17,9 @@ namespace crypto_investment_project.Server.Controllers
 
         [HttpPost]
         [Route("new")]
-        public async Task<IActionResult> NewSubscription([FromBody] SubscriptionRequest subscriptionRequest)
+        public async Task<IActionResult> New([FromBody] SubscriptionCreateRequest subscriptionRequest)
         {
+            #region Validation
             if (subscriptionRequest == null)
             {
                 return ValidationProblem("A valid subscription request is required.");
@@ -42,6 +43,12 @@ namespace crypto_investment_project.Server.Controllers
                 return BadRequest($"Invalid allocation: AssetId must be a valid Guid and PercentAmount must be 0-100. Found AssetId: {invalidAllocation.AssetId}, PercentAmount: {invalidAllocation.PercentAmount}");
             }
 
+            var allocationSum = subscriptionRequest.Allocations.Select(a => (int)a.PercentAmount).Sum();
+            if (allocationSum != 100)
+            {
+                return BadRequest("Invalid sum of asset allocations. Allocation percent amounts total must be 100.");
+            }
+
             if (string.IsNullOrWhiteSpace(subscriptionRequest.Interval))
             {
                 return BadRequest("Interval is required.");
@@ -51,8 +58,9 @@ namespace crypto_investment_project.Server.Controllers
             {
                 return BadRequest("Amount must be greater than zero.");
             }
+            #endregion
 
-            var subscriptionResult = await _subscriptionService.ProcessSubscriptionRequest(subscriptionRequest);
+            var subscriptionResult = await _subscriptionService.ProcessSubscriptionCreateRequest(subscriptionRequest);
 
             if (subscriptionResult.IsSuccess)
             {
@@ -61,6 +69,56 @@ namespace crypto_investment_project.Server.Controllers
             else
             {
                 return BadRequest(subscriptionResult.ErrorMessage);
+            }
+        }
+        [HttpPost]
+        [Route("update/{id}")]
+        public async Task<IActionResult> Update([FromBody] SubscriptionUpdateRequest updateRequest, string id)
+        {
+            #region Validation
+            if (!Guid.TryParse(id, out var subscriptionId))
+            {
+                return ValidationProblem("A valid subscription id is required.");
+            }
+            if (updateRequest == null)
+            {
+                return ValidationProblem("A valid update request is required.");
+            }
+
+            if (updateRequest.Allocations != null)
+            {
+                if (!updateRequest.Allocations.Any())
+                {
+                    return BadRequest("Allocations must contain at least one asset.");
+                }
+                var invalidAllocation = updateRequest.Allocations.FirstOrDefault(a =>
+                    string.IsNullOrWhiteSpace(a.AssetId) || !Guid.TryParse(a.AssetId, out _) || a.PercentAmount > 100);
+                if (invalidAllocation != null)
+                {
+                    return BadRequest($"Invalid allocation: AssetId must be a valid Guid and PercentAmount must be 0-100. Found AssetId: {invalidAllocation.AssetId}, PercentAmount: {invalidAllocation.PercentAmount}");
+                }
+
+                var allocationSum = updateRequest.Allocations.Select(a => (int)a.PercentAmount).Sum();
+                if (allocationSum != 100)
+                {
+                    return BadRequest("Invalid sum of asset allocations. Allocation percent amounts total must be 100.");
+                }
+            }
+
+            if (updateRequest.Amount != null && updateRequest.Amount <= 0)
+            {
+                return BadRequest("Amount must be greater than zero.");
+            }
+            #endregion
+            var subscriptionUpdateResult = await _subscriptionService.ProcessSubscriptionUpdateRequest(subscriptionId, updateRequest);
+
+            if (subscriptionUpdateResult.IsSuccess)
+            {
+                return Ok($"Subscription #{subscriptionUpdateResult.Data} updated successfully.");
+            }
+            else
+            {
+                return BadRequest(subscriptionUpdateResult.ErrorMessage);
             }
         }
     }

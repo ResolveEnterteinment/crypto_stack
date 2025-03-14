@@ -2,7 +2,7 @@
 
 namespace Application.Contracts.Requests.Subscription
 {
-    public class SubscriptionRequest
+    public class SubscriptionCreateRequest
     {
         [Required(ErrorMessage = "UserId is required.")]
         public required string UserId { get; set; }
@@ -22,7 +22,7 @@ namespace Application.Contracts.Requests.Subscription
 
     public class AllocationRequest
     {
-        [Required(ErrorMessage = "AssetId is required.")]
+        //[Required(ErrorMessage = "AssetId is required.")]
         public required string AssetId { get; set; }
 
         [Range(0, 100, ErrorMessage = "PercentAmount must be between 0 and 100.")]

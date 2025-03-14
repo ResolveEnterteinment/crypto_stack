@@ -1,5 +1,4 @@
 ﻿using Domain.Exceptions;
-using MongoDB.Driver;
 
 namespace Domain.Constants
 {
@@ -20,9 +19,10 @@ namespace Domain.Constants
                 ArgumentException => ValidationError,
                 InsufficientBalanceException => InsufficientBalance,
                 KeyNotFoundException => DataNotFound,
-                MongoException => DatabaseError,
                 _ when ex.Message.Contains("Binance") => ExchangeApiError,
-                _ => FailureReason.Unknown
+                _ when ex.Message.Contains("Insert") => ExchangeApiError,
+                _ when ex.Message.Contains("Update") => ExchangeApiError,
+                _ => Unknown
             };
         }
     }
