@@ -2,18 +2,26 @@ import * as signalR from "@microsoft/signalr";
 import api from "./api";
 
 export const getNotifications = async (userId: string) => {
-    const { data } = await api.get(`/notification/${userId}`);
+    if (!userId) {
+        console.error("getNotifications called with undefined userId");
+        return [];
+    }
+    const { data } = await api.get(`/Notification/${userId}`);
     return data;
 };
 
 export const markNotificationAsRead = async (notificationId: string) => {
-    await api.post(`/notification/read/${notificationId}`);
+    await api.post(`/Notification/read/${notificationId}`);
 };
 
 // SignalR Connection Setup
 export const connectToNotifications = (userId: string, onNotificationReceived: (message: string) => void) => {
     const connection = new signalR.HubConnectionBuilder()
-        .withUrl("http://localhost:5000/notificationHub") // Adjust URL based on your API
+        .withUrl("https://localhost:7144/notificationHub", {
+            skipNegotiation: true, // Avoids "negotiate" error
+            transport: signalR.HttpTransportType.WebSockets, // Ensures WebSocket usage
+            withCredentials: true // Allows CORS credentials
+        })
         .configureLogging(signalR.LogLevel.Information)
         .withAutomaticReconnect()
         .build();

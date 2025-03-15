@@ -21,16 +21,9 @@ const DashboardPage: React.FC = () => {
         alert("Showing user settings...");
     }
 
-    const getUserInitials = () => {
-        if (!user || !user.username) return "?";
-        const names = user.username.split(" ");
-        const initials = names.map((name: string) => name.charAt(0)).join("").toUpperCase();
-        return initials;
-    }
-
     return (
         <>
-            <Navbar userId={ user.userId } initials={getUserInitials() } showProfile={showProfile} showSettings={showSettings}  logout={handleLogout } />
+            <Navbar showProfile={showProfile} showSettings={showSettings}  logout={handleLogout } />
         <div className="min-h-screen bg-gray-100 py-8 px-4 lg:px-10">
           <div className="flex justify-between items-center mb-6">
               <h1 className="text-3xl font-bold">Welcome, {user?.username}</h1>

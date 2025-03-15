@@ -26,7 +26,7 @@ public class NotificationService : BaseService<NotificationData>, INotificationS
 
     public async Task<IEnumerable<NotificationData>> GetUserNotificationsAsync(string userId)
     {
-        return await _collection.Find(n => n.UserId == userId)
+        return await _collection.Find(n => n.UserId == userId && n.IsRead == false)
                                    .SortByDescending(n => n.CreatedAt)
                                    .ToListAsync();
     }

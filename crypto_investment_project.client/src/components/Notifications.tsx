@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useState } from "react";
 import { getNotifications, markNotificationAsRead, connectToNotifications } from "../services/notification";
+import { useAuth } from "../context/AuthContext";
 
 interface Notification {
     id: string;
@@ -8,30 +9,40 @@ interface Notification {
     isRead: boolean;
 }
 
-const Notifications: React.FC<{ userId: string }> = ({ userId }) => {
+const Notifications: React.FC<{ onUpdateUnread: (count: number) => void }> = ({ onUpdateUnread }) => {
+    const { user } = useAuth();
     const [notifications, setNotifications] = useState<Notification[]>([]);
     const [newNotification, setNewNotification] = useState<string | null>(null);
 
     useEffect(() => {
-        fetchNotifications();
-        const connection = connectToNotifications(userId, (message) => {
+        if (!user || !user.id) return;
+
+        fetchNotifications(user.id);
+
+        const connection = connectToNotifications(user.id, (message) => {
             setNewNotification(message);
-            fetchNotifications();
+            fetchNotifications(user.id);
         });
 
         return () => {
             connection.stop();
         };
-    }, []);
+    }, [user]);
 
-    const fetchNotifications = async () => {
-        const data = await getNotifications(userId);
+    const fetchNotifications = async (id: string) => {
+        if (!id) return;
+
+        const data = await getNotifications(id);
         setNotifications(data);
+
+        // Update unread count in the Navbar
+        const unreadCount = data.filter((n: { isRead: any; }) => !n.isRead).length;
+        onUpdateUnread(unreadCount);
     };
 
     const handleRead = async (notificationId: string) => {
         await markNotificationAsRead(notificationId);
-        fetchNotifications();
+        fetchNotifications(user!.id);
     };
 
     return (

@@ -1,5 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
-import api from "../services/api";
+﻿import React, { createContext, useContext, useEffect, useState } from "react";
 
 interface AuthContextType {
     user: any;
@@ -25,6 +24,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             username: sessionData.username,
             email: sessionData.email,
         }
+        localStorage.setItem("user", JSON.stringify(userData)); // ✅ Store userId properly
         setUser(userData);
     };
 
