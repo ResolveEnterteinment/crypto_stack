@@ -1,6 +1,5 @@
 ﻿using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
-using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.Events;
