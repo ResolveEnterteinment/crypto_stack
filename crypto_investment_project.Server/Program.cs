@@ -1,5 +1,4 @@
 using Application.Interfaces;
-using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using crypto_investment_project.Server.Helpers;
 using Domain.DTOs;
 using Infrastructure.Hubs;
@@ -21,6 +20,7 @@ builder.Services.Configure<MongoDbSettings>(builder.Configuration.GetSection("Mo
 builder.Services.Configure<BinanceSettings>(builder.Configuration.GetSection("Binance"));
 builder.Services.Configure<StripeSettings>(builder.Configuration.GetSection("Stripe"));
 builder.Services.Configure<ExchangeSettings>(builder.Configuration.GetSection("Exchange"));
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
 // Fetch allowed origins from user secrets
 var allowedOrigins = builder.Configuration["AllowedOrigins"]?
     .Split(';', StringSplitOptions.RemoveEmptyEntries) ?? Array.Empty<string>();
@@ -51,6 +51,11 @@ builder.Services.AddSwaggerGen();
 // -------------------------------------------------------------------
 // Register additional dependencies required by your services:
 // -------------------------------------------------------------------
+// 1. Data Protection (required for token providers).
+builder.Services.AddDataProtection();
+
+//    This satisfies the dependency for security stamp validation.
+builder.Services.AddSingleton<System.TimeProvider>(System.TimeProvider.System);
 
 // 1. Register HttpClient (so that System.Net.Http.HttpClient can be injected).
 builder.Services.AddHttpClient();

@@ -1,5 +1,4 @@
 ﻿using Application.Interfaces;
-using AspNetCore.Identity.MongoDbCore.Infrastructure;
 using BinanceLibrary;
 using Domain.Constants;
 using Domain.DTOs;

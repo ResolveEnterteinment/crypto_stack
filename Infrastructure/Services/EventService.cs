@@ -1,5 +1,5 @@
 ﻿using Application.Interfaces;
-using AspNetCore.Identity.MongoDbCore.Infrastructure;
+using Domain.DTOs;
 using Domain.Events;
 using Domain.Models.Event;
 using MediatR;

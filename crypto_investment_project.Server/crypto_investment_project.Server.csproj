@@ -11,7 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AspNetCore.Identity.MongoDbCore" Version="6.0.0" />
+    <PackageReference Include="AspNetCore.Identity.Mongo" Version="10.1.0" />
     <PackageReference Include="MediatR" Version="12.4.1" />
     <PackageReference Include="Microsoft.AspNetCore.Components.QuickGrid.EntityFrameworkAdapter" Version="8.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore" Version="8.0.11" />
@@ -22,8 +22,8 @@
       <Version>8.*-*</Version>
     </PackageReference>
     <PackageReference Include="Microsoft.VisualStudio.Web.CodeGeneration.Design" Version="8.0.7" />
-    <PackageReference Include="MongoDB.Bson" Version="3.2.0" />
-    <PackageReference Include="MongoDB.Driver" Version="3.2.0" />
+    <PackageReference Include="MongoDB.Bson" Version="3.2.1" />
+    <PackageReference Include="MongoDB.Driver" Version="3.2.1" />
     <PackageReference Include="Polly" Version="8.5.2" />
     <PackageReference Include="Stripe.net" Version="47.4.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
