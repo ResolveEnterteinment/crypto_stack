@@ -16,6 +16,27 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         [HttpPost]
+        [Route("user/{user}")]
+        //[Authorize]
+        public async Task<IActionResult> GetByUser(string user)
+        {
+            #region Validation
+            if (string.IsNullOrEmpty(user) || !Guid.TryParse(user, out Guid userId) || userId == Guid.Empty)
+            {
+                return ValidationProblem("A valid user id is required.");
+            }
+            #endregion
+
+            var subscriptionsResult = await _subscriptionService.GetAllByUserIdAsync(userId);
+
+            if (!subscriptionsResult.IsSuccess)
+            {
+                return BadRequest(subscriptionsResult.ErrorMessage);
+            }
+            return Ok(subscriptionsResult.Data);
+        }
+
+        [HttpPost]
         [Route("new")]
         public async Task<IActionResult> New([FromBody] SubscriptionCreateRequest subscriptionRequest)
         {
@@ -43,7 +64,7 @@ namespace crypto_investment_project.Server.Controllers
                 return BadRequest($"Invalid allocation: AssetId must be a valid Guid and PercentAmount must be 0-100. Found AssetId: {invalidAllocation.AssetId}, PercentAmount: {invalidAllocation.PercentAmount}");
             }
 
-            var allocationSum = subscriptionRequest.Allocations.Select(a => (int)a.PercentAmount).Sum();
+            var allocationSum = subscriptionRequest.Allocations.ToList().Select(a => (int)a.PercentAmount).Sum();
             if (allocationSum != 100)
             {
                 return BadRequest("Invalid sum of asset allocations. Allocation percent amounts total must be 100.");

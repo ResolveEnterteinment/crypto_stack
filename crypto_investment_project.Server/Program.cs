@@ -112,8 +112,8 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddDataProtection();
 builder.Services.AddSingleton<System.TimeProvider>(System.TimeProvider.System);
 builder.Services.AddHttpClient();
-builder.Services.AddSingleton<IPaymentService, PaymentService>();
-builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
+builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<IExchangeService, ExchangeService>();
 builder.Services.AddSingleton<IAssetService, AssetService>();
 builder.Services.AddSingleton<IBalanceService, BalanceService>();

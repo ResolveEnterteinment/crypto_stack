@@ -28,8 +28,8 @@ namespace crypto_investment_project.Server.Controllers
             }
             PaymentData paymentData = new()
             {
-                UserId = paymentRequest.UserId,
-                SubscriptionId = new Guid(paymentRequest.SubscriptionId),
+                UserId = Guid.Parse(paymentRequest.UserId),
+                SubscriptionId = Guid.Parse(paymentRequest.SubscriptionId),
                 PaymentProviderId = paymentRequest.PaymentId,
                 PaymentProviderFee = paymentRequest.PaymentProviderFee,
                 TotalAmount = paymentRequest.TotalAmount,
@@ -69,7 +69,7 @@ namespace crypto_investment_project.Server.Controllers
         }
         [HttpPost]
         [Route("newSubscription")]
-        public async Task<IActionResult> NewAsset([FromBody] SubscriptionData subscriptionData)
+        public async Task<IActionResult> NewSubscription([FromBody] SubscriptionData subscriptionData)
         {
             if (subscriptionData is null)
             {

@@ -13,17 +13,21 @@ namespace Infrastructure.Services
     {
         private readonly IBalanceService _balanceService;
         private readonly IAssetService _assetService;
+        private readonly INotificationService _notificationService;
 
         public SubscriptionService(
             IBalanceService balanceService,
             IAssetService assetService,
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
-            ILogger<SubscriptionService> logger)
+            ILogger<SubscriptionService> logger,
+            INotificationService notificationService
+            )
             : base(mongoClient, mongoDbSettings, "subscriptions", logger)
         {
             _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(_assetService));
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(_notificationService));
         }
 
         public async Task<ResultWrapper<Guid>> ProcessSubscriptionCreateRequest(SubscriptionCreateRequest request)
@@ -70,15 +74,23 @@ namespace Infrastructure.Services
                 }
                 #endregion Validate
 
+                List<AllocationData> allocations = request.Allocations.Select<AllocationRequest, AllocationData>(a => new AllocationData()
+                {
+                    AssetId = Guid.Parse(a.AssetId),
+                    AssetTicker = "",
+                    PercentAmount = a.PercentAmount,
+                }).ToList();
+
+                allocations.ForEach(async a =>
+                {
+                    var asset = await _assetService.GetByIdAsync(a.AssetId);
+                    a.AssetTicker = asset.Ticker;
+                });
+
                 var subscriptionData = new SubscriptionData
                 {
                     UserId = userId,
-                    Allocations = (IEnumerable<AllocationData>)request.Allocations.Select(async allocRequest => new AllocationData
-                    {
-                        AssetId = Guid.Parse(allocRequest.AssetId), // Safe due to prior validation
-                        AssetTicker = (await _assetService.GetByIdAsync(Guid.Parse(allocRequest.AssetId))).Ticker,
-                        PercentAmount = allocRequest.PercentAmount
-                    }),
+                    Allocations = allocations,
                     Interval = request.Interval,
                     Amount = request.Amount,
                     EndDate = request.EndDate,
@@ -98,6 +110,11 @@ namespace Infrastructure.Services
                     throw new KeyNotFoundException($"Failed to get allocations for subscription {insertedId}: {assetsResult.ErrorMessage}");
                 }
                 _logger.LogInformation("Successfully inserted subscription {SubscriptionId}", result.InsertedId);
+                await _notificationService.CreateNotificationAsync(new()
+                {
+                    UserId = userId.ToString(),
+                    Message = "A new subscription is created."
+                });
                 return ResultWrapper<Guid>.Success(result.InsertedId.Value);
             }
             catch (Exception ex)
@@ -214,10 +231,19 @@ namespace Infrastructure.Services
                 return ResultWrapper<IReadOnlyCollection<AllocationData>>.Failure(FailureReason.From(ex), ex.Message);
             }
         }
-        public async Task<IEnumerable<SubscriptionData>> GetAllByUserIdAsync(Guid userId)
+        public async Task<ResultWrapper<IEnumerable<SubscriptionData>>> GetAllByUserIdAsync(Guid userId)
         {
-            var filter = Builders<SubscriptionData>.Filter.Eq(doc => doc.UserId, userId);
-            return await GetAllAsync(filter);
+            try
+            {
+                var filter = Builders<SubscriptionData>.Filter.Eq(doc => doc.UserId, userId);
+                var subscriptions = await GetAllAsync(filter);
+                return ResultWrapper<IEnumerable<SubscriptionData>>.Success(subscriptions);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<IEnumerable<SubscriptionData>>.Failure(FailureReason.From(ex), ex.Message);
+            }
+
         }
         public async Task<UpdateResult> CancelAsync(Guid subscriptionId)
         {

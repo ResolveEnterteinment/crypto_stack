@@ -1,12 +1,28 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar"
+import { getSubscriptions, ISubscription } from "../services/subscription";
 
 const DashboardPage: React.FC = () => {
     const [isModalOpen, setModalOpen] = useState(false);
     const { user, logout } = useAuth();
+    const [subscriptions, setSubscriptions] = useState<ISubscription[] | null>([]);
     const navigate = useNavigate();
+
+
+    useEffect(() => {
+        if (!user || !user.id) return;
+
+        fetchSubscriptions(user.id);
+    }, [user]);
+
+    const fetchSubscriptions = async (id: string) => {
+        if (!id) return;
+
+        const data = await getSubscriptions(id);
+        setSubscriptions(data);
+    };
 
     const handleLogout = () => {
         logout();
@@ -50,25 +66,24 @@ const DashboardPage: React.FC = () => {
           <div className="mb-8">
               <h2 className="text-2xl font-bold mb-4">Your Subscriptions</h2>
               <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {[1, 2, 3].map((sub) => (
-                      <div key={sub} className="bg-white shadow-lg rounded-xl p-6 relative">
+                        {subscriptions?.map((sub) => (
+                            <div key={sub.id} className="bg-white shadow-lg rounded-xl p-6 relative">
                           <div className="mb-4">
-                              <h3 className="text-xl font-semibold">Subscription #{sub}</h3>
-                              <p className="text-gray-600">Started: Jan 10, 2025</p>
+                                    <h3 className="text-xl font-semibold">Subscription #{sub.id}</h3>
+                                    <p className="text-gray-600">Started: {new Date(Date.parse(sub.createdAt)).toLocaleDateString()}</p>
                           </div>
-                          <div className="mb-4">
-                              <p className="text-sm font-semibold">Interval: <span className="font-normal">Monthly</span></p>
+                                <div className="mb-4">
+                                    <p className="text-sm font-semibold">Interval: <span className="font-normal">{sub.interval}</span></p>
                               <p className="text-sm font-semibold">Next Due Date: <span className="font-normal">Feb 10, 2025</span></p>
-                              <p className="text-sm font-semibold">Total Payments: <span className="font-normal">12</span></p>
-                              <p className="text-sm font-semibold">Status: <span className="text-green-500 font-normal">Active</span></p>
+                                    <p className="text-sm font-semibold">Status: <span className="text-green-500 font-normal">{sub.isCancelled ? "Cancelled" : "Active"}</span></p>
                           </div>
 
                           <div className="mb-4">
                               <h4 className="font-semibold">Allocations:</h4>
-                              <ul className="list-disc list-inside text-sm">
-                                  <li>BTC: 50%</li>
-                                  <li>ETH: 30%</li>
-                                  <li>LINK: 20%</li>
+                                    <ul className="list-disc list-inside text-sm">
+                                        {sub.allocations?.map((alloc) => (
+                                            <li>{alloc.assetTicker}: {alloc.percentAmount}%</li>
+                                        ))}
                               </ul>
                           </div>
 

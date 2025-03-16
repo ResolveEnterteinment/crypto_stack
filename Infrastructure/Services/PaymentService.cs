@@ -16,6 +16,7 @@ namespace Infrastructure.Services
         private readonly IStripeService _stripeService;
         private readonly IAssetService _assetService;
         private readonly IEventService _eventService;
+        private readonly INotificationService _notificationService;
 
         public PaymentService(
             IOptions<StripeSettings> stripeSettings,
@@ -23,12 +24,15 @@ namespace Infrastructure.Services
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
             ILogger<PaymentService> logger,
-            IEventService eventService)
+            IEventService eventService,
+            INotificationService notificationService
+            )
             : base(mongoClient, mongoDbSettings, "payments", logger)
         {
             _stripeService = new StripeService(stripeSettings, logger);
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
         }
 
         /// <summary>
@@ -93,7 +97,7 @@ namespace Infrastructure.Services
                 #region Construct PaymentRequest
                 var paymentRequest = new PaymentIntentRequest
                 {
-                    UserId = Guid.Parse(userId),
+                    UserId = userId,
                     SubscriptionId = subscriptionId,
                     PaymentId = paymentIntent.Id,
                     TotalAmount = totalAmount,
@@ -166,7 +170,7 @@ namespace Infrastructure.Services
 
                 var paymentData = new PaymentData
                 {
-                    UserId = paymentRequest.UserId,
+                    UserId = Guid.Parse(paymentRequest.UserId),
                     SubscriptionId = subscriptionId,
                     PaymentProviderId = paymentRequest.PaymentId,
                     TotalAmount = paymentRequest.TotalAmount,
@@ -212,6 +216,11 @@ namespace Infrastructure.Services
 
                 // Publish event after commit
                 await _eventService.Publish(new PaymentReceivedEvent(paymentData, storedEventResult.InsertedId.Value));
+                await _notificationService.CreateNotificationAsync(new NotificationData()
+                {
+                    UserId = paymentRequest.UserId.ToString(),
+                    Message = $"A payment of {paymentRequest.NetAmount} {paymentRequest.Currency} is received.",
+                });
                 return ResultWrapper<Guid>.Success(storedEventResult.InsertedId.Value);
             }
             catch (Exception ex)
