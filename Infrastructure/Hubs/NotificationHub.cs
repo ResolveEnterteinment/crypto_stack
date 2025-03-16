@@ -22,6 +22,7 @@ namespace Infrastructure.Hubs
         public override async Task OnConnectedAsync()
         {
             _logger.LogInformation("Connection attempt: {ConnectionId}", Context.ConnectionId);
+            Console.Write("Context : ", Context.ToString());
             if (Context.User?.Identity?.IsAuthenticated == false)
             {
                 _logger.LogWarning("User not authenticated for {ConnectionId}. Proceeding with connection", Context.ConnectionId);

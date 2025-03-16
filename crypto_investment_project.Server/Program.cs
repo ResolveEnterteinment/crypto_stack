@@ -4,11 +4,11 @@ using Domain.DTOs;
 using Infrastructure.Hubs;
 using Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer; // Add this
-using Microsoft.IdentityModel.Tokens; // Add this
+using Microsoft.IdentityModel.Tokens;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
-using System.Text; // Add this
+using System.Text;
 
 // Register a global serializer to ensure GUIDs are stored using the Standard representation.
 BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
@@ -53,17 +53,27 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // Add JWT Authentication
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+builder.Services.AddAuthentication(options =>
+{
+    // Identity made Cookie authentication the default.
+    // However, we want JWT Bearer Auth to be the default.
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
     .AddJwtBearer(options =>
     {
+        // Configure the Authority to the expected value for
+        // the authentication provider. This ensures the token
+        // is appropriately validated.
+        //options.Authority = "https://localhost:5173/auth"; // TODO: Update URL
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
+            ValidIssuer = builder.Configuration["Jwt:Issuer"], // "crypto-stack"
+            ValidAudience = builder.Configuration["Jwt:Audience"], // "crypto-stack"
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]))
         };
 
@@ -73,8 +83,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             OnMessageReceived = context =>
             {
                 var accessToken = context.Request.Query["access_token"];
-                var path = context.HttpContext.Request.Path;
-                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs/notificationHub"))
+                if (string.IsNullOrEmpty(accessToken))
+                {
+                    accessToken = context.Request.Headers["Authorization"].FirstOrDefault()?.Replace("Bearer ", "");
+                }
+                Console.WriteLine($"OnMessageReceived - Path: {context.Request.Path}, Token: {accessToken}...");
+                if (!string.IsNullOrEmpty(accessToken) &&
+                    context.Request.Path.StartsWithSegments("/hubs/notificationHub"))
                 {
                     context.Token = accessToken;
                 }
@@ -129,8 +144,8 @@ app.UseAuthentication();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 
+app.MapHub<NotificationHub>("/hubs/notificationHub");
 app.MapControllers();
 app.MapFallbackToFile("/index.html");
-app.MapHub<NotificationHub>("/hubs/notificationHub");
 
 app.Run();
