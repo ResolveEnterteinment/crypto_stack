@@ -3,7 +3,7 @@ using Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 using Stripe;
 
-namespace Domain.Controllers
+namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]

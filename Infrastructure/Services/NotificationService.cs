@@ -10,8 +10,9 @@ using MongoDB.Driver;
 
 public class NotificationService : BaseService<NotificationData>, INotificationService
 {
-    private readonly IHubContext<NotificationHub> _hubContext;
+    public readonly IHubContext<NotificationHub> _hubContext;
     private readonly IUserService _userService;
+    private static readonly Dictionary<string, string> _users = new Dictionary<string, string>();
 
     public NotificationService(
         IHubContext<NotificationHub> hubContext,
@@ -22,6 +23,64 @@ public class NotificationService : BaseService<NotificationData>, INotificationS
     {
         _hubContext = hubContext;
         _userService = userService;
+    }
+
+    public bool AddUserToList(string userToAdd)
+    {
+        if (string.IsNullOrWhiteSpace(userToAdd))
+        {
+            throw new ArgumentNullException(nameof(userToAdd));
+        }
+        lock (_users)
+        {
+            foreach (var user in _users)
+            {
+                if (user.Key.ToLower() == userToAdd.ToLower()) // if user name exsist
+                    return false;
+            }
+            _users.Add(userToAdd, null);
+            return true;
+        }
+    }
+
+    public void RemoveUserFromList(string user)
+    {
+        lock (_users)
+        {
+            if (_users.ContainsKey(user))
+            {
+                _users.Remove(user);
+            }
+        }
+    }
+
+    public void AddUserConnectionId(string user, string connectionId)
+    {
+        lock (_users)
+        {
+            bool res = _users.ContainsKey(user);
+            if (res)
+            {
+                _users[user] = connectionId;
+            }
+        }
+    }
+
+    public string GetUserConnectionById(string connectionId)
+    {
+        lock (_users)
+        {
+            var res = _users.Where(x => x.Value == connectionId).Select(x => x.Key).FirstOrDefault();
+            return res;
+        }
+    }
+
+    public string GetUserConnectionByUser(string user)
+    {
+        lock (_users)
+        {
+            return _users.Where(x => x.Key == user).Select(x => x.Value).FirstOrDefault();
+        }
     }
 
     public async Task<IEnumerable<NotificationData>> GetUserNotificationsAsync(string userId)
@@ -45,12 +104,24 @@ public class NotificationService : BaseService<NotificationData>, INotificationS
                 throw new KeyNotFoundException("User not found.");
             }
             var insertResult = await InsertOneAsync(notification);
-            // Notify the user via SignalR
+
             if (!insertResult.IsAcknowledged)
             {
                 throw new MongoException("Failed to create notification.");
             }
-            await _hubContext.Clients.User(notification.UserId).SendAsync("ReceiveNotification", notification.Message);
+
+            // ✅ Ensure user has a valid connection ID before sending
+            var clientId = GetUserConnectionByUser(notification.UserId);
+            if (!string.IsNullOrEmpty(clientId))
+            {
+                await _hubContext.Clients.Client(clientId).SendAsync("ReceiveNotification", notification.UserId, notification.Message);
+                _logger.LogInformation($"✅ Notification sent to user {notification.UserId}");
+            }
+            else
+            {
+                _logger.LogWarning($"⚠️ User {notification.UserId} has no active SignalR connection.");
+            }
+
             return ResultWrapper<InsertResult>.Success(insertResult);
         }
         catch (Exception ex)
@@ -58,6 +129,7 @@ public class NotificationService : BaseService<NotificationData>, INotificationS
             return ResultWrapper<InsertResult>.Failure(FailureReason.From(ex), ex.Message);
         }
     }
+
 
     public async Task<ResultWrapper<UpdateResult>> MarkAsReadAsync(Guid notificationId)
     {

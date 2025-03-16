@@ -26,9 +26,14 @@ namespace Infrastructure.Services
         //private readonly IEmailService _emailService;
         //private readonly ISystemSettingsService _systemSettingsService;
 
-        public AuthenticationService(RoleManager<ApplicationRole> roleManager, ILogger<AuthenticationService> logger,
-            UserManager<ApplicationUser> userManager, IOptionsSnapshot<JwtSettings> jwtSettings,
-            IUserService userService/*, IEmailService emailService*/)
+        public AuthenticationService(
+            RoleManager<ApplicationRole> roleManager,
+            ILogger<AuthenticationService> logger,
+            UserManager<ApplicationUser> userManager,
+            IOptionsSnapshot<JwtSettings> jwtSettings,
+            IUserService userService
+            //, IEmailService emailService
+            )
         {
             _userManager = userManager;
             _jwtSettings = jwtSettings.Value;
@@ -82,11 +87,13 @@ namespace Infrastructure.Services
 
                 var token = new JwtSecurityToken(
                     issuer: _jwtSettings.Issuer,
-                    audience: _jwtSettings.Audiance,
+                    audience: _jwtSettings.Audience,
                     claims: claims,
                     expires: expires,
                     signingCredentials: creds
                     );
+
+                _logger.LogInformation($"Jwt:Key in AuthenticationService: {_jwtSettings.Key}");
 
                 var userData = await _userService.GetAsync(user.Id);
 
@@ -188,13 +195,11 @@ namespace Infrastructure.Services
                     Success = true,
                     Message = "Register Successful"
                 };
-
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex.Message);
                 return new RegisterResponse { Success = false, Message = ex.Message };
-
             }
         }
 

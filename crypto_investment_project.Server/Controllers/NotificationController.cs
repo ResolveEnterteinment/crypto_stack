@@ -1,64 +1,66 @@
 using Microsoft.AspNetCore.Mvc;
-
-[ApiController]
-[Route("api/[controller]")]
-public class NotificationController : ControllerBase
+namespace crypto_investment_project.Server.Controllers
 {
-    private readonly INotificationService _notificationService;
-
-    public NotificationController(INotificationService notificationService)
+    [ApiController]
+    [Route("api/[controller]")]
+    public class NotificationController : ControllerBase
     {
-        _notificationService = notificationService;
-    }
+        private readonly INotificationService _notificationService;
 
-    [HttpGet("{userId}")]
-    public async Task<IActionResult> GetUserNotifications(string userId)
-    {
-        var notifications = await _notificationService.GetUserNotificationsAsync(userId);
-        return Ok(notifications);
-    }
-
-    [HttpPost("create")]
-    public async Task<IActionResult> CreateNotification([FromBody] NotificationData notification)
-    {
-        if (notification == null)
+        public NotificationController(INotificationService notificationService)
         {
-            BadRequest("Notification data is required");
-        }
-        if (string.IsNullOrEmpty(notification.Message))
-        {
-            BadRequest("Notification message is required");
-        }
-        if (string.IsNullOrEmpty(notification.UserId))
-        {
-            BadRequest("Notification user id is required");
+            _notificationService = notificationService;
         }
 
-        var insertResult = await _notificationService.CreateNotificationAsync(notification);
-        if (!insertResult.IsSuccess)
+        [HttpGet("{userId}")]
+        public async Task<IActionResult> GetUserNotifications(string userId)
         {
-            return BadRequest(insertResult.ErrorMessage);
+            var notifications = await _notificationService.GetUserNotificationsAsync(userId);
+            return Ok(notifications);
         }
-        return Ok($"Notificiation {insertResult.Data.InsertedId} created successfully.");
-    }
 
-    [HttpPost("read/{notificationId}")]
-    public async Task<IActionResult> MarkAsRead(string notificationId)
-    {
-        if (string.IsNullOrEmpty(notificationId))
+        [HttpPost("create")]
+        public async Task<IActionResult> CreateNotification([FromBody] NotificationData notification)
         {
-            BadRequest("Notification id is required");
+            if (notification == null)
+            {
+                BadRequest("Notification data is required");
+            }
+            if (string.IsNullOrEmpty(notification.Message))
+            {
+                BadRequest("Notification message is required");
+            }
+            if (string.IsNullOrEmpty(notification.UserId))
+            {
+                BadRequest("Notification user id is required");
+            }
+
+            var insertResult = await _notificationService.CreateNotificationAsync(notification);
+            if (!insertResult.IsSuccess)
+            {
+                return BadRequest(insertResult.ErrorMessage);
+            }
+            return Ok($"Notificiation {insertResult.Data.InsertedId} created successfully.");
         }
-        var notificationGuid = Guid.Parse(notificationId);
-        if (notificationGuid == Guid.Empty)
+
+        [HttpPost("read/{notificationId}")]
+        public async Task<IActionResult> MarkAsRead(string notificationId)
         {
-            BadRequest("Invalid notification id.");
+            if (string.IsNullOrEmpty(notificationId))
+            {
+                BadRequest("Notification id is required");
+            }
+            var notificationGuid = Guid.Parse(notificationId);
+            if (notificationGuid == Guid.Empty)
+            {
+                BadRequest("Invalid notification id.");
+            }
+            var markAsReadResult = await _notificationService.MarkAsReadAsync(notificationGuid);
+            if (!markAsReadResult.IsSuccess)
+            {
+                return BadRequest(markAsReadResult.ErrorMessage);
+            }
+            return Ok("Notification successfully marked as read.");
         }
-        var markAsReadResult = await _notificationService.MarkAsReadAsync(notificationGuid);
-        if (!markAsReadResult.IsSuccess)
-        {
-            return BadRequest(markAsReadResult.ErrorMessage);
-        }
-        return Ok("Notification successfully marked as read.");
     }
 }

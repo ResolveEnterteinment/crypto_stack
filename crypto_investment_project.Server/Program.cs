@@ -3,9 +3,12 @@ using crypto_investment_project.Server.Helpers;
 using Domain.DTOs;
 using Infrastructure.Hubs;
 using Infrastructure.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer; // Add this
+using Microsoft.IdentityModel.Tokens; // Add this
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
+using System.Text; // Add this
 
 // Register a global serializer to ensure GUIDs are stored using the Standard representation.
 BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
@@ -21,6 +24,7 @@ builder.Services.Configure<BinanceSettings>(builder.Configuration.GetSection("Bi
 builder.Services.Configure<StripeSettings>(builder.Configuration.GetSection("Stripe"));
 builder.Services.Configure<ExchangeSettings>(builder.Configuration.GetSection("Exchange"));
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
+
 // Fetch allowed origins from user secrets
 var allowedOrigins = builder.Configuration["AllowedOrigins"]?
     .Split(';', StringSplitOptions.RemoveEmptyEntries) ?? Array.Empty<string>();
@@ -41,27 +45,58 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(allowedOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod()
-              .AllowCredentials(); // Allow credentials for WebSockets;
+              .AllowCredentials(); // Allow credentials for WebSockets
     });
 });
-
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// -------------------------------------------------------------------
-// Register additional dependencies required by your services:
-// -------------------------------------------------------------------
-// 1. Data Protection (required for token providers).
+// Add JWT Authentication
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]))
+        };
+
+        // Handle SignalR token from query string
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs/notificationHub"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            },
+            OnAuthenticationFailed = context =>
+            {
+                Console.WriteLine($"Authentication failed: {context.Exception.Message}");
+                return Task.CompletedTask;
+            },
+            OnTokenValidated = context =>
+            {
+                Console.WriteLine("JWT Token validated successfully");
+                return Task.CompletedTask;
+            }
+        };
+    });
+
+// Register additional dependencies
 builder.Services.AddDataProtection();
-
-//    This satisfies the dependency for security stamp validation.
 builder.Services.AddSingleton<System.TimeProvider>(System.TimeProvider.System);
-
-// 1. Register HttpClient (so that System.Net.Http.HttpClient can be injected).
 builder.Services.AddHttpClient();
-
-// 3. Register your custom services.
 builder.Services.AddSingleton<IPaymentService, PaymentService>();
 builder.Services.AddSingleton<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<IExchangeService, ExchangeService>();
@@ -78,6 +113,7 @@ builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Event
 
 var app = builder.Build();
 
+Console.WriteLine($"Jwt:Key  =>  {builder.Configuration["Jwt:Key"]}");
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -89,11 +125,12 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("AllowSpecifiedOrigins");
+app.UseAuthentication();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 
 app.MapControllers();
 app.MapFallbackToFile("/index.html");
-app.MapHub<NotificationHub>("/notificationHub"); // <-- Register the SignalR Hub
+app.MapHub<NotificationHub>("/hubs/notificationHub");
 
 app.Run();
