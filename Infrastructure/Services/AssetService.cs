@@ -1,5 +1,4 @@
 ﻿using Application.Interfaces;
-using Domain.Constants;
 using Domain.DTOs;
 using Domain.Models.Crypto;
 using Microsoft.Extensions.Logging;
@@ -67,7 +66,7 @@ namespace Infrastructure.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unable to fetch crypto for symbol: {Symbol}", symbol);
-                return ResultWrapper<AssetData>.Failure(FailureReason.From(ex), ex.Message);
+                return ResultWrapper<AssetData>.FromException(ex);
             }
         }
 
@@ -99,7 +98,7 @@ namespace Infrastructure.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unable to fetch crypto for symbol: {Symbol}", ticker);
-                return ResultWrapper<AssetData>.Failure(FailureReason.From(ex), ex.Message);
+                return ResultWrapper<AssetData>.FromException(ex);
             }
         }
 
@@ -122,7 +121,7 @@ namespace Infrastructure.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unable to fetch supported assets");
-                return ResultWrapper<IEnumerable<string>>.Failure(FailureReason.From(ex), ex.Message);
+                return ResultWrapper<IEnumerable<string>>.FromException(ex);
             }
         }
     }

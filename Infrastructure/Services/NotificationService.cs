@@ -1,5 +1,4 @@
 ﻿using Application.Interfaces;
-using Domain.Constants;
 using Domain.DTOs;
 using Infrastructure.Hubs;
 using Infrastructure.Services;
@@ -126,7 +125,7 @@ public class NotificationService : BaseService<NotificationData>, INotificationS
         }
         catch (Exception ex)
         {
-            return ResultWrapper<InsertResult>.Failure(FailureReason.From(ex), ex.Message);
+            return ResultWrapper<InsertResult>.FromException(ex);
         }
     }
 
@@ -145,7 +144,7 @@ public class NotificationService : BaseService<NotificationData>, INotificationS
         }
         catch (Exception ex)
         {
-            return ResultWrapper<UpdateResult>.Failure(FailureReason.From(ex), ex.Message);
+            return ResultWrapper<UpdateResult>.FromException(ex);
         }
     }
 }

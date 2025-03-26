@@ -1,11 +1,12 @@
 ﻿using Domain.DTOs;
-using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace Domain.Interfaces
 {
     public interface IRepository<T> where T : class
     {
+        public string CollectionName { get; }
+        public IMongoCollection<T> Collection { get; }
         Task<T> GetByIdAsync(Guid id);
         Task<T> GetOneAsync(FilterDefinition<T> filter);
         Task<List<T>> GetAllAsync(FilterDefinition<T> filter = null);

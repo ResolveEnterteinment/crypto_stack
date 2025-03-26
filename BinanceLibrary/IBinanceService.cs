@@ -1,5 +1,6 @@
 ﻿using Binance.Net.Objects.Models.Spot;
 using Domain.DTOs;
+using Domain.DTOs.Exchange;
 
 namespace BinanceLibrary
 {

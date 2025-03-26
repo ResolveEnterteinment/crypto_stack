@@ -5,6 +5,5 @@ namespace StripeLibrary
     public interface IStripeService
     {
         public Task<PaymentIntent> GetPaymentIntentAsync(string id, PaymentIntentGetOptions? options = null);
-        public Task<decimal> GetStripeFeeAsync(string paymentIntentId);
     }
 }

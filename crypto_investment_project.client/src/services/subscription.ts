@@ -1,13 +1,21 @@
 ﻿import api from "./api";
 
+export interface IAllocation {
+    id: string;
+    ticker: string;
+    percentAmount: number;
+}
 export interface ISubscription {
     id: string;
     createdAt: string;
     userId: string;
-    allocations: [{}];
+    allocations: IAllocation[];
     interval: string;
     amount: number;
+    currency: string;
+    nextDueDate: Date;
     endDate: Date;
+    totalInvestments: number;
     isCancelled: boolean;
     isRead: boolean;
 }

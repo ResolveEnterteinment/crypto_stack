@@ -23,8 +23,17 @@ namespace Infrastructure.Services
 
         public Task Publish(BaseEvent eventType)
         {
-            _logger.LogInformation($"Publishing {eventType.GetType().Name} event with id {eventType.EventId}");
-            return _mediator.Publish(eventType);
+            try
+            {
+                _logger.LogInformation($"Publishing {eventType.GetType().Name} event with id {eventType.EventId}");
+                return _mediator.Publish(eventType);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Failed to publish event: {eventType.EventId}: {ex.Message}");
+                return Task.CompletedTask;
+            }
+
         }
     }
 }

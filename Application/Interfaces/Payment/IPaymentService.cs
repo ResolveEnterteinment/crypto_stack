@@ -2,14 +2,13 @@
 using Domain.DTOs;
 using Domain.Interfaces;
 using Domain.Models.Payment;
-using MongoDB.Bson;
 
-namespace Application.Interfaces
+namespace Application.Interfaces.Payment
 {
     public interface IPaymentService : IRepository<PaymentData>
     {
+        public Dictionary<string, IPaymentProvider> Providers { get; }
         public Task<ResultWrapper<Guid>> ProcessChargeUpdatedEventAsync(ChargeRequest charge);
         public Task<ResultWrapper<Guid>> ProcessPaymentIntentSucceededEvent(PaymentIntentRequest request);
-        public Task<decimal> GetFeeAsync(string paymentId);
     }
 }

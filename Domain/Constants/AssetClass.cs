@@ -5,5 +5,10 @@
         public const string Fiat = "FIAT"; //USD, EUR, TRY etc.
         public const string Stablecoin = "STABLECOIN"; //USDT, USDC, EURT etc.
         public const string Crypto = "CRYPTO"; //BTC, ETH, LINK etc.
+
+        public static readonly List<string> AllValues = new List<string>()
+        {
+            Fiat, Stablecoin, Crypto
+        };
     }
 }

@@ -1,6 +1,12 @@
 using Application.Contracts.Requests.Subscription;
 using Application.Interfaces;
+using Application.Validation;
+using Domain.Exceptions;
+using FluentValidation;
+using Infrastructure.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Diagnostics;
 
 namespace crypto_investment_project.Server.Controllers
 {
@@ -9,137 +15,241 @@ namespace crypto_investment_project.Server.Controllers
     public class SubscriptionController : ControllerBase
     {
         private readonly ISubscriptionService _subscriptionService;
+        private readonly IValidator<SubscriptionCreateRequest> _createValidator;
+        private readonly IValidator<SubscriptionUpdateRequest> _updateValidator;
+        private readonly ILogger<SubscriptionController> _logger;
+        private readonly IIdempotencyService _idempotencyService;
 
-        public SubscriptionController(ISubscriptionService subscriptionService)
+        public SubscriptionController(
+            ISubscriptionService subscriptionService,
+            IValidator<SubscriptionCreateRequest> createValidator,
+            IValidator<SubscriptionUpdateRequest> updateValidator,
+            IIdempotencyService idempotencyService,
+            ILogger<SubscriptionController> logger)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
+            _createValidator = createValidator ?? throw new ArgumentNullException(nameof(createValidator));
+            _updateValidator = updateValidator ?? throw new ArgumentNullException(nameof(updateValidator));
+            _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         [HttpPost]
         [Route("user/{user}")]
-        //[Authorize]
+        [Authorize]
         public async Task<IActionResult> GetByUser(string user)
         {
-            #region Validation
-            if (string.IsNullOrEmpty(user) || !Guid.TryParse(user, out Guid userId) || userId == Guid.Empty)
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                return ValidationProblem("A valid user id is required.");
-            }
-            #endregion
-
-            var subscriptionsResult = await _subscriptionService.GetAllByUserIdAsync(userId);
-
-            if (!subscriptionsResult.IsSuccess)
+                ["UserId"] = user,
+                ["Operation"] = "GetSubscriptionsByUser",
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
             {
-                return BadRequest(subscriptionsResult.ErrorMessage);
+                try
+                {
+                    if (string.IsNullOrEmpty(user) || !Guid.TryParse(user, out Guid userId) || userId == Guid.Empty)
+                    {
+                        throw new Domain.Exceptions.ValidationException("Invalid user ID", new Dictionary<string, string[]>
+                        {
+                            ["UserId"] = new[] { "A valid user ID is required." }
+                        });
+                    }
+
+                    var subscriptionsResult = await _subscriptionService.GetAllByUserIdAsync(userId);
+
+                    if (!subscriptionsResult.IsSuccess)
+                    {
+                        throw new DatabaseException(subscriptionsResult.ErrorMessage);
+                    }
+
+                    return Ok(subscriptionsResult.Data);
+                }
+                catch (Exception ex)
+                {
+                    // The global exception handler middleware will handle this
+                    _logger.LogError(ex, "Error retrieving subscriptions for user {UserId}", user);
+                    throw;
+                }
             }
-            return Ok(subscriptionsResult.Data);
         }
 
         [HttpPost]
         [Route("new")]
-        public async Task<IActionResult> New([FromBody] SubscriptionCreateRequest subscriptionRequest)
+        [Authorize]
+        public async Task<IActionResult> New([FromBody] SubscriptionCreateRequest subscriptionRequest,
+                                            [FromHeader(Name = "X-Idempotency-Key")] string idempotencyKey)
         {
-            #region Validation
-            if (subscriptionRequest == null)
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                return ValidationProblem("A valid subscription request is required.");
-            }
+                ["UserId"] = subscriptionRequest?.UserId,
+                ["Operation"] = "CreateSubscription",
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                ["IdempotencyKey"] = idempotencyKey
+            }))
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(idempotencyKey))
+                    {
+                        throw new Domain.Exceptions.ValidationException("Missing idempotency key", new Dictionary<string, string[]>
+                        {
+                            ["X-Idempotency-Key"] = new[] { "Idempotency key is required for subscription creation." }
+                        });
+                    }
 
-            // Validate request
-            if (string.IsNullOrWhiteSpace(subscriptionRequest.UserId) || !Guid.TryParse(subscriptionRequest.UserId, out _))
-            {
-                return BadRequest("UserId must be a valid Guid.");
-            }
+                    // Check for existing operation with this idempotency key
+                    if (await _idempotencyService.HasKeyAsync(idempotencyKey))
+                    {
+                        var existingResult = await _idempotencyService.GetResultAsync<Guid>(idempotencyKey);
+                        return Ok($"Subscription #{existingResult} successfully created (from previous request).");
+                    }
 
-            if (subscriptionRequest.Allocations == null || !subscriptionRequest.Allocations.Any())
-            {
-                return BadRequest("Allocations must contain at least one item.");
-            }
+                    // Validate the request
+                    await _createValidator.ValidateAndThrowAsync(subscriptionRequest);
 
-            var invalidAllocation = subscriptionRequest.Allocations.FirstOrDefault(a =>
-                string.IsNullOrWhiteSpace(a.AssetId) || !Guid.TryParse(a.AssetId, out _) || a.PercentAmount > 100);
-            if (invalidAllocation != null)
-            {
-                return BadRequest($"Invalid allocation: AssetId must be a valid Guid and PercentAmount must be 0-100. Found AssetId: {invalidAllocation.AssetId}, PercentAmount: {invalidAllocation.PercentAmount}");
-            }
+                    // Process the request
+                    var subscriptionResult = await _subscriptionService.Create(subscriptionRequest);
 
-            var allocationSum = subscriptionRequest.Allocations.ToList().Select(a => (int)a.PercentAmount).Sum();
-            if (allocationSum != 100)
-            {
-                return BadRequest("Invalid sum of asset allocations. Allocation percent amounts total must be 100.");
-            }
+                    if (!subscriptionResult.IsSuccess)
+                    {
+                        throw new DomainException(subscriptionResult.ErrorMessage, "SUBSCRIPTION_CREATION_FAILED");
+                    }
 
-            if (string.IsNullOrWhiteSpace(subscriptionRequest.Interval))
-            {
-                return BadRequest("Interval is required.");
-            }
+                    // Store the result for idempotency
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, subscriptionResult.Data);
 
-            if (subscriptionRequest.Amount <= 0)
-            {
-                return BadRequest("Amount must be greater than zero.");
-            }
-            #endregion
-
-            var subscriptionResult = await _subscriptionService.ProcessSubscriptionCreateRequest(subscriptionRequest);
-
-            if (subscriptionResult.IsSuccess)
-            {
-                return Ok($"Subscription #{subscriptionResult.Data} successfully created.");
-            }
-            else
-            {
-                return BadRequest(subscriptionResult.ErrorMessage);
+                    return Ok($"Subscription #{subscriptionResult.Data} successfully created.");
+                }
+                catch (Exception ex)
+                {
+                    // The global exception handler middleware will handle this
+                    _logger.LogError(ex, "Error creating subscription for user {UserId}", subscriptionRequest?.UserId);
+                    throw;
+                }
             }
         }
+
         [HttpPost]
         [Route("update/{id}")]
-        public async Task<IActionResult> Update([FromBody] SubscriptionUpdateRequest updateRequest, string id)
+        [Authorize]
+        public async Task<IActionResult> Update([FromBody] SubscriptionUpdateRequest updateRequest, string id,
+                                               [FromHeader(Name = "X-Idempotency-Key")] string idempotencyKey)
         {
-            #region Validation
-            if (!Guid.TryParse(id, out var subscriptionId))
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                return ValidationProblem("A valid subscription id is required.");
-            }
-            if (updateRequest == null)
+                ["SubscriptionId"] = id,
+                ["Operation"] = "UpdateSubscription",
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                ["IdempotencyKey"] = idempotencyKey
+            }))
             {
-                return ValidationProblem("A valid update request is required.");
-            }
-
-            if (updateRequest.Allocations != null)
-            {
-                if (!updateRequest.Allocations.Any())
+                try
                 {
-                    return BadRequest("Allocations must contain at least one asset.");
+                    if (!Guid.TryParse(id, out var subscriptionId))
+                    {
+                        throw new Domain.Exceptions.ValidationException("Invalid subscription ID", new Dictionary<string, string[]>
+                        {
+                            ["SubscriptionId"] = new[] { "A valid subscription ID is required." }
+                        });
+                    }
+
+                    if (string.IsNullOrEmpty(idempotencyKey))
+                    {
+                        throw new Domain.Exceptions.ValidationException("Missing idempotency key", new Dictionary<string, string[]>
+                        {
+                            ["X-Idempotency-Key"] = new[] { "Idempotency key is required for subscription updates." }
+                        });
+                    }
+
+                    // Check for existing operation with this idempotency key
+                    if (await _idempotencyService.HasKeyAsync(idempotencyKey))
+                    {
+                        var existingResult = await _idempotencyService.GetResultAsync<long>(idempotencyKey);
+                        return Ok($"Subscription #{id} updated successfully (from previous request).");
+                    }
+
+                    // Validate the request
+                    await _updateValidator.ValidateAndThrowAsync(updateRequest);
+
+                    // Process the request
+                    var subscriptionUpdateResult = await _subscriptionService.Update(subscriptionId, updateRequest);
+
+                    if (!subscriptionUpdateResult.IsSuccess)
+                    {
+                        throw new DomainException(subscriptionUpdateResult.ErrorMessage, "SUBSCRIPTION_UPDATE_FAILED");
+                    }
+
+                    // Store the result for idempotency
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, subscriptionUpdateResult.Data);
+
+                    return Ok($"Subscription #{subscriptionUpdateResult.Data} updated successfully.");
                 }
-                var invalidAllocation = updateRequest.Allocations.FirstOrDefault(a =>
-                    string.IsNullOrWhiteSpace(a.AssetId) || !Guid.TryParse(a.AssetId, out _) || a.PercentAmount > 100);
-                if (invalidAllocation != null)
+                catch (Exception ex)
                 {
-                    return BadRequest($"Invalid allocation: AssetId must be a valid Guid and PercentAmount must be 0-100. Found AssetId: {invalidAllocation.AssetId}, PercentAmount: {invalidAllocation.PercentAmount}");
+                    // The global exception handler middleware will handle this
+                    _logger.LogError(ex, "Error updating subscription {SubscriptionId}", id);
+                    throw;
                 }
+            }
+        }
 
-                var allocationSum = updateRequest.Allocations.Select(a => (int)a.PercentAmount).Sum();
-                if (allocationSum != 100)
+        [HttpPost]
+        [Route("cancel/{id}")]
+        [Authorize]
+        public async Task<IActionResult> Cancel(string id, [FromHeader(Name = "X-Idempotency-Key")] string idempotencyKey)
+        {
+            using (_logger.BeginScope(new Dictionary<string, object>
+            {
+                ["SubscriptionId"] = id,
+                ["Operation"] = "CancelSubscription",
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                ["IdempotencyKey"] = idempotencyKey
+            }))
+            {
+                try
                 {
-                    return BadRequest("Invalid sum of asset allocations. Allocation percent amounts total must be 100.");
+                    if (!Guid.TryParse(id, out var subscriptionId))
+                    {
+                        throw new Domain.Exceptions.ValidationException("Invalid subscription ID", new Dictionary<string, string[]>
+                        {
+                            ["SubscriptionId"] = new[] { "A valid subscription ID is required." }
+                        });
+                    }
+
+                    if (string.IsNullOrEmpty(idempotencyKey))
+                    {
+                        throw new Domain.Exceptions.ValidationException("Missing idempotency key", new Dictionary<string, string[]>
+                        {
+                            ["X-Idempotency-Key"] = new[] { "Idempotency key is required for subscription cancellation." }
+                        });
+                    }
+
+                    // Check for existing operation with this idempotency key
+                    if (await _idempotencyService.HasKeyAsync(idempotencyKey))
+                    {
+                        return Ok($"Subscription #{id} has been cancelled (from previous request).");
+                    }
+
+                    // Process the request
+                    var result = await _subscriptionService.CancelAsync(subscriptionId);
+
+                    if (!result.IsAcknowledged)
+                    {
+                        throw new DatabaseException($"Failed to cancel subscription {id}");
+                    }
+
+                    // Store the result for idempotency
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, true);
+
+                    return Ok($"Subscription #{id} has been cancelled.");
                 }
-            }
-
-            if (updateRequest.Amount != null && updateRequest.Amount <= 0)
-            {
-                return BadRequest("Amount must be greater than zero.");
-            }
-            #endregion
-            var subscriptionUpdateResult = await _subscriptionService.ProcessSubscriptionUpdateRequest(subscriptionId, updateRequest);
-
-            if (subscriptionUpdateResult.IsSuccess)
-            {
-                return Ok($"Subscription #{subscriptionUpdateResult.Data} updated successfully.");
-            }
-            else
-            {
-                return BadRequest(subscriptionUpdateResult.ErrorMessage);
+                catch (Exception ex)
+                {
+                    // The global exception handler middleware will handle this
+                    _logger.LogError(ex, "Error cancelling subscription {SubscriptionId}", id);
+                    throw;
+                }
             }
         }
     }

@@ -1,22 +1,29 @@
 ﻿using Application.Contracts.Requests.Subscription;
 using Application.Interfaces;
+using Application.Interfaces.Payment;
 using Domain.Constants;
 using Domain.DTOs;
+using Domain.Events;
 using Domain.Models.Subscription;
+using MediatR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services
 {
-    public class SubscriptionService : BaseService<SubscriptionData>, ISubscriptionService
+    public class SubscriptionService :
+        BaseService<SubscriptionData>,
+        ISubscriptionService,
+        INotificationHandler<SubscriptionCreatedEvent>,
+        INotificationHandler<PaymentReceivedEvent>
     {
-        private readonly IBalanceService _balanceService;
+        private readonly IPaymentService _paymentService;
         private readonly IAssetService _assetService;
         private readonly INotificationService _notificationService;
 
         public SubscriptionService(
-            IBalanceService balanceService,
+            IPaymentService paymentService,
             IAssetService assetService,
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
@@ -25,12 +32,12 @@ namespace Infrastructure.Services
             )
             : base(mongoClient, mongoDbSettings, "subscriptions", logger)
         {
-            _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
+            _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(_assetService));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(_notificationService));
         }
 
-        public async Task<ResultWrapper<Guid>> ProcessSubscriptionCreateRequest(SubscriptionCreateRequest request)
+        public async Task<ResultWrapper<Guid>> Create(SubscriptionCreateRequest request)
         {
             try
             {
@@ -74,25 +81,27 @@ namespace Infrastructure.Services
                 }
                 #endregion Validate
 
-                List<AllocationData> allocations = request.Allocations.Select<AllocationRequest, AllocationData>(a => new AllocationData()
+                List<AllocationData> allocations = [];
+                foreach (var alloc in request.Allocations)
                 {
-                    AssetId = Guid.Parse(a.AssetId),
-                    AssetTicker = "",
-                    PercentAmount = a.PercentAmount,
-                }).ToList();
-
-                allocations.ForEach(async a =>
-                {
-                    var asset = await _assetService.GetByIdAsync(a.AssetId);
-                    a.AssetTicker = asset.Ticker;
-                });
+                    var asset = await _assetService.GetByIdAsync(Guid.Parse(alloc.AssetId));
+                    allocations.Add(new()
+                    {
+                        AssetId = Guid.Parse(alloc.AssetId),
+                        Ticker = asset.Ticker,
+                        PercentAmount = alloc.PercentAmount,
+                    });
+                };
 
                 var subscriptionData = new SubscriptionData
                 {
+                    Provider = request.Provider,
                     UserId = userId,
                     Allocations = allocations,
                     Interval = request.Interval,
                     Amount = request.Amount,
+                    Currency = request.Currency,
+                    NextDueDate = DateTime.UtcNow,
                     EndDate = request.EndDate,
                     IsCancelled = request.IsCancelled
                 };
@@ -120,96 +129,88 @@ namespace Infrastructure.Services
             catch (Exception ex)
             {
                 _logger.LogError($"Failed to process subscription request: {ex.Message}");
-                return ResultWrapper<Guid>.Failure(FailureReason.From(ex), ex.Message);
+                return ResultWrapper<Guid>.FromException(ex);
             }
         }
-        public async Task<ResultWrapper<long>> ProcessSubscriptionUpdateRequest(Guid id, SubscriptionUpdateRequest request)
+        public async Task<ResultWrapper<long>> Update(Guid id, SubscriptionUpdateRequest request)
         {
+            // Validate request
+            #region Validate
+            if (request == null)
+            {
+                throw new ArgumentNullException("Subscription update request cannot be null.");
+            }
+
+            if (request.Allocations != null)
+            {
+                if (request.Allocations.Count() == 0)
+                {
+                    throw new ArgumentException("Asset allocation can not be empty.");
+                }
+
+                foreach (var alloc in request.Allocations)
+                {
+                    if (string.IsNullOrWhiteSpace(alloc.AssetId) || !Guid.TryParse(alloc.AssetId, out _))
+                    {
+                        throw new ArgumentException($"Invalid AssetId: {alloc.AssetId}");
+                    }
+                    if (alloc.PercentAmount <= 0 || alloc.PercentAmount > 100)
+                    {
+                        throw new ArgumentOutOfRangeException($"PercentAmount must be between 0 and 100. Found: {alloc.PercentAmount}");
+                    }
+                }
+                var percentTotal = request.Allocations.Select(a => (int)a.PercentAmount).Sum();
+                if (percentTotal > 100)
+                {
+                    throw new ArgumentOutOfRangeException($"allocations percent total can not exceed 100. Found: {percentTotal}");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.Interval) && !SubscriptionInterval.AllValues.Contains(request.Interval))
+            {
+                throw new ArgumentException($"Invalid interval. Interval must be of of {SubscriptionInterval.AllValues} Found: {request.Interval}");
+            }
+
+            if (request.Amount != null && request.Amount <= 0)
+            {
+                throw new ArgumentOutOfRangeException("Amount must be greater than zero.");
+            }
+
+            if (request.EndDate != null && request.EndDate <= DateTime.UtcNow)
+            {
+                throw new ArgumentOutOfRangeException("Invalid end date. End date can not before today's date.");
+            }
+            #endregion Validate
+
             try
             {
-                // Validate request
-                #region Validate
-                if (id == Guid.Empty)
-                {
-                    throw new ArgumentNullException("Subscription id cannot be null.");
-                }
-                if (request == null)
-                {
-                    throw new ArgumentNullException("Subscription update request cannot be null.");
-                }
-
-                if (request.Allocations != null && !request.Allocations.Any())
-                {
-                    throw new ArgumentException("At least one allocation is required.");
-                }
-                if (request.Allocations != null && request.Allocations.Any())
-                {
-                    foreach (var alloc in request.Allocations)
-                    {
-                        if (string.IsNullOrWhiteSpace(alloc.AssetId) || !Guid.TryParse(alloc.AssetId, out _))
-                        {
-                            throw new ArgumentException($"Invalid AssetId: {alloc.AssetId}");
-                        }
-                        if (alloc.PercentAmount > 100)
-                        {
-                            throw new ArgumentOutOfRangeException($"PercentAmount must be between 0 and 100. Found: {alloc.PercentAmount}");
-                        }
-                    }
-                }
-                if (!String.IsNullOrEmpty(request.Interval))
-                {
-                    Type type = typeof(SubscriptionInterval);
-
-                    if (!SubscriptionInterval.AllValues.Contains(request.Interval))
-                    {
-                        throw new ArgumentException($"Invalid interval. Must one of {String.Join(", ", SubscriptionInterval.AllValues)}. Found:  {request.Interval}");
-                    }
-
-                }
-
-                if (request.Amount != null && request.Amount <= 0)
-                {
-                    throw new ArgumentOutOfRangeException("Amount must be greater than zero.");
-                }
-                #endregion Validate
-
                 var updateFields = new Dictionary<string, object>();
-                List<AllocationData> allocations = new List<AllocationData>();
-                if (request.Allocations != null && request.Allocations.Any())
+
+                var requestFields = request
+                    .GetType()
+                    .GetProperties()
+                    .ToDictionary(property => property.Name, property => property.GetValue(request));
+
+                foreach (var field in requestFields)
                 {
-                    foreach (var allocation in request.Allocations)
+                    if (field.Value != null)
                     {
-                        var assetData = await _assetService.GetByIdAsync(Guid.Parse(allocation.AssetId));
-                        allocations.Add(new()
-                        {
-                            AssetId = Guid.Parse(allocation.AssetId),
-                            AssetTicker = assetData.Ticker,
-                            PercentAmount = allocation.PercentAmount,
-                        });
+                        updateFields[field.Key] = field.Value;
                     }
                 }
 
-                if (allocations is not null && allocations.Any()) updateFields["Allocations"] = allocations;
-                if (request.Interval is not null) updateFields["Interval"] = request.Interval;
-                if (request.Amount is not null) updateFields["Amount"] = request.Amount;
-                if (request.EndDate is not null) updateFields["EndDate"] = request.EndDate;
-
-                var updateResult = await UpdateOneAsync(id, updateFields);
-                if (!updateResult.IsAcknowledged)
+                var updateResult = await UpdateOneAsync(id, requestFields);
+                if (updateResult == null || !updateResult.IsAcknowledged)
                 {
-                    throw new MongoException("Failed to update subscription data.");
+                    throw new MongoException($"Failed to update subscription {id}");
                 }
-
-                _logger.LogInformation($"Successfully updated subscription record: {updateResult.ModifiedCount}");
                 return ResultWrapper<long>.Success(updateResult.ModifiedCount);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Failed to process subscription request: {ex.Message}");
-                return ResultWrapper<long>.Failure(FailureReason.From(ex), ex.Message);
+                return ResultWrapper<long>.FromException(ex);
             }
         }
-
         public async Task<ResultWrapper<IReadOnlyCollection<AllocationData>>> GetAllocationsAsync(Guid subscriptionId)
         {
             try
@@ -221,14 +222,14 @@ namespace Infrastructure.Services
                 }
                 if (subscription.Allocations == null || !subscription.Allocations.Any())
                 {
-                    throw new ArgumentException($"Coin allocation fetch error. No allocation(s) found for subscription #{subscriptionId}.");
+                    throw new ArgumentException($"Asset allocation fetch error. No allocation(s) found for subscription #{subscriptionId}.");
                 }
                 return ResultWrapper<IReadOnlyCollection<AllocationData>>.Success(subscription.Allocations.ToList().AsReadOnly());
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Fetch subscription failed: {Message}", ex.Message);
-                return ResultWrapper<IReadOnlyCollection<AllocationData>>.Failure(FailureReason.From(ex), ex.Message);
+                return ResultWrapper<IReadOnlyCollection<AllocationData>>.FromException(ex);
             }
         }
         public async Task<ResultWrapper<IEnumerable<SubscriptionData>>> GetAllByUserIdAsync(Guid userId)
@@ -241,7 +242,7 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                return ResultWrapper<IEnumerable<SubscriptionData>>.Failure(FailureReason.From(ex), ex.Message);
+                return ResultWrapper<IEnumerable<SubscriptionData>>.FromException(ex);
             }
 
         }
@@ -249,6 +250,37 @@ namespace Infrastructure.Services
         {
             var updatedFields = new { IsCancelled = true };
             return await UpdateOneAsync(subscriptionId, updatedFields);
+        }
+        public async Task Handle(SubscriptionCreatedEvent notification, CancellationToken cancellationToken)
+        {
+            var subscription = notification.Subscription.Data as Stripe.Subscription;
+            var subscriptionId = subscription.Metadata["subscriptionId"];
+
+            await UpdateOneAsync(Guid.Parse(subscriptionId), new
+            {
+                PaymentProviderSubscriptionId = subscription.Id,
+                NextDueDate = subscription.CurrentPeriodEnd,
+            });
+        }
+
+        public async Task Handle(PaymentReceivedEvent notification, CancellationToken cancellationToken)
+        {
+            var payment = notification.Payment;
+            var subscriptionId = payment.SubscriptionId;
+            var subscription = await GetByIdAsync(subscriptionId);
+
+            var invenstmentQuantity = payment.NetAmount;
+            var totalInvestments = subscription.TotalInvestments;
+            var newQuantity = totalInvestments + invenstmentQuantity;
+
+            var providerSubscription = await _paymentService.Providers[payment.Provider].GetSubscriptionAsync(subscription.ProviderSubscriptionId);
+            var nextDueDate = providerSubscription.NextDueDate;
+
+            await UpdateOneAsync(subscriptionId, new
+            {
+                NextDueDate = nextDueDate,
+                TotalInvestments = newQuantity,
+            });
         }
     }
 }

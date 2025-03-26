@@ -1,16 +1,23 @@
-﻿using Binance.Net;
+﻿using Application.Interfaces.Exchange;
+using Binance.Net;
 using Binance.Net.Clients;
 using Binance.Net.Objects.Models.Spot;
 using CryptoExchange.Net.Authentication;
 using Domain.Constants;
 using Domain.DTOs;
+using Domain.DTOs.Exchange;
+using Domain.Exceptions;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace BinanceLibrary
 {
-    public class BinanceService : IBinanceService
+    public class BinanceService : IExchange
     {
+        private string _reserveAssetTicker;
+        public string Name { get => "BINANCE"; }
+
+        public string ReserveAssetTicker { get => _reserveAssetTicker; set => throw new NotImplementedException(); }
+
         private readonly BinanceRestClient _binanceClient;
         private string? MapBinanceStatus(Binance.Net.Enums.OrderStatus status) => status switch
         {
@@ -22,12 +29,13 @@ namespace BinanceLibrary
         };
 
         protected readonly ILogger _logger;
-        public BinanceService(IOptions<BinanceSettings> binanceSettings, ILogger logger)
+        public BinanceService(ExchangeSettings binanceSettings, ILogger logger)
         {
             // Replace these with your Binance API credentials
-            string apiKey = binanceSettings.Value.ApiKey;
-            string apiSecret = binanceSettings.Value.ApiSecret;
-            bool isTestnet = binanceSettings.Value.IsTestnet;
+            string apiKey = binanceSettings.ApiKey;
+            string apiSecret = binanceSettings.ApiSecret;
+            bool isTestnet = binanceSettings.IsTestnet;
+            _reserveAssetTicker = binanceSettings.ReserveStableAssetTicker;
             _logger = logger;
 
             _binanceClient = new BinanceRestClient(options =>
@@ -120,7 +128,7 @@ namespace BinanceLibrary
                 throw;
             }
         }
-        public async Task<ResultWrapper<IEnumerable<BinanceBalance>>> GetBalancesAsync(IEnumerable<string>? tickers = null)
+        public async Task<ResultWrapper<IEnumerable<ExchangeBalance>>> GetBalancesAsync(IEnumerable<string>? tickers = null)
         {
             try
             {
@@ -140,27 +148,57 @@ namespace BinanceLibrary
                     balances = balances.Where(b => tickers.Contains(b.Asset));
                 }
 
-                var result = balances.ToList();
-                _logger.LogInformation("Successfully retrieved {Count} balance(s) from Binance", result.Count);
-                return ResultWrapper<IEnumerable<BinanceBalance>>.Success(result);
+                var result = balances.ToList().Select(b => new ExchangeBalance()
+                {
+                    Available = b.Available,
+                    Locked = b.Locked,
+                });
+                _logger.LogInformation($"Successfully retrieved {result.ToList().Count} balance(s) from Binance");
+                return ResultWrapper<IEnumerable<ExchangeBalance>>.Success(result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving exchange balances: {Message}", ex.Message);
-                return ResultWrapper<IEnumerable<BinanceBalance>>.Failure(FailureReason.ExchangeApiError, $"Failed to retrieve exchange balances: {ex.Message}");
+                return ResultWrapper<IEnumerable<ExchangeBalance>>.Failure(FailureReason.ExchangeApiError, $"Failed to retrieve exchange balances: {ex.Message}");
             }
         }
-        public async Task<ResultWrapper<BinanceBalance>> GetBalanceAsync(string symbol)
+        public async Task<ResultWrapper<ExchangeBalance>> GetBalanceAsync(string symbol)
         {
             //throw new NotImplementedException();
             var balanceResult = await GetBalancesAsync(new List<string>().Append(symbol));
             if (!balanceResult.IsSuccess)
             {
-                return ResultWrapper<BinanceBalance>.Failure(balanceResult.FailureReason, balanceResult.ErrorMessage);
+                return ResultWrapper<ExchangeBalance>.Failure(balanceResult.Reason, balanceResult.ErrorMessage);
             }
             var balance = balanceResult.Data.FirstOrDefault();
             _logger.LogInformation($"{symbol} balance: from Binance: {balance}");
-            return ResultWrapper<BinanceBalance>.Success(balance);
+            return ResultWrapper<ExchangeBalance>.Success(new ExchangeBalance()
+            {
+                Available = balance.Available,
+                Locked = balance.Locked,
+            });
+        }
+        public async Task<ResultWrapper<bool>> CheckBalanceHasEnough(string ticker, decimal amount)
+        {
+            try
+            {
+                var balanceResult = await GetBalanceAsync(ticker);
+                if (!balanceResult.IsSuccess || balanceResult.Data is null)
+                {
+                    throw new BalanceFetchException($"Failed to fetch balance for {this.Name}");
+                }
+                var balance = balanceResult.Data;
+                if (balance.Available < amount)
+                {
+                    return ResultWrapper<bool>.Success(false, $"Insufficient balance for {this.Name}:{ticker}. Available: {balance.Available} Locked: {balance.Locked} Required: {amount}");
+                    //throw new InsufficientBalanceException($"Insufficient balance for {this.Name}:{ticker}. Available: {balance.Available} Locked: {balance.Locked} Required: {amount}");
+                }
+                return ResultWrapper<bool>.Success(true);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<bool>.FromException(ex);
+            }
         }
 
         public async Task<PlacedExchangeOrder> GetOrderInfoAsync(long orderId)
@@ -177,6 +215,27 @@ namespace BinanceLibrary
                 Status = "Filled"
             });
         }
+
+        public async Task<ResultWrapper<IEnumerable<PlacedExchangeOrder>>> GetPreviousFilledOrders(string assetTicker, string clientOrderId)
+        {
+            try
+            {
+                var ordersResult = await GetOrdersByClientOrderId(assetTicker, clientOrderId);
+                if (ordersResult == null || !ordersResult.IsSuccess || ordersResult.Data == null)
+                {
+                    throw new OrderFetchException(ordersResult.ErrorMessage);
+                }
+                var filledOrders = ordersResult.Data.Where(o => o.Status == OrderStatus.Filled || o.Status == OrderStatus.PartiallyFilled);
+
+                return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Success(filledOrders);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.FromException(ex);
+            }
+
+        }
+
         public async Task<ResultWrapper<IEnumerable<PlacedExchangeOrder>>> GetOrdersByClientOrderId(string ticker, string clientOrderId)
         {
             var placedExchangeOrders = new List<PlacedExchangeOrder>();
@@ -213,6 +272,25 @@ namespace BinanceLibrary
                 _logger.LogError(ex, "Error retrieving exchange balances: {Message}", ex.Message);
                 return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Failure(FailureReason.ExchangeApiError, $"Failed to retrieve exchange orders: {ex.Message}");
             }
+        }
+
+        public async Task<ResultWrapper<decimal>> GetAssetPrice(string ticker)
+        {
+            try
+            {
+                var symbol = $"{ticker}{_reserveAssetTicker}";
+                var binancePriceResult = await _binanceClient.SpotApi.ExchangeData.GetPriceAsync(symbol);
+                if (binancePriceResult is null || !binancePriceResult.Success || binancePriceResult.Data is null)
+                {
+                    throw new Exception($"Failed to fetch Binance price for {ticker}: {binancePriceResult?.Error?.Message ?? "Binance price returned null."}");
+                }
+                return ResultWrapper<decimal>.Success(binancePriceResult.Data.Price);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<decimal>.FromException(ex);
+            }
+
         }
     }
 }

@@ -9,6 +9,7 @@ namespace Domain.Models.Crypto
         public required string Symbol { get; set; }
         public required uint Precision { get; set; }
         public string? SubunitName { get; set; }
+        public string Exchange { get; set; }
         public string Class { get; set; } = AssetClass.Crypto;
     }
 }

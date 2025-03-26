@@ -1,16 +1,20 @@
-﻿using Domain.DTOs;
+﻿using Application.Interfaces;
+using Domain.DTOs;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Stripe;
 
 namespace StripeLibrary
 {
-    public class StripeService : IStripeService
+    public class StripeService : IPaymentProvider, IStripeService
+
     {
-        private readonly StripeClient _client;
-        protected readonly ChargeService _chargeService;
-        protected readonly BalanceTransactionService _balanceTransactionService;
+        //private readonly StripeClient _client;
+        private readonly ChargeService _chargeService;
+        private readonly BalanceTransactionService _balanceTransactionService;
         private readonly PaymentIntentService _paymentIntentService;
+        private readonly InvoiceService _invoiceService;
+        private readonly SubscriptionService _subscriptionService;
         private readonly ILogger _logger;
 
         public StripeService(
@@ -22,6 +26,8 @@ namespace StripeLibrary
             _chargeService = new ChargeService();
             _balanceTransactionService = new BalanceTransactionService();
             _paymentIntentService = new PaymentIntentService();
+            _invoiceService = new InvoiceService();
+            _subscriptionService = new SubscriptionService();
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -36,7 +42,7 @@ namespace StripeLibrary
         /// <param name="paymentIntentId">The ID of the PaymentIntent to fetch the fee for.</param>
         /// <returns>The Stripe fee in decimal format.</returns>
         /// <exception cref="InvalidOperationException">Thrown if charge data cannot be retrieved after max retries.</exception>
-        public async Task<decimal> GetStripeFeeAsync(string paymentIntentId)
+        public async Task<decimal> GetFeeAsync(string paymentIntentId)
         {
             int attempt = 0;
             var MaxRetries = 5;
@@ -119,6 +125,66 @@ namespace StripeLibrary
             }
 
             throw new InvalidOperationException("Maximum retry attempts exceeded.");
+        }
+
+        public async Task<Domain.DTOs.Invoice> GetInvoiceAsync(string invoiceId)
+        {
+            var invoice = await _invoiceService.GetAsync(invoiceId);
+            return new Domain.DTOs.Invoice()
+            {
+                Id = invoice.Id,
+                CreatedAt = invoice.Created,
+                AmountDue = invoice.AmountDue,
+                AmountPaid = invoice.AmountPaid,
+                AmountRemaining = invoice.AmountRemaining,
+                Currency = invoice.Currency,
+                CustomerEmail = invoice.CustomerEmail,
+                DueDate = invoice.DueDate,
+                Paid = invoice.Paid,
+                Tax = invoice.Tax,
+                Discount = invoice.TotalDiscountAmounts.Select(d => d.Amount).Sum(),
+                Total = invoice.Total,
+                Status = invoice.Status,
+            };
+        }
+
+        public async Task<DateTime?> GetNextDueDate(string invoiceId)
+        {
+            if (string.IsNullOrEmpty(invoiceId))
+            {
+                return null;
+            }
+            var invoice = await _invoiceService.GetAsync(invoiceId);
+            if (invoice == null || string.IsNullOrEmpty(invoice.SubscriptionId))
+            {
+                return null;
+            }
+            var subscription = await _subscriptionService.GetAsync(invoice.SubscriptionId);
+            if (subscription == null || subscription.Status == "canceled")
+            {
+                return null;
+            }
+            return subscription.CurrentPeriodEnd;
+        }
+
+        public async Task<Domain.DTOs.Payment.Subscription> GetSubscriptionAsync(string? subscriptionId)
+        {
+            var subscription = await _subscriptionService.GetAsync(subscriptionId);
+            return new Domain.DTOs.Payment.Subscription()
+            {
+                NextDueDate = subscription.CurrentPeriodEnd,
+            };
+        }
+
+        public async Task<Domain.DTOs.Payment.Subscription> GetSubscriptionByPaymentAsync(string paymentProviderId)
+        {
+            var payment = await _paymentIntentService.GetAsync(paymentProviderId);
+            var invoice = await _invoiceService.GetAsync(payment.Invoice.Id);
+            var subscription = await _subscriptionService.GetAsync(invoice.Subscription.Id);
+            return new()
+            {
+                NextDueDate = subscription.CurrentPeriodEnd,
+            };
         }
     }
 }

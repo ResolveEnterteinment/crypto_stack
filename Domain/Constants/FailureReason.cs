@@ -1,28 +1,92 @@
 ﻿using Domain.Exceptions;
+using MongoDB.Driver;
 
 namespace Domain.Constants
 {
-    public static class FailureReason
+    /// <summary>
+    /// Comprehensive categorization of failure reasons
+    /// </summary>
+    public enum FailureReason
     {
-        public const string ValidationError = "ValidationError";    // e.g., invalid quantity or allocation percentage
-        public const string DataNotFound = "DataNotFound";          // Data not found in database
-        public const string ExchangeApiError = "ExchangeApiError";  // Binance API failure
-        public const string InsufficientBalance = "InsufficientBalance";
-        public const string DatabaseError = "DatabaseError";        // MongoDB insertion failure
-        public const string Unknown = "Unknown";                    // Catch-all for unexpected issues
+        // General errors
+        Unknown,
+        ValidationError,
+        NotFound,
+        Unauthorized,
+        Forbidden,
 
-        public static string From(Exception ex)
+        // Domain-specific errors
+        InsufficientBalance,
+        OrderExecutionFailed,
+        ExchangeApiError,
+        PaymentProcessingError,
+        ResourceNotFound,
+        ConcurrencyConflict,
+
+        // Technical errors
+        DatabaseError,
+        NetworkError,
+        ThirdPartyServiceUnavailable,
+        ConfigurationError,
+        TimeoutError
+    }
+
+    /// <summary>
+    /// Extension methods for FailureReason enum
+    /// </summary>
+    public static class FailureReasonExtensions
+    {
+        /// <summary>
+        /// Maps an exception type to a FailureReason
+        /// </summary>
+        public static FailureReason FromException(Exception ex)
         {
             return ex switch
             {
-                ArgumentOutOfRangeException => ValidationError,
-                ArgumentException => ValidationError,
-                InsufficientBalanceException => InsufficientBalance,
-                KeyNotFoundException => DataNotFound,
-                _ when ex.Message.Contains("Binance") => ExchangeApiError,
-                _ when ex.Message.Contains("Insert") => ExchangeApiError,
-                _ when ex.Message.Contains("Update") => ExchangeApiError,
-                _ => Unknown
+                InsufficientBalanceException => FailureReason.InsufficientBalance,
+                OrderExecutionException => FailureReason.OrderExecutionFailed,
+                ExchangeApiException => FailureReason.ExchangeApiError,
+                PaymentProcessingException => FailureReason.PaymentProcessingError,
+                ResourceNotFoundException => FailureReason.ResourceNotFound,
+                Exceptions.ValidationException => FailureReason.ValidationError,
+                ConcurrencyException => FailureReason.ConcurrencyConflict,
+                DatabaseException => FailureReason.DatabaseError,
+                ServiceUnavailableException => FailureReason.ThirdPartyServiceUnavailable,
+
+                // Framework/library exceptions
+                MongoException => FailureReason.DatabaseError,
+                TimeoutException => FailureReason.TimeoutError,
+                System.Net.Http.HttpRequestException => FailureReason.NetworkError,
+                KeyNotFoundException => FailureReason.NotFound,
+                UnauthorizedAccessException => FailureReason.Unauthorized,
+
+                _ => FailureReason.Unknown
+            };
+        }
+
+        /// <summary>
+        /// Gets HTTP status code corresponding to the failure reason
+        /// </summary>
+        public static int ToStatusCode(this FailureReason reason)
+        {
+            return reason switch
+            {
+                FailureReason.ValidationError => 400, // Bad Request
+                FailureReason.NotFound => 404, // Not Found
+                FailureReason.ResourceNotFound => 404, // Not Found
+                FailureReason.Unauthorized => 401, // Unauthorized
+                FailureReason.Forbidden => 403, // Forbidden
+                FailureReason.InsufficientBalance => 400, // Bad Request
+                FailureReason.OrderExecutionFailed => 400, // Bad Request
+                FailureReason.ExchangeApiError => 502, // Bad Gateway
+                FailureReason.PaymentProcessingError => 400, // Bad Request
+                FailureReason.DatabaseError => 500, // Internal Server Error
+                FailureReason.NetworkError => 503, // Service Unavailable
+                FailureReason.ThirdPartyServiceUnavailable => 503, // Service Unavailable
+                FailureReason.TimeoutError => 504, // Gateway Timeout
+                FailureReason.ConcurrencyConflict => 409, // Conflict
+                FailureReason.ConfigurationError => 500, // Internal Server Error
+                _ => 500, // Internal Server Error
             };
         }
     }

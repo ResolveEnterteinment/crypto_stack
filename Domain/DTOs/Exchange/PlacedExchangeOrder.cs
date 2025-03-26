@@ -1,7 +1,7 @@
 ﻿using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
-namespace Domain.DTOs
+namespace Domain.DTOs.Exchange
 {
     public class PlacedExchangeOrder
     {

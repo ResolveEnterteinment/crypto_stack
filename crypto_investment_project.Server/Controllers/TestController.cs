@@ -1,5 +1,6 @@
 using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
+using Application.Interfaces.Exchange;
 using Domain.Models.Crypto;
 using Domain.Models.Payment;
 using Domain.Models.Subscription;
@@ -10,11 +11,11 @@ namespace crypto_investment_project.Server.Controllers
     [ApiController]
     [Route("api/[controller]")]
     public class TestController(
-        IExchangeService exchangeService,
+        IPaymentProcessingService paymentProcessingService,
         IAssetService assetService,
         ISubscriptionService subscriptionService) : ControllerBase
     {
-        private readonly IExchangeService _exchangeService = exchangeService;
+        private readonly IPaymentProcessingService _paymentProcessingService = paymentProcessingService;
         private readonly IAssetService _assetService = assetService;
         private readonly ISubscriptionService _subscriptionService = subscriptionService;
 
@@ -30,16 +31,18 @@ namespace crypto_investment_project.Server.Controllers
             {
                 UserId = Guid.Parse(paymentRequest.UserId),
                 SubscriptionId = Guid.Parse(paymentRequest.SubscriptionId),
+                Provider = "Stripe",
                 PaymentProviderId = paymentRequest.PaymentId,
                 PaymentProviderFee = paymentRequest.PaymentProviderFee,
                 TotalAmount = paymentRequest.TotalAmount,
                 PlatformFee = paymentRequest.PlatformFee,
                 NetAmount = paymentRequest.NetAmount,
+                Currency = paymentRequest.Currency,
                 Status = paymentRequest.Status,
             };
             try
             {
-                var result = await _exchangeService.ProcessPayment(paymentData);
+                var result = await _paymentProcessingService.ProcessPayment(paymentData);
                 return result is null ? throw new NullReferenceException(nameof(result)) : (IActionResult)Ok(result);
             }
             catch (Exception ex)

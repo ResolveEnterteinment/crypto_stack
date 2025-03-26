@@ -31,7 +31,7 @@ namespace Infrastructure.Hubs
             }
             else
             {
-                _logger.LogInformation("User authenticated. Claims: {@Claims}", Context.User.Claims.Select(c => new { c.Type, c.Value }));
+                _logger.LogInformation("User authenticated.");
                 string userId = Context.UserIdentifier ?? Context.User?.FindFirst("sub")?.Value;
                 if (string.IsNullOrEmpty(userId))
                 {

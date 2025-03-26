@@ -1,9 +1,16 @@
 using Application.Interfaces;
+using Application.Interfaces.Exchange;
+using Application.Interfaces.Payment;
+using Application.Validation;
 using crypto_investment_project.Server.Helpers;
+using crypto_investment_project.Server.Middleware;
 using Domain.DTOs;
+using Domain.DTOs.Exchange;
+using FluentValidation;
 using Infrastructure.Hubs;
 using Infrastructure.Services;
-using Microsoft.AspNetCore.Authentication.JwtBearer; // Add this
+using Infrastructure.Services.Exchange;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
@@ -20,9 +27,9 @@ MongoDbIdentityConfigurationHelper.Configure(builder);
 
 // Configure settings sections
 builder.Services.Configure<MongoDbSettings>(builder.Configuration.GetSection("MongoDB"));
+builder.Services.Configure<ExchangeServiceSettings>(builder.Configuration.GetSection("ExchangeService"));
 builder.Services.Configure<BinanceSettings>(builder.Configuration.GetSection("Binance"));
 builder.Services.Configure<StripeSettings>(builder.Configuration.GetSection("Stripe"));
-builder.Services.Configure<ExchangeSettings>(builder.Configuration.GetSection("Exchange"));
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
 
 // Fetch allowed origins from user secrets
@@ -87,7 +94,6 @@ builder.Services.AddAuthentication(options =>
                 {
                     accessToken = context.Request.Headers["Authorization"].FirstOrDefault()?.Replace("Bearer ", "");
                 }
-                Console.WriteLine($"OnMessageReceived - Path: {context.Request.Path}, Token: {accessToken}...");
                 if (!string.IsNullOrEmpty(accessToken) &&
                     context.Request.Path.StartsWithSegments("/hubs/notificationHub"))
                 {
@@ -110,25 +116,39 @@ builder.Services.AddAuthentication(options =>
 
 // Register additional dependencies
 builder.Services.AddDataProtection();
-builder.Services.AddSingleton<System.TimeProvider>(System.TimeProvider.System);
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddHttpClient();
+
+// Register Fluent Validation
+builder.Services.AddValidatorsFromAssemblyContaining<FluentValidator>();
+
+builder.Services.AddValidators();
+
+// Register services for DI
+builder.Services.AddScoped<IExchangeService, ExchangeService>();
+builder.Services.AddScoped<IPaymentProcessingService, PaymentProcessingService>();
+builder.Services.AddScoped<IOrderManagementService, OrderManagementService>();
+builder.Services.AddScoped<IBalanceManagementService, BalanceManagementService>();
+builder.Services.AddScoped<IOrderReconciliationService, OrderReconciliationService>();
+
 builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
-builder.Services.AddScoped<IExchangeService, ExchangeService>();
-builder.Services.AddSingleton<IAssetService, AssetService>();
-builder.Services.AddSingleton<IBalanceService, BalanceService>();
-builder.Services.AddSingleton<ITransactionService, TransactionService>();
-builder.Services.AddSingleton<IEventService, EventService>();
+builder.Services.AddScoped<IAssetService, AssetService>();
+builder.Services.AddScoped<IBalanceService, BalanceService>();
+builder.Services.AddScoped<ITransactionService, TransactionService>();
+builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<IIdempotencyService, IdempotencyService>();
 
 builder.Services.AddSignalR();
 builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(EventService).Assembly));
 
 var app = builder.Build();
 
-Console.WriteLine($"Jwt:Key  =>  {builder.Configuration["Jwt:Key"]}");
+// For debugging purposes (optional)
+var exchanges = builder.Configuration.GetSection("ExchangeService").Get<ExchangeServiceSettings>();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -138,6 +158,9 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+// Add global exception handling middleware
+app.UseGlobalExceptionHandling();
 
 app.UseCors("AllowSpecifiedOrigins");
 app.UseAuthentication();
