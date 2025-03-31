@@ -45,6 +45,7 @@
 
   <ItemGroup>
     <Folder Include="Middleware\" />
+    <Folder Include="NewFolder\" />
   </ItemGroup>
 
 </Project>

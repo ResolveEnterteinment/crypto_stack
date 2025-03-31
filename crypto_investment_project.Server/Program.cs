@@ -115,6 +115,8 @@ var app = builder.Build();
 // Add global exception handling middleware
 app.UseGlobalExceptionHandling();
 
+app.UseSignalRCors();
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -123,6 +125,12 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+// Make sure WebSockets are enabled
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30)
+});
 
 // Add security headers
 app.Use(async (context, next) =>
@@ -154,6 +162,8 @@ app.Use(async (context, next) =>
 });
 
 app.UseCors("AllowSpecifiedOrigins");
+app.UseCors("SignalRCorsPolicy");
+
 app.UseAuthentication();
 app.UseHttpsRedirection();
 app.UseAuthorization();
@@ -186,6 +196,19 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
 });
 
 app.MapHub<NotificationHub>("/hubs/notificationHub");
+
+// Optional diagnostic endpoint for connection testing
+app.MapGet("/api/diagnostic/connection", async (HttpContext context) =>
+{
+    return Results.Ok(new
+    {
+        timestamp = DateTime.UtcNow,
+        serverTime = DateTime.UtcNow.ToString("o"),
+        clientIp = context.Connection.RemoteIpAddress?.ToString(),
+        headers = context.Request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString())
+    });
+});
+
 app.MapControllers();
 app.MapFallbackToFile("/index.html");
 
@@ -345,7 +368,13 @@ void ConfigureServices(WebApplicationBuilder builder)
     {
         options.EnableDetailedErrors = builder.Environment.IsDevelopment();
         options.MaximumReceiveMessageSize = 102400; // 100 KB
-    });
+        options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
+        options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+    })
+        .AddJsonProtocol(options =>
+        {
+            options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+        });
 
     builder.Services.AddMediatR(cfg =>
     {
@@ -515,6 +544,17 @@ void ConfigureCors(WebApplicationBuilder builder)
                       .AllowCredentials()
                       .WithExposedHeaders("X-CSRF-TOKEN");
             }
+        });
+
+        options.AddPolicy("SignalRCorsPolicy", policy =>
+        {
+            var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>() ??
+                               new[] { "https://localhost:5173" };
+
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
         });
     });
 }

@@ -50,6 +50,20 @@ export default defineConfig({
         https: {
             key: fs.readFileSync(keyFilePath),
             cert: fs.readFileSync(certFilePath),
+        },
+        proxy: {
+            // Proxy SignalR requests to backend
+            '/hubs': {
+                target: 'https://localhost:7144',
+                changeOrigin: true,
+                secure: false,
+                ws: true,
+            }
+        },
+        cors: {
+            origin: ['https://localhost:7144'],
+            credentials: true,
+            allowedHeaders: ['Content-Type', 'Authorization'],
         }
     }
 })
