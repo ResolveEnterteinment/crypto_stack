@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar"
 import { getSubscriptions, ISubscription } from "../services/subscription";
-import { getBalances, getTotalInvestments, getPortfolioValue, IBalance } from "../services/balance";
+import { getDashboardData, IBalance } from "../services/dashboard";
 
 const DashboardPage: React.FC = () => {
     const [isModalOpen, setModalOpen] = useState(false);
@@ -16,28 +16,19 @@ const DashboardPage: React.FC = () => {
 
     useEffect(() => {
         if (!user || !user.id) return;
-        fetchBalances(user.id);
-        fetchTotalInvestments(user.id);
-        fetchPortfolioValue(user.id);
+        fetchDashboardData(user.id);
         fetchSubscriptions(user.id);
     }, [user]);
 
-    const fetchBalances = async (id: string) => {
+    const fetchDashboardData = async (id: string) => {
         if (!id) return;
-        const data = await getBalances(id);
-        setBalances(data);
-    };
-
-    const fetchPortfolioValue = async (id: string) => {
-        if (!id) return;
-        const data = await getPortfolioValue(id);
-        setPortfolioValue(data);
-    };
-
-    const fetchTotalInvestments = async (id: string) => {
-        if (!id) return;
-        const data = await getTotalInvestments(id);
-        setTotalInvestments(data);
+        const data = await getDashboardData(id);
+        console.log("assetHoldings: ", data.assetHoldings);
+        console.log("totalInvestments: ", data.totalInvestments);
+        console.log("portfolioValue: ", data.portfolioValue);
+        setBalances(data.assetHoldings);
+        setTotalInvestments(data.totalInvestments);
+        setPortfolioValue(data.portfolioValue);
     };
 
     const fetchSubscriptions = async (id: string) => {
@@ -78,7 +69,7 @@ const DashboardPage: React.FC = () => {
                         <h2 className="text-xl font-semibold">Asset Holdings</h2>
                         {balances && balances.length > 0 ? (
                             balances.map((balance) => (
-                                <p key={balance.assetId} className="font-bold mt-2">
+                                <p key={balance.assetName} className="font-bold mt-2">
                                     {balance.ticker}: <span className="font-normal">{balance.total}</span>
                                 </p>
                             ))

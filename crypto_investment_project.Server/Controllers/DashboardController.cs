@@ -21,20 +21,24 @@ namespace crypto_investment_project.Server.Controllers
             _logger = logger;
         }
 
-        [HttpPost("{userId}")]
+        [HttpPost("/user/{user}")]
         [Authorize(Roles = "USER")]
         [EnableRateLimiting("standard")]
         [IgnoreAntiforgeryToken]
-        public async Task<IActionResult> GetUserDashboardData(string userId)
+        public async Task<IActionResult> GetUserDashboardData(string user)
         {
-            if (!Guid.TryParse(userId, out var userIdParsed) || userIdParsed == Guid.Empty)
+            if (!Guid.TryParse(user, out var userId) || userId == Guid.Empty)
             {
-                ResultWrapper.Failure(FailureReason.ValidationError, "Invalid user id.").ToActionResult(this);
+                return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid user id.").ToActionResult(this);
             }
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var data = await _dashboardService.GetDashboardDataAsync(userIdParsed);
+            var dashboardResult = await _dashboardService.GetDashboardDataAsync(userId);
+            if (!dashboardResult.IsSuccess)
+            {
+                dashboardResult.ToActionResult(this);
+            }
             _logger.LogInformation("Dashboard data fetched for {UserId} in {ElapsedMs}ms", userId, stopwatch.ElapsedMilliseconds);
-            return Ok(data);
+            return Ok(dashboardResult.Data);
         }
     }
 }

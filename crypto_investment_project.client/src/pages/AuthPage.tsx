@@ -23,7 +23,7 @@ const AuthPage = () => {
         setError("");
 
         try {
-            const { data } = await api.post("/v1/authenticate/login", { email, password });
+            const { data } = await api.post("/v1.0/auth/login", { email, password });
             login(data); // Save tokens & fetch profile
             navigate("/dashboard");
         } catch (err) {
@@ -36,7 +36,7 @@ const AuthPage = () => {
         setError("");
 
         try {
-            const { data } = await api.post("/v1/authenticate/register", { fullname, email, password });
+            const { data } = await api.post("/v1.0/auth/register", { fullname, email, password });
             if (data.success) {
                 setIsLogin(true); // Switch to login after registration
                 setError("Registration successful! Please log in.");

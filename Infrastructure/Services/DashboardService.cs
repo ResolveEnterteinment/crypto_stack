@@ -66,7 +66,7 @@ namespace Infrastructure.Services
 
                     var result = new DashboardDto
                     {
-                        Balances = balancesTask.Data,
+                        AssetHoldings = balancesTask.Data,
                         TotalInvestments = totalInvestments,
                         PortfolioValue = portfolioValueTask.Data
                     };
@@ -79,7 +79,6 @@ namespace Infrastructure.Services
             {
                 return ResultWrapper<DashboardDto>.FromException(ex);
             }
-
         }
 
         private async Task<ResultWrapper<IEnumerable<BalanceDto>>> FetchBalancesWithAssetsAsync(Guid userId)
