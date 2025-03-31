@@ -20,6 +20,8 @@ namespace Domain.Constants
         OrderExecutionFailed,
         ExchangeApiError,
         PaymentProcessingError,
+        AssetFetchError,
+        BalanceFetchError,
         ResourceNotFound,
         ConcurrencyConflict,
 
@@ -46,9 +48,11 @@ namespace Domain.Constants
                 InsufficientBalanceException => FailureReason.InsufficientBalance,
                 OrderExecutionException => FailureReason.OrderExecutionFailed,
                 ExchangeApiException => FailureReason.ExchangeApiError,
-                PaymentProcessingException => FailureReason.PaymentProcessingError,
+                PaymentApiException => FailureReason.PaymentProcessingError,
+                AssetFetchException => FailureReason.AssetFetchError,
+                BalanceFetchException => FailureReason.BalanceFetchError,
                 ResourceNotFoundException => FailureReason.ResourceNotFound,
-                Exceptions.ValidationException => FailureReason.ValidationError,
+                ValidationException => FailureReason.ValidationError,
                 ConcurrencyException => FailureReason.ConcurrencyConflict,
                 DatabaseException => FailureReason.DatabaseError,
                 ServiceUnavailableException => FailureReason.ThirdPartyServiceUnavailable,
@@ -56,7 +60,7 @@ namespace Domain.Constants
                 // Framework/library exceptions
                 MongoException => FailureReason.DatabaseError,
                 TimeoutException => FailureReason.TimeoutError,
-                System.Net.Http.HttpRequestException => FailureReason.NetworkError,
+                HttpRequestException => FailureReason.NetworkError,
                 KeyNotFoundException => FailureReason.NotFound,
                 UnauthorizedAccessException => FailureReason.Unauthorized,
 
@@ -80,6 +84,8 @@ namespace Domain.Constants
                 FailureReason.OrderExecutionFailed => 400, // Bad Request
                 FailureReason.ExchangeApiError => 502, // Bad Gateway
                 FailureReason.PaymentProcessingError => 400, // Bad Request
+                FailureReason.AssetFetchError => 400, // Bad Request
+                FailureReason.BalanceFetchError => 400, // Bad Request
                 FailureReason.DatabaseError => 500, // Internal Server Error
                 FailureReason.NetworkError => 503, // Service Unavailable
                 FailureReason.ThirdPartyServiceUnavailable => 503, // Service Unavailable

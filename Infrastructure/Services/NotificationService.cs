@@ -1,8 +1,10 @@
 ﻿using Application.Interfaces;
 using Domain.DTOs;
+using Domain.DTOs.Settings;
 using Infrastructure.Hubs;
 using Infrastructure.Services;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
@@ -18,7 +20,15 @@ public class NotificationService : BaseService<NotificationData>, INotificationS
         IUserService userService,
         IOptions<MongoDbSettings> mongoDbSettings,
         IMongoClient mongoClient,
-        ILogger<SubscriptionService> logger) : base(mongoClient, mongoDbSettings, "notifications", logger)
+        ILogger<SubscriptionService> logger,
+        IMemoryCache cache
+        ) : base(
+            mongoClient,
+            mongoDbSettings,
+            "notifications",
+            logger,
+            cache
+            )
     {
         _hubContext = hubContext;
         _userService = userService;

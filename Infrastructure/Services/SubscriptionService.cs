@@ -3,9 +3,11 @@ using Application.Interfaces;
 using Application.Interfaces.Payment;
 using Domain.Constants;
 using Domain.DTOs;
+using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Models.Subscription;
 using MediatR;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
@@ -28,9 +30,21 @@ namespace Infrastructure.Services
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
             ILogger<SubscriptionService> logger,
+            IMemoryCache cache,
             INotificationService notificationService
             )
-            : base(mongoClient, mongoDbSettings, "subscriptions", logger)
+            : base(
+                  mongoClient,
+                  mongoDbSettings,
+                  "subscriptions",
+                  logger,
+                  cache,
+                  new List<CreateIndexModel<SubscriptionData>>()
+                    {
+                        new (Builders<SubscriptionData>.IndexKeys.Ascending(x => x.UserId),
+                            new CreateIndexOptions { Name = "UserId_1" })
+                    }
+                  )
         {
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(_assetService));
@@ -103,7 +117,7 @@ namespace Infrastructure.Services
                     Currency = request.Currency,
                     NextDueDate = DateTime.UtcNow,
                     EndDate = request.EndDate,
-                    IsCancelled = request.IsCancelled
+                    Status = SubscriptionStatus.Pending
                 };
 
                 var result = await InsertOneAsync(subscriptionData);

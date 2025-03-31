@@ -1,4 +1,7 @@
-﻿namespace Domain.Models.Balance
+﻿using Domain.Models.Crypto;
+using MongoDB.Bson.Serialization.Attributes;
+
+namespace Domain.Models.Balance
 {
     public class BalanceData : BaseEntity
     {
@@ -9,6 +12,7 @@
         public decimal Locked { get; set; } = decimal.Zero;
         public decimal Total { get; set; } = decimal.Zero;
         public DateTime LastUpdated { get; set; }
-
+        [BsonIgnore]
+        public AssetData AssetDocs { get; set; }
     }
 }

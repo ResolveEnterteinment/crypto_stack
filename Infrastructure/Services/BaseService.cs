@@ -1,51 +1,92 @@
 ﻿using Domain.DTOs;
+using Domain.DTOs.Settings;
 using Domain.Exceptions;
-using Domain.Interfaces;
 using Domain.Models;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using System.Diagnostics;
 using System.Reflection;
 
 namespace Infrastructure.Services
 {
+    /// <summary>
+    /// Base service implementation for MongoDB repositories.
+    /// Provides common CRUD operations and transaction support.
+    /// </summary>
+    /// <typeparam name="T">The entity type this repository manages</typeparam>
     public abstract class BaseService<T> : IRepository<T> where T : class
     {
-        private string _collectionName;
+        private readonly string _collectionName;
+        private static readonly IReadOnlySet<string> _validPropertyNames;
+        private readonly IEnumerable<CreateIndexModel<T>> _indexModels;
 
         protected readonly IMongoClient _mongoClient;
         protected readonly IMongoCollection<T> _collection;
         protected readonly ILogger _logger;
+        protected readonly IMemoryCache _cache;
 
-        private static readonly IReadOnlySet<string> ValidPropertyNames = GetValidPropertyNames();
-        public IMongoCollection<T> Collection { get => _collection; }
-        public string CollectionName { get => _collectionName; }
+        /// <summary>
+        /// Gets the MongoDB collection used by this service.
+        /// </summary>
+        public IMongoCollection<T> Collection => _collection;
 
+        /// <summary>
+        /// Gets the name of the MongoDB collection used by this service.
+        /// </summary>
+        public string CollectionName => _collectionName;
+
+        /// <summary>
+        /// Static constructor to initialize valid property names.
+        /// </summary>
+        static BaseService()
+        {
+            _validPropertyNames = GetValidPropertyNames();
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="BaseService{T}"/> class.
+        /// </summary>
+        /// <param name="mongoClient">The MongoDB client.</param>
+        /// <param name="mongoDbSettings">MongoDB settings.</param>
+        /// <param name="collectionName">Name of the MongoDB collection.</param>
+        /// <param name="logger">Logger for diagnostic information.</param>
+        /// <param name="indexModels">Optional index definition to create.</param>
         protected BaseService(
             IMongoClient mongoClient,
             IOptions<MongoDbSettings> mongoDbSettings,
             string collectionName,
             ILogger logger,
-            IndexKeysDefinition<T>? indexKeysDefinition = null
-            )
+            IMemoryCache cache,
+            IEnumerable<CreateIndexModel<T>>? indexModels = null
+        )
         {
             _mongoClient = mongoClient ?? throw new ArgumentNullException(nameof(mongoClient));
-            var database = mongoClient.GetDatabase(mongoDbSettings.Value.DatabaseName);
-            _collectionName = collectionName;
+            var database = mongoClient.GetDatabase(mongoDbSettings?.Value?.DatabaseName ??
+                throw new ArgumentException("Database name is missing in settings", nameof(mongoDbSettings)));
+            _collectionName = collectionName ?? throw new ArgumentNullException(nameof(collectionName));
             _collection = database.GetCollection<T>(collectionName);
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _cache = cache ?? throw new ArgumentNullException(nameof(cache));
 
-            if (indexKeysDefinition != null)
+            if (indexModels != null && indexModels.Any())
             {
-                InitializeIndexes(indexKeysDefinition).GetAwaiter().GetResult();
+                _indexModels = indexModels;
+                Task.Run(() => InitializeIndexes());
             }
         }
 
-        private async Task InitializeIndexes(IndexKeysDefinition<T> indexKeysDefinition)
+        /// <summary>
+        /// Initializes indexes for the collection.
+        /// </summary>
+        /// <returns>A task that represents the asynchronous operation.</returns>
+        private async Task InitializeIndexes()
         {
             try
             {
-                await _collection.Indexes.CreateOneAsync(new CreateIndexModel<T>(indexKeysDefinition));
+                await _collection.Indexes.CreateManyAsync(_indexModels);
+                _logger.LogInformation("Successfully created indexes for collection {CollectionName}", _collectionName);
             }
             catch (Exception ex)
             {
@@ -54,12 +95,23 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<T> GetByIdAsync(Guid id)
+
+        /// <summary>
+        /// Gets an entity by its ID.
+        /// </summary>
+        /// <param name="id">The entity ID.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The entity if found; otherwise, null.</returns>
+        public virtual async Task<T> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
         {
+            using var activity = new Activity("BaseService.GetByIdAsync").Start();
+            activity?.SetTag("entity_type", typeof(T).Name);
+            activity?.SetTag("entity_id", id);
+
             try
             {
                 var filter = Builders<T>.Filter.Eq("Id", id);
-                var result = await _collection.Find(filter).FirstOrDefaultAsync();
+                var result = await _collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
 
                 if (result == null)
                 {
@@ -75,12 +127,21 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<List<T>> GetAllAsync(FilterDefinition<T>? filter = null)
+        /// <summary>
+        /// Gets all entities matching the specified filter.
+        /// </summary>
+        /// <param name="filter">The filter to apply.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A list of matching entities.</returns>
+        public virtual async Task<List<T>> GetAllAsync(FilterDefinition<T>? filter = null, CancellationToken cancellationToken = default)
         {
+            using var activity = new Activity("BaseService.GetAllAsync").Start();
+            activity?.SetTag("entity_type", typeof(T).Name);
+
             try
             {
                 filter ??= Builders<T>.Filter.Empty;
-                return await _collection.Find(filter).ToListAsync();
+                return await _collection.Find(filter).ToListAsync(cancellationToken);
             }
             catch (Exception ex)
             {
@@ -89,11 +150,20 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<T> GetOneAsync(FilterDefinition<T> filter)
+        /// <summary>
+        /// Gets a single entity matching the specified filter.
+        /// </summary>
+        /// <param name="filter">The filter to apply.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The matching entity if found; otherwise, null.</returns>
+        public virtual async Task<T> GetOneAsync(FilterDefinition<T> filter, CancellationToken cancellationToken = default)
         {
+            using var activity = new Activity("BaseService.GetOneAsync").Start();
+            activity?.SetTag("entity_type", typeof(T).Name);
+
             try
             {
-                return await _collection.Find(filter).FirstOrDefaultAsync();
+                return await _collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
             }
             catch (Exception ex)
             {
@@ -102,40 +172,64 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<InsertResult> InsertOneAsync(T entity, IClientSessionHandle? session = null)
+        /// <summary>
+        /// Inserts a new entity.
+        /// </summary>
+        /// <param name="entity">The entity to insert.</param>
+        /// <param name="session">Optional session for transaction support.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>An <see cref="InsertResult"/> containing the operation result.</returns>
+        public virtual async Task<InsertResult> InsertOneAsync(T entity, IClientSessionHandle? session = null, CancellationToken cancellationToken = default)
         {
+            using var activity = new Activity("BaseService.InsertOneAsync").Start();
+            activity?.SetTag("entity_type", typeof(T).Name);
+
             try
             {
                 ArgumentNullException.ThrowIfNull(entity, nameof(entity));
 
-                // If entity doesn't have an Id, MongoDB will generate one
+                // Ensure ID is set for BaseEntity types
+                if (entity is BaseEntity baseEntity && baseEntity.Id == Guid.Empty)
+                {
+                    baseEntity.Id = Guid.NewGuid();
+                }
+
+                // Set creation time if not already set
+                if (entity is BaseEntity baseEntityWithTime && baseEntityWithTime.CreatedAt == default)
+                {
+                    baseEntityWithTime.CreatedAt = DateTime.UtcNow;
+                }
+
+                // Insert using session if provided
                 if (session == null)
                 {
-                    await _collection.InsertOneAsync(entity).ConfigureAwait(false);
+                    await _collection.InsertOneAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
-                    await _collection.InsertOneAsync(session, entity).ConfigureAwait(false);
+                    await _collection.InsertOneAsync(session, entity, cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
 
-                var baseEntity = entity as BaseEntity;
-                if (baseEntity == null)
+                // Extract ID from the entity
+                Guid? insertedId = null;
+                if (entity is BaseEntity baseEntityId)
                 {
-                    _logger.LogError("Entity of type {Type} does not inherit from BaseEntity", typeof(T).Name);
-                    throw new ArgumentException($"Entity of type {typeof(T).Name} does not inherit from BaseEntity");
+                    insertedId = baseEntityId.Id;
+
+                    if (insertedId == Guid.Empty)
+                    {
+                        throw new DatabaseException($"Inserted entity of type {typeof(T).Name} has no valid Id");
+                    }
                 }
 
-                var insertedId = baseEntity.Id; // Guid from the entity
                 var insertResult = new InsertResult
                 {
                     IsAcknowledged = true,
-                    InsertedId = insertedId // Store as Guid in InsertResult
+                    InsertedId = insertedId
                 };
 
-                if (insertedId == Guid.Empty)
-                {
-                    throw new DatabaseException($"Inserted entity of type {typeof(T).Name} has no valid Id");
-                }
+                _logger.LogInformation("Successfully inserted entity of type {EntityType} with ID {EntityId}",
+                    typeof(T).Name, insertedId);
 
                 return insertResult;
             }
@@ -151,8 +245,20 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<UpdateResult> UpdateOneAsync(Guid id, object updatedFields, IClientSessionHandle? session = null)
+        /// <summary>
+        /// Updates an entity by ID.
+        /// </summary>
+        /// <param name="id">The ID of the entity to update.</param>
+        /// <param name="updatedFields">The fields to update.</param>
+        /// <param name="session">Optional session for transaction support.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The update result.</returns>
+        public virtual async Task<UpdateResult> UpdateOneAsync(Guid id, object updatedFields, IClientSessionHandle? session = null, CancellationToken cancellationToken = default)
         {
+            using var activity = new Activity("BaseService.UpdateOneAsync").Start();
+            activity?.SetTag("entity_type", typeof(T).Name);
+            activity?.SetTag("entity_id", id);
+
             try
             {
                 if (updatedFields == null)
@@ -160,33 +266,32 @@ namespace Infrastructure.Services
                     throw new ArgumentNullException(nameof(updatedFields), "Updated fields cannot be null.");
                 }
 
+                if (id == Guid.Empty)
+                {
+                    throw new ArgumentException("ID cannot be empty", nameof(id));
+                }
+
                 var updateDefinition = BuildUpdateDefinition(updatedFields);
                 var filter = Builders<T>.Filter.Eq("Id", id);
 
+                UpdateResult result;
                 if (session == null)
                 {
-                    var result = await _collection.UpdateOneAsync(filter, updateDefinition).ConfigureAwait(false);
-
-                    if (result.MatchedCount == 0)
-                    {
-                        _logger.LogWarning("No entity of type {EntityType} with ID {Id} found to update", typeof(T).Name, id);
-                        throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
-                    }
-
-                    return result;
+                    result = await _collection.UpdateOneAsync(filter, updateDefinition, cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
-                    var result = await _collection.UpdateOneAsync(session, filter, updateDefinition).ConfigureAwait(false);
-
-                    if (result.MatchedCount == 0)
-                    {
-                        _logger.LogWarning("No entity of type {EntityType} with ID {Id} found to update", typeof(T).Name, id);
-                        throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
-                    }
-
-                    return result;
+                    result = await _collection.UpdateOneAsync(session, filter, updateDefinition, cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
+
+                if (result.MatchedCount == 0)
+                {
+                    _logger.LogWarning("No entity of type {EntityType} with ID {Id} found to update", typeof(T).Name, id);
+                    throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
+                }
+
+                _logger.LogInformation("Successfully updated entity of type {EntityType} with ID {Id}", typeof(T).Name, id);
+                return result;
             }
             catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
             {
@@ -200,20 +305,36 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<DeleteResult> DeleteAsync(Guid id, IClientSessionHandle? session = null)
+        /// <summary>
+        /// Deletes an entity by ID.
+        /// </summary>
+        /// <param name="id">The ID of the entity to delete.</param>
+        /// <param name="session">Optional session for transaction support.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The delete result.</returns>
+        public virtual async Task<DeleteResult> DeleteAsync(Guid id, IClientSessionHandle? session = null, CancellationToken cancellationToken = default)
         {
+            using var activity = new Activity("BaseService.DeleteAsync").Start();
+            activity?.SetTag("entity_type", typeof(T).Name);
+            activity?.SetTag("entity_id", id);
+
             try
             {
+                if (id == Guid.Empty)
+                {
+                    throw new ArgumentException("ID cannot be empty", nameof(id));
+                }
+
                 var filter = Builders<T>.Filter.Eq("Id", id);
                 DeleteResult result;
 
                 if (session == null)
                 {
-                    result = await _collection.DeleteOneAsync(filter).ConfigureAwait(false);
+                    result = await _collection.DeleteOneAsync(filter, cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
-                    result = await _collection.DeleteOneAsync(session, filter).ConfigureAwait(false);
+                    result = await _collection.DeleteOneAsync(session, filter, cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
 
                 if (result.DeletedCount == 0)
@@ -222,15 +343,21 @@ namespace Infrastructure.Services
                     throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
                 }
 
+                _logger.LogInformation("Successfully deleted entity of type {EntityType} with ID {Id}", typeof(T).Name, id);
                 return result;
             }
-            catch (Exception ex) when (!(ex is ResourceNotFoundException))
+            catch (Exception ex) when (!(ex is ArgumentException || ex is ResourceNotFoundException))
             {
                 _logger.LogError(ex, "Failed to delete entity of type {Type} with ID {Id}", typeof(T).Name, id);
                 throw new DatabaseException($"Failed to delete {typeof(T).Name} with ID {id}", ex);
             }
         }
 
+        /// <summary>
+        /// Builds an update definition from the provided field values.
+        /// </summary>
+        /// <param name="updatedFields">The fields to update.</param>
+        /// <returns>An update definition.</returns>
         protected virtual UpdateDefinition<T> BuildUpdateDefinition(object updatedFields)
         {
             try
@@ -238,17 +365,18 @@ namespace Infrastructure.Services
                 var updateBuilder = Builders<T>.Update;
                 var validUpdates = new List<UpdateDefinition<T>>();
 
-                if (updatedFields.GetType() == typeof(Dictionary<string, object>))
+                if (updatedFields is Dictionary<string, object> fieldDict)
                 {
-                    foreach (var field in (updatedFields as Dictionary<string, object>))
+                    foreach (var field in fieldDict)
                     {
-                        if (ValidPropertyNames.Contains(field.Key))
+                        if (_validPropertyNames.Contains(field.Key))
                         {
                             validUpdates.Add(updateBuilder.Set(field.Key, field.Value));
                         }
                         else
                         {
-                            _logger.LogWarning("Attempted to update invalid property {PropertyName} for type {EntityType}", field.Key, typeof(T).Name);
+                            _logger.LogWarning("Attempted to update invalid property {PropertyName} for type {EntityType}",
+                                field.Key, typeof(T).Name);
                         }
                     }
                 }
@@ -258,7 +386,7 @@ namespace Infrastructure.Services
                     foreach (var property in properties)
                     {
                         var propertyName = property.Name;
-                        if (ValidPropertyNames.Contains(propertyName))
+                        if (_validPropertyNames.Contains(propertyName))
                         {
                             var value = property.GetValue(updatedFields);
                             if (value != null) // Only include non-null properties in update
@@ -268,7 +396,8 @@ namespace Infrastructure.Services
                         }
                         else
                         {
-                            _logger.LogWarning("Attempted to update invalid property {PropertyName} for type {EntityType}", propertyName, typeof(T).Name);
+                            _logger.LogWarning("Attempted to update invalid property {PropertyName} for type {EntityType}",
+                                propertyName, typeof(T).Name);
                         }
                     }
                 }
@@ -279,7 +408,7 @@ namespace Infrastructure.Services
                 }
 
                 // Always update the LastUpdated field if it exists
-                if (ValidPropertyNames.Contains("LastUpdated"))
+                if (_validPropertyNames.Contains("LastUpdated"))
                 {
                     validUpdates.Add(updateBuilder.Set("LastUpdated", DateTime.UtcNow));
                 }
@@ -293,6 +422,10 @@ namespace Infrastructure.Services
             }
         }
 
+        /// <summary>
+        /// Gets the names of all valid properties for the entity type.
+        /// </summary>
+        /// <returns>A set of valid property names.</returns>
         private static IReadOnlySet<string> GetValidPropertyNames()
         {
             return new HashSet<string>(
@@ -303,25 +436,166 @@ namespace Infrastructure.Services
         }
 
         /// <summary>
-        /// Executes a function within a transaction
+        /// Executes a function within a MongoDB transaction.
         /// </summary>
-        protected async Task<TResult> ExecuteInTransactionAsync<TResult>(Func<IClientSessionHandle, Task<TResult>> action)
+        /// <typeparam name="TResult">The result type.</typeparam>
+        /// <param name="action">The function to execute.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The result of the function.</returns>
+        protected async Task<TResult> ExecuteInTransactionAsync<TResult>(
+            Func<IClientSessionHandle, Task<TResult>> action,
+            CancellationToken cancellationToken = default)
         {
-            using var session = await _mongoClient.StartSessionAsync();
+            using var session = await _mongoClient.StartSessionAsync(cancellationToken: cancellationToken);
             session.StartTransaction();
 
             try
             {
                 var result = await action(session);
-                await session.CommitTransactionAsync();
+                await session.CommitTransactionAsync(cancellationToken);
                 return result;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Transaction failed for {EntityType}", typeof(T).Name);
-                await session.AbortTransactionAsync();
+
+                try
+                {
+                    await session.AbortTransactionAsync(cancellationToken);
+                }
+                catch (Exception abortEx)
+                {
+                    _logger.LogError(abortEx, "Failed to abort transaction after error");
+                }
+
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Checks if an entity with the specified ID exists.
+        /// </summary>
+        /// <param name="id">The entity ID to check.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>True if the entity exists; otherwise, false.</returns>
+        public virtual async Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var filter = Builders<T>.Filter.Eq("Id", id);
+                return await _collection.CountDocumentsAsync(filter, new CountOptions { Limit = 1 }, cancellationToken) > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to check existence of entity of type {Type} with ID {Id}", typeof(T).Name, id);
+                throw new DatabaseException($"Failed to check existence of {typeof(T).Name} with ID {id}", ex);
+            }
+        }
+
+        /// <summary>
+        /// Creates a paginated result set.
+        /// </summary>
+        /// <param name="filter">The filter to apply.</param>
+        /// <param name="page">The page number (1-based).</param>
+        /// <param name="pageSize">The page size.</param>
+        /// <param name="sortField">Optional field to sort by.</param>
+        /// <param name="sortAscending">Whether to sort ascending.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A paginated result set.</returns>
+        public virtual async Task<PaginatedResult<T>> GetPaginatedAsync(
+            FilterDefinition<T> filter,
+            int page = 1,
+            int pageSize = 20,
+            string sortField = null,
+            bool sortAscending = false,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                if (page < 1) page = 1;
+                if (pageSize < 1) pageSize = 20;
+                if (pageSize > 100) pageSize = 100; // Limit maximum page size
+
+                // Count total matching documents
+                var totalCount = await _collection.CountDocumentsAsync(filter, cancellationToken: cancellationToken);
+
+                // Build sort definition
+                SortDefinition<T> sortDefinition = null;
+                if (!string.IsNullOrEmpty(sortField) && _validPropertyNames.Contains(sortField))
+                {
+                    sortDefinition = sortAscending
+                        ? Builders<T>.Sort.Ascending(sortField)
+                        : Builders<T>.Sort.Descending(sortField);
+                }
+                else
+                {
+                    // Default sort by ID
+                    sortDefinition = Builders<T>.Sort.Descending("Id");
+                }
+
+                // Get paginated results
+                var skip = (page - 1) * pageSize;
+                var items = await _collection.Find(filter)
+                    .Sort(sortDefinition)
+                    .Skip(skip)
+                    .Limit(pageSize)
+                    .ToListAsync(cancellationToken);
+
+                return new PaginatedResult<T>
+                {
+                    Items = items,
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalCount = totalCount,
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get paginated results for type {Type}", typeof(T).Name);
+                throw new DatabaseException($"Failed to get paginated results for {typeof(T).Name}", ex);
+            }
+        }
+
+        protected async Task<TCache> CacheEntityAsync<TCache>(
+            string key,
+            Func<Task<TCache>> factory,
+            TimeSpan? expiration = null)
+        {
+            if (_cache.TryGetValue(key, out TCache value))
+                return value;
+
+            value = await factory();
+            _cache.Set(key, value, expiration ?? TimeSpan.FromMinutes(5));
+            return value;
+        }
+
+        protected async Task<T?> GetByIdCachedAsync(Guid id, TimeSpan? expiration = null)
+        {
+            var key = $"{typeof(T).Name}_GetById_{id}";
+            return await CacheEntityAsync(key, async () => await GetByIdAsync(id), expiration);
+        }
+
+        protected async Task<List<T>> GetAllCachedAsync(TimeSpan? expiration = null)
+        {
+            var key = $"{typeof(T).Name}_GetAll";
+            return await CacheEntityAsync(key, async () => await GetAllAsync(), expiration);
+        }
+
+        protected void ResetCacheForId(Guid id)
+        {
+            var key = $"{typeof(T).Name}_GetById_{id}";
+            _cache.Remove(key);
+        }
+
+        protected void ResetCacheForAll()
+        {
+            var key = $"{typeof(T).Name}_GetAll";
+            _cache.Remove(key);
+        }
+
+        protected void ResetCache(string key)
+        {
+            _cache.Remove(key);
         }
     }
 }

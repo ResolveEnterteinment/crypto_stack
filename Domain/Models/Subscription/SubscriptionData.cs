@@ -1,4 +1,6 @@
-﻿namespace Domain.Models.Subscription
+﻿using Domain.Constants;
+
+namespace Domain.Models.Subscription
 {
     public class SubscriptionData : BaseEntity
     {
@@ -12,6 +14,7 @@
         public required DateTime NextDueDate { get; set; }
         public decimal TotalInvestments { get; set; } = 0;
         public DateTime? EndDate { get; set; } = null;
+        public SubscriptionStatus Status { get; set; } = SubscriptionStatus.Pending;
         public bool IsCancelled { get; set; } = false;
     }
 }

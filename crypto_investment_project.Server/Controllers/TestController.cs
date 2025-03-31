@@ -10,6 +10,7 @@ namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [IgnoreAntiforgeryToken]
     public class TestController(
         IPaymentProcessingService paymentProcessingService,
         IAssetService assetService,
@@ -53,6 +54,7 @@ namespace crypto_investment_project.Server.Controllers
         }
         [HttpPost]
         [Route("newAsset")]
+        [IgnoreAntiforgeryToken]
         public async Task<IActionResult> NewAsset([FromBody] AssetData assetData)
         {
             if (assetData is null)
@@ -72,6 +74,7 @@ namespace crypto_investment_project.Server.Controllers
         }
         [HttpPost]
         [Route("newSubscription")]
+        [IgnoreAntiforgeryToken]
         public async Task<IActionResult> NewSubscription([FromBody] SubscriptionData subscriptionData)
         {
             if (subscriptionData is null)

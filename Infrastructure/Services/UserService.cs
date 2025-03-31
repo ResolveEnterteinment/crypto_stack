@@ -1,5 +1,5 @@
 ﻿using Application.Interfaces;
-using Domain.DTOs;
+using Domain.DTOs.Settings;
 using Domain.Models.User;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;

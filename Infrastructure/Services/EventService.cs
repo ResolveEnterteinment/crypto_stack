@@ -1,8 +1,9 @@
 ﻿using Application.Interfaces;
-using Domain.DTOs;
+using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Models.Event;
 using MediatR;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
@@ -16,7 +17,15 @@ namespace Infrastructure.Services
             IMediator mediator,
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
-            ILogger<BalanceService> logger) : base(mongoClient, mongoDbSettings, "events", logger)
+            ILogger<BalanceService> logger,
+            IMemoryCache cache
+            ) : base(
+                mongoClient,
+                mongoDbSettings,
+                "events",
+                logger,
+                cache
+                )
         {
             _mediator = mediator;
         }

@@ -8,65 +8,196 @@ using Domain.DTOs;
 using Domain.DTOs.Exchange;
 using Domain.Exceptions;
 using Microsoft.Extensions.Logging;
+using Polly;
+using Polly.Retry;
+using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace BinanceLibrary
 {
+    /// <summary>
+    /// Service for interacting with the Binance exchange API.
+    /// </summary>
     public class BinanceService : IExchange
     {
-        private string _reserveAssetTicker;
-        public string Name { get => "BINANCE"; }
-
-        public string ReserveAssetTicker { get => _reserveAssetTicker; set => throw new NotImplementedException(); }
-
+        private readonly string _reserveAssetTicker;
         private readonly BinanceRestClient _binanceClient;
-        private string? MapBinanceStatus(Binance.Net.Enums.OrderStatus status) => status switch
+        private readonly ILogger _logger;
+        private readonly AsyncRetryPolicy _retryPolicy;
+
+        // Dictionary to map Binance OrderStatus to our application OrderStatus
+        private static readonly Dictionary<Binance.Net.Enums.OrderStatus, string> StatusMap = new()
         {
-            Binance.Net.Enums.OrderStatus.PendingNew or Binance.Net.Enums.OrderStatus.PendingNew => OrderStatus.Pending,
-            Binance.Net.Enums.OrderStatus.Filled => OrderStatus.Filled,
-            Binance.Net.Enums.OrderStatus.PartiallyFilled => OrderStatus.PartiallyFilled,
-            Binance.Net.Enums.OrderStatus.Canceled or Binance.Net.Enums.OrderStatus.Rejected or Binance.Net.Enums.OrderStatus.Expired => OrderStatus.Failed,
-            _ => null
+            { Binance.Net.Enums.OrderStatus.New, OrderStatus.Pending },
+            { Binance.Net.Enums.OrderStatus.PendingNew, OrderStatus.Pending },
+            { Binance.Net.Enums.OrderStatus.Filled, OrderStatus.Filled },
+            { Binance.Net.Enums.OrderStatus.PartiallyFilled, OrderStatus.PartiallyFilled },
+            { Binance.Net.Enums.OrderStatus.Canceled, OrderStatus.Failed },
+            { Binance.Net.Enums.OrderStatus.Rejected, OrderStatus.Failed },
+            { Binance.Net.Enums.OrderStatus.Expired, OrderStatus.Failed }
         };
 
-        protected readonly ILogger _logger;
-        public BinanceService(ExchangeSettings binanceSettings, ILogger logger)
-        {
-            // Replace these with your Binance API credentials
-            string apiKey = binanceSettings.ApiKey;
-            string apiSecret = binanceSettings.ApiSecret;
-            bool isTestnet = binanceSettings.IsTestnet;
-            _reserveAssetTicker = binanceSettings.ReserveStableAssetTicker;
-            _logger = logger;
+        public string Name => "BINANCE";
 
-            _binanceClient = new BinanceRestClient(options =>
-            {
-                options.ApiCredentials = new ApiCredentials(apiKey, apiSecret);
-                options.Environment = isTestnet ? BinanceEnvironment.Testnet : BinanceEnvironment.Live;
-            });
+        public string ReserveAssetTicker
+        {
+            get => _reserveAssetTicker;
+            set => throw new NotSupportedException("ReserveAssetTicker can only be set during initialization");
         }
 
-        internal async Task<BinancePlacedOrder> PlaceOrder(string symbol, decimal quantity, string paymentProviderId, Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy, Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
+        /// <summary>
+        /// Maps Binance order status to application order status
+        /// </summary>
+        private string? MapBinanceStatus(Binance.Net.Enums.OrderStatus status) =>
+            StatusMap.TryGetValue(status, out var mappedStatus) ? mappedStatus : null;
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="BinanceService"/> class.
+        /// </summary>
+        /// <param name="binanceSettings">Binance API configuration settings</param>
+        /// <param name="logger">Logger for recording diagnostic information</param>
+        public BinanceService(ExchangeSettings binanceSettings, ILogger logger)
         {
+            // Input validation
+            ArgumentNullException.ThrowIfNull(binanceSettings, nameof(binanceSettings));
+            ArgumentNullException.ThrowIfNull(logger, nameof(logger));
+
+            if (string.IsNullOrWhiteSpace(binanceSettings.ApiKey))
+                throw new ArgumentException("Binance API Key cannot be null or empty", nameof(binanceSettings));
+
+            if (string.IsNullOrWhiteSpace(binanceSettings.ApiSecret))
+                throw new ArgumentException("Binance API Secret cannot be null or empty", nameof(binanceSettings));
+
+            if (string.IsNullOrWhiteSpace(binanceSettings.ReserveStableAssetTicker))
+                throw new ArgumentException("Reserve stable asset ticker cannot be null or empty", nameof(binanceSettings));
+
+            _logger = logger;
+            _reserveAssetTicker = binanceSettings.ReserveStableAssetTicker;
+
+            // Configure retry policy for transient errors
+            _retryPolicy = Policy
+                .Handle<Exception>(ex => IsTransientException(ex))
+                .WaitAndRetryAsync(
+                    3, // Number of retry attempts
+                    retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // Exponential backoff
+                    (ex, timeSpan, retryCount, context) =>
+                    {
+                        _logger.LogWarning(ex,
+                            "Binance API call failed. Retrying {RetryCount}/3 after {RetryInterval}ms. Error: {ErrorMessage}",
+                            retryCount, timeSpan.TotalMilliseconds, ex.Message);
+                    }
+                );
+
+            // Initialize Binance client with secure credential handling
+            _binanceClient = new BinanceRestClient(options =>
+            {
+                options.ApiCredentials = new ApiCredentials(binanceSettings.ApiKey, binanceSettings.ApiSecret);
+                options.Environment = binanceSettings.IsTestnet ? BinanceEnvironment.Testnet : BinanceEnvironment.Live;
+
+                // Set reasonable timeouts for API requests
+                options.RequestTimeout = TimeSpan.FromSeconds(30);
+
+                // Note: Logging configuration is handled via the general logger (_logger) 
+                // passed into this class, rather than through client options
+            });
+
+            _logger.LogInformation("Initialized Binance service with environment: {Environment}, ReserveAsset: {ReserveAsset}",
+                binanceSettings.IsTestnet ? "Testnet" : "Production", _reserveAssetTicker);
+        }
+
+        /// <summary>
+        /// Determines if an exception is transient and can be retried
+        /// </summary>
+        private bool IsTransientException(Exception ex)
+        {
+            // Network-related exceptions that might be temporary
+            return ex is HttpRequestException ||
+                   ex is TimeoutException ||
+                   ex is System.Net.WebException ||
+                   // Binance rate limit or server errors
+                   (ex.Message?.Contains("429") ?? false) || // Rate limit
+                   (ex.Message?.Contains("5") ?? false);    // 5xx server errors
+        }
+
+        /// <summary>
+        /// Places an order on the Binance exchange
+        /// </summary>
+        internal async Task<BinancePlacedOrder> PlaceOrder(
+            string symbol,
+            decimal quantity,
+            string paymentProviderId,
+            Binance.Net.Enums.OrderSide side = Binance.Net.Enums.OrderSide.Buy,
+            Binance.Net.Enums.SpotOrderType type = Binance.Net.Enums.SpotOrderType.Market)
+        {
+            using var activity = new Activity("BinanceService.PlaceOrder").Start();
+            activity.SetTag("symbol", symbol);
+            activity.SetTag("quantity", quantity);
+            activity.SetTag("side", side.ToString());
+            activity.SetTag("orderType", type.ToString());
+            activity.SetTag("paymentProviderId", paymentProviderId);
+
             try
             {
-                var orderResult = await _binanceClient.SpotApi.Trading.PlaceOrderAsync(
-                symbol,
-                side,
-                type,
-                quantity: side == Binance.Net.Enums.OrderSide.Sell ? quantity : null, // Not used for market buy orders.
-                quoteQuantity: side == Binance.Net.Enums.OrderSide.Buy ? quantity : null,
-                newClientOrderId: paymentProviderId.ToString()) //subscription id to track user orders
-                .ConfigureAwait(false);
-                if (!orderResult.Success)
+                _logger.LogInformation(
+                    "Placing Binance order: Symbol={Symbol}, Side={Side}, Type={Type}, Quantity={Quantity}, PaymentId={PaymentId}",
+                    symbol, side, type, quantity, paymentProviderId);
+
+                // Add idempotency by using payment provider ID as client order ID
+                return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    throw new Exception(orderResult.Error?.Message);
-                }
-                return orderResult.Data;
+                    var orderResult = await _binanceClient.SpotApi.Trading.PlaceOrderAsync(
+                        symbol,
+                        side,
+                        type,
+                        quantity: side == Binance.Net.Enums.OrderSide.Sell ? quantity : null,
+                        quoteQuantity: side == Binance.Net.Enums.OrderSide.Buy ? quantity : null,
+                        newClientOrderId: FormatClientOrderId(paymentProviderId))
+                    .ConfigureAwait(false);
+
+                    if (!orderResult.Success)
+                    {
+                        _logger.LogError("Binance order placement failed: {ErrorCode} - {ErrorMessage}",
+                            orderResult.Error?.Code, orderResult.Error?.Message);
+                        throw new ExchangeApiException(
+                            $"Error placing Binance order: Code {orderResult.Error?.Code}, Message: {orderResult.Error?.Message}",
+                            Name);
+                    }
+
+                    _logger.LogInformation("Successfully placed Binance order: OrderId={OrderId}, Status={Status}",
+                        orderResult.Data.Id, orderResult.Data.Status);
+
+                    return orderResult.Data;
+                });
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not ExchangeApiException)
             {
-                throw new Exception($"Error placing Binance order: {ex.Message}");
+                // Wrap non-application exceptions
+                var message = $"Error placing Binance order: {ex.Message}";
+                _logger.LogError(ex, message);
+                throw new ExchangeApiException(message, Name, ex);
             }
+        }
+
+        /// <summary>
+        /// Formats client order ID to ensure it meets Binance requirements
+        /// </summary>
+        private string FormatClientOrderId(string paymentProviderId)
+        {
+            // Binance requires client order IDs to be alphanumeric and max 36 chars
+            // We'll use a prefix + hash approach to keep lengths consistent
+            const string prefix = "CS_";
+
+            // Use last 32 chars max to fit within Binance limits
+            if (paymentProviderId.Length <= 33)
+                return prefix + paymentProviderId;
+
+            // For longer IDs, hash them for consistency
+            using var md5 = MD5.Create();
+            var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(paymentProviderId));
+            var hashString = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+
+            return prefix + hashString;
         }
 
         /// <summary>
@@ -75,13 +206,24 @@ namespace BinanceLibrary
         /// </summary>
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
         /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
-        /// <returns>The order details if successful; otherwise, null.</returns>
+        /// <param name="paymentProviderId">Unique ID for tracking this payment</param>
+        /// <returns>The order details.</returns>
         public async Task<PlacedExchangeOrder> PlaceSpotMarketBuyOrder(string symbol, decimal quantity, string paymentProviderId)
         {
+            if (string.IsNullOrWhiteSpace(symbol))
+                throw new ArgumentException("Symbol cannot be null or empty", nameof(symbol));
+
+            if (quantity <= 0)
+                throw new ArgumentException("Quantity must be greater than zero", nameof(quantity));
+
+            if (string.IsNullOrWhiteSpace(paymentProviderId))
+                throw new ArgumentException("Payment provider ID cannot be null or empty", nameof(paymentProviderId));
+
             try
             {
                 var placedBinanceOrder = await PlaceOrder(symbol, quantity, paymentProviderId);
-                var placedOrder = new PlacedExchangeOrder()
+
+                return new PlacedExchangeOrder
                 {
                     Symbol = symbol,
                     QuoteQuantity = placedBinanceOrder.QuoteQuantity,
@@ -89,29 +231,43 @@ namespace BinanceLibrary
                     Price = placedBinanceOrder.AverageFillPrice,
                     QuantityFilled = placedBinanceOrder.QuantityFilled,
                     OrderId = placedBinanceOrder.Id,
-                    Status = MapBinanceStatus(placedBinanceOrder.Status),
+                    Status = MapBinanceStatus(placedBinanceOrder.Status) ?? OrderStatus.Pending
                 };
-                return placedOrder;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                throw;
+                _logger.LogError(ex, "Failed to place spot market buy order for {Symbol}", symbol);
+                throw; // Re-throw after logging
             }
-
         }
+
         /// <summary>
         /// Places a spot market sell order using the provided API credentials.
-        /// For spot market orders on Binance, the amount to be spent is provided via the quoteOrderQuantity parameter.
         /// </summary>
         /// <param name="symbol">The trading pair (e.g., BTCUSDT).</param>
-        /// <param name="quantity">The amount of the quote asset (e.g., USDT) to spend.</param>
-        /// <returns>The order details if successful; otherwise, null.</returns>
+        /// <param name="quantity">The amount of the base asset (e.g., BTC) to sell.</param>
+        /// <param name="paymentProviderId">Unique ID for tracking this payment</param>
+        /// <returns>The order details.</returns>
         public async Task<PlacedExchangeOrder> PlaceSpotMarketSellOrder(string symbol, decimal quantity, string paymentProviderId)
         {
+            if (string.IsNullOrWhiteSpace(symbol))
+                throw new ArgumentException("Symbol cannot be null or empty", nameof(symbol));
+
+            if (quantity <= 0)
+                throw new ArgumentException("Quantity must be greater than zero", nameof(quantity));
+
+            if (string.IsNullOrWhiteSpace(paymentProviderId))
+                throw new ArgumentException("Payment provider ID cannot be null or empty", nameof(paymentProviderId));
+
             try
             {
-                var placedBinanceOrder = await PlaceOrder(symbol, quantity, paymentProviderId, Binance.Net.Enums.OrderSide.Sell);
-                var placedOrder = new PlacedExchangeOrder()
+                var placedBinanceOrder = await PlaceOrder(
+                    symbol,
+                    quantity,
+                    paymentProviderId,
+                    Binance.Net.Enums.OrderSide.Sell);
+
+                return new PlacedExchangeOrder
                 {
                     Symbol = symbol,
                     QuoteQuantity = placedBinanceOrder.QuoteQuantity,
@@ -119,178 +275,320 @@ namespace BinanceLibrary
                     Price = placedBinanceOrder.AverageFillPrice,
                     QuantityFilled = placedBinanceOrder.QuantityFilled,
                     OrderId = placedBinanceOrder.Id,
-                    Status = MapBinanceStatus(placedBinanceOrder.Status),
+                    Status = MapBinanceStatus(placedBinanceOrder.Status) ?? OrderStatus.Pending
                 };
-                return placedOrder;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                throw;
+                _logger.LogError(ex, "Failed to place spot market sell order for {Symbol}", symbol);
+                throw; // Re-throw after logging
             }
         }
+
+        /// <summary>
+        /// Gets balances for specified tickers or all non-zero balances
+        /// </summary>
+        /// <param name="tickers">Optional list of specific tickers to get balances for</param>
+        /// <returns>Collection of exchange balances</returns>
         public async Task<ResultWrapper<IEnumerable<ExchangeBalance>>> GetBalancesAsync(IEnumerable<string>? tickers = null)
         {
             try
             {
-                _logger.LogInformation("Fetching exchange balances for ticker: {Ticker}", tickers == null ? "All" : string.Join(", ", tickers));
-                var accountInfo = await _binanceClient.SpotApi.Account.GetAccountInfoAsync();
-                if (!accountInfo.Success || accountInfo.Data == null)
-                {
-                    _logger.LogError("Failed to retrieve account info from Binance: {Error}", accountInfo.Error?.Message);
-                    throw new Exception($"Unable to retrieve account info: {accountInfo.Error?.Message}");
-                }
+                _logger.LogInformation("Fetching exchange balances for ticker: {Ticker}",
+                    tickers == null ? "All" : string.Join(", ", tickers));
 
-                var balances = accountInfo.Data.Balances
-                    .Where(b => b.Total > 0m); // Only include non-zero balances
-
-                if (tickers != null && tickers.Any())
+                return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    balances = balances.Where(b => tickers.Contains(b.Asset));
-                }
+                    var accountInfo = await _binanceClient.SpotApi.Account.GetAccountInfoAsync();
+                    if (!accountInfo.Success || accountInfo.Data == null)
+                    {
+                        _logger.LogError("Failed to retrieve account info from Binance: {Error}",
+                            accountInfo.Error?.Message);
 
-                var result = balances.ToList().Select(b => new ExchangeBalance()
-                {
-                    Available = b.Available,
-                    Locked = b.Locked,
+                        throw new ExchangeApiException($"Unable to retrieve account info: {accountInfo.Error?.Message}", this.Name);
+                    }
+
+                    var balances = accountInfo.Data.Balances
+                        .Where(b => b.Total > 0m); // Only include non-zero balances
+
+                    if (tickers != null && tickers.Any())
+                    {
+                        // Normalize tickers for case-insensitive comparison
+                        var normalizedTickers = tickers.Select(t => t.ToUpperInvariant()).ToHashSet();
+                        balances = balances.Where(b => normalizedTickers.Contains(b.Asset.ToUpperInvariant()));
+                    }
+
+                    var result = balances.Select(b => new ExchangeBalance
+                    {
+                        Ticker = b.Asset,
+                        Available = b.Available,
+                        Locked = b.Locked,
+                    }).ToList();
+
+                    _logger.LogInformation("Successfully retrieved {Count} balance(s) from Binance", result.Count);
+                    return ResultWrapper<IEnumerable<ExchangeBalance>>.Success(result);
                 });
-                _logger.LogInformation($"Successfully retrieved {result.ToList().Count} balance(s) from Binance");
-                return ResultWrapper<IEnumerable<ExchangeBalance>>.Success(result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving exchange balances: {Message}", ex.Message);
-                return ResultWrapper<IEnumerable<ExchangeBalance>>.Failure(FailureReason.ExchangeApiError, $"Failed to retrieve exchange balances: {ex.Message}");
+                return ResultWrapper<IEnumerable<ExchangeBalance>>.Failure(
+                    FailureReason.ExchangeApiError,
+                    $"Failed to retrieve exchange balances: {ex.Message}");
             }
         }
-        public async Task<ResultWrapper<ExchangeBalance>> GetBalanceAsync(string symbol)
+
+        /// <summary>
+        /// Gets the balance for a specific ticker
+        /// </summary>
+        /// <param name="ticker">The ticker to get balance for</param>
+        /// <returns>The exchange balance</returns>
+        public async Task<ResultWrapper<ExchangeBalance>> GetBalanceAsync(string ticker)
         {
-            //throw new NotImplementedException();
-            var balanceResult = await GetBalancesAsync(new List<string>().Append(symbol));
+            if (string.IsNullOrWhiteSpace(ticker))
+                throw new ArgumentException("Ticker cannot be null or empty", nameof(ticker));
+
+            var balanceResult = await GetBalancesAsync(new[] { ticker });
             if (!balanceResult.IsSuccess)
             {
-                return ResultWrapper<ExchangeBalance>.Failure(balanceResult.Reason, balanceResult.ErrorMessage);
+                return ResultWrapper<ExchangeBalance>.Failure(
+                    balanceResult.Reason,
+                    balanceResult.ErrorMessage);
             }
+
             var balance = balanceResult.Data.FirstOrDefault();
-            _logger.LogInformation($"{symbol} balance: from Binance: {balance}");
-            return ResultWrapper<ExchangeBalance>.Success(new ExchangeBalance()
+
+            // If no balance found, return zero balance
+            if (balance == null)
             {
-                Available = balance.Available,
-                Locked = balance.Locked,
-            });
+                _logger.LogInformation("No balance found for {Ticker}, returning zero balance", ticker);
+                return ResultWrapper<ExchangeBalance>.Success(new ExchangeBalance
+                {
+                    Ticker = ticker,
+                    Available = 0,
+                    Locked = 0
+                });
+            }
+
+            _logger.LogInformation("{Ticker} balance from Binance: Available={Available}, Locked={Locked}",
+                ticker, balance.Available, balance.Locked);
+
+            return ResultWrapper<ExchangeBalance>.Success(balance);
         }
+
+        /// <summary>
+        /// Checks if there is enough balance for a specified amount
+        /// </summary>
+        /// <param name="ticker">The ticker to check</param>
+        /// <param name="amount">The amount to check against</param>
+        /// <returns>True if enough balance is available, otherwise false</returns>
         public async Task<ResultWrapper<bool>> CheckBalanceHasEnough(string ticker, decimal amount)
         {
+            if (string.IsNullOrWhiteSpace(ticker))
+                throw new ArgumentException("Ticker cannot be null or empty", nameof(ticker));
+
+            if (amount <= 0)
+                throw new ArgumentException("Amount must be greater than zero", nameof(amount));
+
             try
             {
                 var balanceResult = await GetBalanceAsync(ticker);
                 if (!balanceResult.IsSuccess || balanceResult.Data is null)
                 {
-                    throw new BalanceFetchException($"Failed to fetch balance for {this.Name}");
+                    throw new ExchangeApiException($"Failed to fetch balance for {ticker}", this.Name);
                 }
+
                 var balance = balanceResult.Data;
                 if (balance.Available < amount)
                 {
-                    return ResultWrapper<bool>.Success(false, $"Insufficient balance for {this.Name}:{ticker}. Available: {balance.Available} Locked: {balance.Locked} Required: {amount}");
-                    //throw new InsufficientBalanceException($"Insufficient balance for {this.Name}:{ticker}. Available: {balance.Available} Locked: {balance.Locked} Required: {amount}");
+                    _logger.LogWarning("Insufficient balance for {Exchange}:{Ticker}. Available: {Available}, Required: {Required}",
+                        Name, ticker, balance.Available, amount);
+
+                    return ResultWrapper<bool>.Success(false,
+                        $"Insufficient balance for {Name}:{ticker}. Available: {balance.Available} Locked: {balance.Locked} Required: {amount}");
                 }
+
+                _logger.LogInformation("Sufficient balance for {Exchange}:{Ticker}. Available: {Available}, Required: {Required}",
+                    Name, ticker, balance.Available, amount);
+
                 return ResultWrapper<bool>.Success(true);
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error checking balance for {Ticker}: {Message}", ticker, ex.Message);
                 return ResultWrapper<bool>.FromException(ex);
             }
         }
 
+        /// <summary>
+        /// Gets information about a specific order
+        /// </summary>
+        /// <param name="orderId">The order ID to get information for</param>
+        /// <returns>The order details</returns>
         public async Task<PlacedExchangeOrder> GetOrderInfoAsync(long orderId)
         {
-            //throw new NotImplementedException();
-            return await Task.FromResult(new PlacedExchangeOrder()
+            if (orderId <= 0)
+                throw new ArgumentException("Order ID must be greater than zero", nameof(orderId));
+
+            try
             {
-                OrderId = orderId,
-                Symbol = "BTCUSDT",
-                QuoteQuantity = 0,
-                QuoteQuantityFilled = 0,
-                QuantityFilled = 0,
-                Price = 0,
-                Status = "Filled"
-            });
+                // Find the order in the order history - we need the symbol
+                // In a real implementation, we would look up the order by ID
+                // For now, returning a placeholder until implemented
+                _logger.LogWarning("GetOrderInfoAsync method is not fully implemented");
+
+                return await Task.FromResult(new PlacedExchangeOrder()
+                {
+                    OrderId = orderId,
+                    Symbol = "BTCUSDT", // Placeholder
+                    QuoteQuantity = 0,
+                    QuoteQuantityFilled = 0,
+                    QuantityFilled = 0,
+                    Price = 0,
+                    Status = OrderStatus.Filled // Placeholder
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving order info for order ID {OrderId}: {Message}",
+                    orderId, ex.Message);
+                throw new OrderFetchException($"Failed to fetch order information: {ex.Message}");
+            }
         }
 
-        public async Task<ResultWrapper<IEnumerable<PlacedExchangeOrder>>> GetPreviousFilledOrders(string assetTicker, string clientOrderId)
+        /// <summary>
+        /// Gets previous filled orders for a ticker and client order ID
+        /// </summary>
+        /// <param name="assetTicker">The asset ticker</param>
+        /// <param name="clientOrderId">The client order ID</param>
+        /// <returns>Collection of filled orders</returns>
+        public async Task<ResultWrapper<IEnumerable<PlacedExchangeOrder>>> GetPreviousFilledOrders(
+            string assetTicker, string clientOrderId)
         {
             try
             {
+                if (string.IsNullOrWhiteSpace(assetTicker))
+                    throw new ArgumentException("Asset ticker cannot be null or empty", nameof(assetTicker));
+
+                if (string.IsNullOrWhiteSpace(clientOrderId))
+                    throw new ArgumentException("Client order ID cannot be null or empty", nameof(clientOrderId));
+
                 var ordersResult = await GetOrdersByClientOrderId(assetTicker, clientOrderId);
                 if (ordersResult == null || !ordersResult.IsSuccess || ordersResult.Data == null)
                 {
-                    throw new OrderFetchException(ordersResult.ErrorMessage);
+                    throw new OrderFetchException(ordersResult?.ErrorMessage ?? "Failed to fetch orders");
                 }
-                var filledOrders = ordersResult.Data.Where(o => o.Status == OrderStatus.Filled || o.Status == OrderStatus.PartiallyFilled);
+
+                var filledOrders = ordersResult.Data.Where(o =>
+                    o.Status == OrderStatus.Filled || o.Status == OrderStatus.PartiallyFilled);
+
+                _logger.LogInformation("Found {Count} filled orders for client order ID {ClientOrderId}",
+                    filledOrders.Count(), clientOrderId);
 
                 return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Success(filledOrders);
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error retrieving previous filled orders: {Message}", ex.Message);
                 return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.FromException(ex);
             }
-
         }
 
-        public async Task<ResultWrapper<IEnumerable<PlacedExchangeOrder>>> GetOrdersByClientOrderId(string ticker, string clientOrderId)
+        /// <summary>
+        /// Gets orders by client order ID
+        /// </summary>
+        /// <param name="ticker">The ticker</param>
+        /// <param name="clientOrderId">The client order ID</param>
+        /// <returns>Collection of orders</returns>
+        public async Task<ResultWrapper<IEnumerable<PlacedExchangeOrder>>> GetOrdersByClientOrderId(
+            string ticker, string clientOrderId)
         {
+            if (string.IsNullOrWhiteSpace(ticker))
+                throw new ArgumentException("Ticker cannot be null or empty", nameof(ticker));
+
+            if (string.IsNullOrWhiteSpace(clientOrderId))
+                throw new ArgumentException("Client order ID cannot be null or empty", nameof(clientOrderId));
+
             var placedExchangeOrders = new List<PlacedExchangeOrder>();
-            var symbol = $"{ticker}USDC";
+            var symbol = $"{ticker}{_reserveAssetTicker}";
+
             try
             {
                 _logger.LogInformation("Fetching exchange orders for clientOrderId: {ClientOrderId}", clientOrderId);
-                var binanceOrdersResult = await _binanceClient.SpotApi.Trading.GetOrdersAsync(symbol);
-                if (!binanceOrdersResult.Success || binanceOrdersResult.Data == null)
+
+                return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    _logger.LogError($"Failed to retrieve {symbol} orders from Binance: {binanceOrdersResult.Error?.Message}");
-                    throw new Exception(binanceOrdersResult.Error?.Message);
-                }
+                    var binanceOrdersResult = await _binanceClient.SpotApi.Trading.GetOrdersAsync(symbol);
+                    if (!binanceOrdersResult.Success || binanceOrdersResult.Data == null)
+                    {
+                        _logger.LogError("Failed to retrieve {Symbol} orders from Binance: {Error}",
+                            symbol, binanceOrdersResult.Error?.Message);
 
-                var binanceOrders = binanceOrdersResult.Data
-                    .Where(b => b.ClientOrderId == clientOrderId); // Only include non-zero balances
+                        throw new OrderFetchException(binanceOrdersResult.Error?.Message);
+                    }
 
-                placedExchangeOrders = binanceOrders.Select(o => new PlacedExchangeOrder()
-                {
-                    Symbol = symbol,
-                    QuoteQuantity = o.QuoteQuantity,
-                    QuoteQuantityFilled = o.QuoteQuantityFilled,
-                    Price = o.AverageFillPrice,
-                    QuantityFilled = o.QuantityFilled,
-                    OrderId = o.Id,
-                    Status = MapBinanceStatus(o.Status),
-                }).ToList();
+                    // Find orders with matching client order ID
+                    var binanceOrders = binanceOrdersResult.Data
+                        .Where(b => b.ClientOrderId == FormatClientOrderId(clientOrderId));
 
-                _logger.LogInformation("Successfully retrieved {Ticker} orders from Binance for ClientOrderId {ClientOrderId}", ticker, clientOrderId);
-                return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Success(placedExchangeOrders);
+                    placedExchangeOrders = binanceOrders.Select(o => new PlacedExchangeOrder()
+                    {
+                        Symbol = symbol,
+                        QuoteQuantity = o.QuoteQuantity,
+                        QuoteQuantityFilled = o.QuoteQuantityFilled,
+                        Price = o.AverageFillPrice,
+                        QuantityFilled = o.QuantityFilled,
+                        OrderId = o.Id,
+                        Status = MapBinanceStatus(o.Status) ?? OrderStatus.Pending,
+                    }).ToList();
+
+                    _logger.LogInformation("Successfully retrieved {Count} {Ticker} orders from Binance for ClientOrderId {ClientOrderId}",
+                        placedExchangeOrders.Count, ticker, clientOrderId);
+
+                    return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Success(placedExchangeOrders);
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving exchange balances: {Message}", ex.Message);
-                return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Failure(FailureReason.ExchangeApiError, $"Failed to retrieve exchange orders: {ex.Message}");
+                _logger.LogError(ex, "Error retrieving exchange orders: {Message}", ex.Message);
+                return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Failure(
+                    FailureReason.ExchangeApiError,
+                    $"Failed to retrieve exchange orders: {ex.Message}");
             }
         }
 
+        /// <summary>
+        /// Gets the current price for an asset
+        /// </summary>
+        /// <param name="ticker">The ticker to get price for</param>
+        /// <returns>The current price</returns>
         public async Task<ResultWrapper<decimal>> GetAssetPrice(string ticker)
         {
+            if (string.IsNullOrWhiteSpace(ticker))
+                throw new ArgumentException("Ticker cannot be null or empty", nameof(ticker));
+
             try
             {
                 var symbol = $"{ticker}{_reserveAssetTicker}";
-                var binancePriceResult = await _binanceClient.SpotApi.ExchangeData.GetPriceAsync(symbol);
-                if (binancePriceResult is null || !binancePriceResult.Success || binancePriceResult.Data is null)
+                _logger.LogInformation("Fetching price for {Symbol}", symbol);
+
+                return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    throw new Exception($"Failed to fetch Binance price for {ticker}: {binancePriceResult?.Error?.Message ?? "Binance price returned null."}");
-                }
-                return ResultWrapper<decimal>.Success(binancePriceResult.Data.Price);
+                    var binancePriceResult = await _binanceClient.SpotApi.ExchangeData.GetPriceAsync(symbol);
+                    if (binancePriceResult is null || !binancePriceResult.Success || binancePriceResult.Data is null)
+                    {
+                        throw new Exception($"Failed to fetch Binance price for {ticker}: {binancePriceResult?.Error?.Message ?? "Binance price returned null."}");
+                    }
+
+                    _logger.LogInformation("Current price for {Symbol}: {Price}", symbol, binancePriceResult.Data.Price);
+                    return ResultWrapper<decimal>.Success(binancePriceResult.Data.Price);
+                });
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error fetching price for {Ticker}: {Message}", ticker, ex.Message);
                 return ResultWrapper<decimal>.FromException(ex);
             }
-
         }
     }
 }

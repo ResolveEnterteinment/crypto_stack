@@ -1,5 +1,4 @@
 ﻿using Domain.Models.Crypto;
-using MongoDB.Bson.Serialization.Attributes;
 
 namespace Domain.DTOs
 {
@@ -11,8 +10,6 @@ namespace Domain.DTOs
         public decimal Available { get; set; }
         public decimal Locked { get; set; }
         public decimal Total { get; set; }
-
-        [BsonIgnore] // Used for lookup results
         public AssetData AssetDocs { get; set; }
     }
 }

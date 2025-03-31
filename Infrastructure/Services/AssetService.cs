@@ -1,6 +1,9 @@
 ﻿using Application.Interfaces;
 using Domain.DTOs;
+using Domain.DTOs.Settings;
+using Domain.Exceptions;
 using Domain.Models.Crypto;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
@@ -20,10 +23,17 @@ namespace Infrastructure.Services
         public AssetService(
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
-            ILogger<AssetService> logger)
-            : base(mongoClient, mongoDbSettings, "assets", logger)
+            ILogger<AssetService> logger,
+            IMemoryCache cache
+            )
+            : base(
+                  mongoClient,
+                  mongoDbSettings,
+                  "assets",
+                  logger,
+                  cache
+                  )
         {
-            Init();
         }
 
         private async void Init()
@@ -91,7 +101,7 @@ namespace Infrastructure.Services
                 var asset = await GetOneAsync(filter);
                 if (asset == null)
                 {
-                    throw new KeyNotFoundException($"No crypto data found for symbol: {ticker}");
+                    throw new ResourceNotFoundException(asset.GetType().Name, ticker);
                 }
                 return ResultWrapper<AssetData>.Success(asset);
             }

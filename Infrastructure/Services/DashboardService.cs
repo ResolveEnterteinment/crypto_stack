@@ -1,6 +1,8 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Exchange;
 using Domain.DTOs;
+using Domain.DTOs.Settings;
+using Domain.Exceptions;
 using Domain.Models.Crypto;
 using Domain.Models.Dashboard;
 using Microsoft.Extensions.Caching.Memory;
@@ -17,7 +19,8 @@ namespace Infrastructure.Services
         private readonly ISubscriptionService _subscriptionService;
         private readonly IAssetService _assetService;
         private readonly IBalanceService _balanceService;
-        private readonly IMemoryCache _cache;
+
+        private const int PortfolioValueCacheTTLMinutes = 5;
 
         public DashboardService(
             IExchangeService exchangeService,
@@ -33,79 +36,127 @@ namespace Infrastructure.Services
                 mongoDbSettings,
                 "dashboard",
                 logger,
-                Builders<DashboardData>.IndexKeys.Ascending(b => b.UserId)
+                cache,
+                new List<CreateIndexModel<DashboardData>>()
+                    {
+                        new (Builders<DashboardData>.IndexKeys.Ascending(b => b.UserId),
+                            new CreateIndexOptions { Name = "UserId_1" })
+                    }
                 )
         {
             _exchangeService = exchangeService;
             _subscriptionService = subscriptionService;
             _assetService = assetService;
             _balanceService = balanceService;
-            _exchangeService = exchangeService;
-            _cache = cache;
-
-            //InitializeIndexes(database).GetAwaiter().GetResult();
         }
 
-        /*private async Task InitializeIndexes(IMongoDatabase database)
+        public async Task<ResultWrapper<DashboardDto>> GetDashboardDataAsync(Guid userId)
         {
-            
-            await _balances.Indexes.CreateOneAsync(new CreateIndexModel<Balance>(
-                Builders<Balance>.IndexKeys.Ascending(b => b.UserId).Ascending(b => b.AssetId)));
-            await _assets.Indexes.CreateOneAsync(new CreateIndexModel<Asset>(
-                Builders<Asset>.IndexKeys.Ascending(a => a.Ticker)));
-            await _subscriptions.Indexes.CreateOneAsync(new CreateIndexModel<Subscription>(
-                Builders<Subscription>.IndexKeys.Ascending(s => s.UserId)));
-            await _summaries.Indexes.CreateOneAsync(new CreateIndexModel<UserSummary>(
-                Builders<UserSummary>.IndexKeys.Ascending(s => s.UserId)));
-        }*/
-
-        public async Task<DashboardDto> GetDashboardDataAsync(string userIdString)
-        {
-            if (!Guid.TryParse(userIdString, out var userId))
+            try
             {
+                string cacheKey = $"dashboard_{userId}";
 
-            }
-            string cacheKey = $"dashboard_{userId}";
-            if (_cache.TryGetValue(cacheKey, out DashboardDto cached))
-                return cached;
-
-            var balancesTask = FetchBalancesWithAssetsAsync(userId);
-            var totalInvestmentsTask = FetchTotalInvestmentsAsync(userId);
-            var portfolioValueTask = FetchPortfolioValueAsync(userId);
-
-            await Task.WhenAll(balancesTask, totalInvestmentsTask, portfolioValueTask);
-
-            var result = new DashboardDto
-            {
-                Balances = balancesTask.Result,
-                TotalInvestments = totalInvestmentsTask.Result,
-                PortfolioValue = portfolioValueTask.Result.Data
-            };
-
-            _cache.Set(cacheKey, result, TimeSpan.FromSeconds(30));
-            return result;
-        }
-
-        private async Task<List<BalanceDto>> FetchBalancesWithAssetsAsync(Guid userId)
-        {
-            /*return await _balanceService.Collection.Aggregate()
-                .Match(b => b.UserId == userId)
-                .Lookup(
-                    foreignCollection: _assetService.CollectionName,
-                    localField: b => b.AssetId,
-                    foreignField: a => a.Id,
-                    @as: b => b.AssetDocs)
-            .Unwind(b => b.AssetDocs)
-                .Project(b => new BalanceDto
+                var cached = await CacheEntityAsync(cacheKey, async () =>
                 {
-                    AssetName = b.AssetDocs.Name,
-                    Ticker = b.AssetDocs.Ticker,
-                    Available = b.Available,
-                    Locked = b.Locked,
-                    Total = b.Total
-                })
-                .ToListAsync();*/
-            throw new NotImplementedException();
+                    var totalInvestments = await FetchTotalInvestmentsAsync(userId);
+                    var balancesTask = await FetchBalancesWithAssetsAsync(userId);
+                    var portfolioValueTask = await FetchPortfolioValueAsync(userId, balancesTask.Data);
+
+                    await UpdateDashboardData(userId, totalInvestments, balancesTask.Data, portfolioValueTask.Data);
+
+                    var result = new DashboardDto
+                    {
+                        Balances = balancesTask.Data,
+                        TotalInvestments = totalInvestments,
+                        PortfolioValue = portfolioValueTask.Data
+                    };
+                    return result;
+                }, TimeSpan.FromMinutes(1));
+
+                return ResultWrapper<DashboardDto>.Success(cached);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<DashboardDto>.FromException(ex);
+            }
+
+        }
+
+        private async Task<ResultWrapper<IEnumerable<BalanceDto>>> FetchBalancesWithAssetsAsync(Guid userId)
+        {
+            try
+            {
+                // Log the start of the operation
+                _logger.LogInformation("Starting to fetch balances with assets for user {UserId}", userId);
+
+                // First get the raw balances to verify data exists
+                var rawBalances = await _balanceService.Collection
+                    .Find(b => b.UserId == userId)
+                    .ToListAsync();
+
+                _logger.LogInformation("Found {Count} raw balances for user {UserId}",
+                    rawBalances.Count, userId);
+
+                // If there are no balances, return an empty list
+                if (!rawBalances.Any())
+                {
+                    _logger.LogInformation("No balances found for user {UserId}", userId);
+                    return ResultWrapper<IEnumerable<BalanceDto>>.Success(new List<BalanceDto>());
+                }
+
+                // Log the asset IDs we're looking up
+                _logger.LogInformation("Looking up assets for IDs: {AssetIds}",
+                    string.Join(", ", rawBalances.Select(b => b.AssetId)));
+
+                // Use a simpler approach with multiple queries instead of aggregation
+                var result = new List<BalanceDto>();
+
+                foreach (var balance in rawBalances)
+                {
+                    try
+                    {
+                        // Get the asset for this balance
+                        var asset = await _assetService.GetByIdAsync(balance.AssetId);
+
+                        if (asset == null)
+                        {
+                            _logger.LogWarning("Asset not found for ID {AssetId}, user {UserId}",
+                                balance.AssetId, userId);
+                            continue;
+                        }
+
+                        // Create the DTO
+                        var balanceDto = new BalanceDto
+                        {
+                            AssetName = asset.Name,
+                            Ticker = asset.Ticker,
+                            Available = balance.Available,
+                            Locked = balance.Locked,
+                            Total = balance.Total
+                        };
+
+                        result.Add(balanceDto);
+
+                        _logger.LogDebug("Successfully mapped balance for asset {Ticker}", asset.Ticker);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing balance for asset {AssetId}", balance.AssetId);
+                        // Continue with the next balance instead of failing completely
+                    }
+                }
+
+                _logger.LogInformation("Returning {Count} balance DTOs for user {UserId}",
+                    result.Count, userId);
+
+                return ResultWrapper<IEnumerable<BalanceDto>>.Success(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch balances with assets for user {UserId}: {ErrorMessage}",
+                    userId, ex.Message);
+                return ResultWrapper<IEnumerable<BalanceDto>>.FromException(ex);
+            }
         }
 
         private async Task<decimal> FetchTotalInvestmentsAsync(Guid userId)
@@ -114,44 +165,97 @@ namespace Infrastructure.Services
             return subscriptionResult.Data?.Select(s => s.TotalInvestments).Sum() ?? 0;
         }
 
-        private async Task<ResultWrapper<decimal>> FetchPortfolioValueAsync(Guid userId)
+        private async Task<ResultWrapper<decimal>> FetchPortfolioValueAsync(Guid userId, IEnumerable<BalanceDto> balances)
         {
-            var summary = await _collection
-                .Find(s => s.UserId == userId.ToString())
-                .FirstOrDefaultAsync();
+            try
+            {
+                var summary = await GetOneAsync(new FilterDefinitionBuilder<DashboardData>().Eq(d => d.UserId, userId));
 
-            if (summary != null && (DateTime.UtcNow - summary.LastUpdated).TotalMinutes < 5)
-                return summary.PortfolioValue;
+                if (summary != null && (DateTime.UtcNow - summary.LastUpdated).TotalMinutes < PortfolioValueCacheTTLMinutes)
+                    return ResultWrapper<decimal>.Success(summary.PortfolioValue);
 
-            var balances = await FetchBalancesWithAssetsAsync(userId);
-            decimal portfolioValue = 0;
+                decimal portfolioValue = await CalculatePortfolioValue(balances);
+                return ResultWrapper<decimal>.Success(portfolioValue);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<decimal>.FromException(ex);
+            }
+
+        }
+
+        public async Task<ResultWrapper> UpdateDashboardData(
+            Guid userId,
+            decimal totalInvestments,
+            IEnumerable<BalanceDto> balances,
+            decimal portfolioValue
+            )
+        {
+            try
+            {
+                // First check if the dashboard document exists
+                var filter = Builders<DashboardData>.Filter.Eq(s => s.UserId, userId);
+                var exists = await _collection.CountDocumentsAsync(filter) > 0;
+
+                if (exists)
+                {
+                    // Document exists, simple update
+                    var update = Builders<DashboardData>.Update
+                        .Set(s => s.TotalInvestments, totalInvestments)
+                        .Set(s => s.AssetHoldings, balances)
+                        .Set(s => s.PortfolioValue, portfolioValue)
+                        .Set(s => s.LastUpdated, DateTime.UtcNow);
+
+                    await _collection.UpdateOneAsync(filter, update);
+                }
+                else
+                {
+                    // Document doesn't exist, create a new one with explicit Guid ID
+                    var dashboard = new DashboardData
+                    {
+                        Id = Guid.NewGuid(),  // Explicitly set the Guid ID
+                        UserId = userId,
+                        TotalInvestments = totalInvestments,
+                        AssetHoldings = balances,
+                        PortfolioValue = portfolioValue,
+                        LastUpdated = DateTime.UtcNow
+                    };
+
+                    await _collection.InsertOneAsync(dashboard);
+                }
+
+                return ResultWrapper.Success();
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper.FromException(ex);
+            }
+        }
+
+        private async Task<decimal> CalculatePortfolioValue(IEnumerable<BalanceDto> balances)
+        {
+            var portfolioValue = 0m;
+
             foreach (var balance in balances)
             {
                 var assetResult = await _assetService.GetByTickerAsync(balance.Ticker);
-                if (!ResultWrapper<AssetData>.TryParse(assetResult, out var asset, out var assetErrorMessage, out var assetFailureReason, out var assetValidationErrors))
+                if (!ResultWrapper<AssetData>.TryParse(assetResult, out var asset))
                 {
-                    return ResultWrapper<decimal>.Failure(assetFailureReason, assetErrorMessage);
+                    throw new AssetFetchException($"Failed to fetch asset for ticker {balance.Ticker}: {assetResult.ErrorMessage}");
                 }
+                if (asset.Exchange == "Platform")
+                    continue;
 
                 var rateResult = await _exchangeService.Exchanges[asset.Exchange].GetAssetPrice(balance.Ticker);
-                if (!ResultWrapper<decimal>.TryParse(rateResult, out var rate, out var rateErrorMessage, out var rateFailureReason, out var rateValidationErrors))
+                if (!ResultWrapper<decimal>.TryParse(rateResult, out var rate))
                 {
-                    return ResultWrapper<decimal>.Failure(rateFailureReason, rateErrorMessage);
+                    throw new ExchangeApiException(rateResult.ErrorMessage, this.GetType().Name);
                 }
+
                 portfolioValue += balance.Total * rate;
             }
-
-            await UpdatePortfolioValueAsync(userId, portfolioValue);
             return portfolioValue;
         }
 
-        public async Task UpdatePortfolioValueAsync(Guid userId, decimal portfolioValue)
-        {
-            var filter = Builders<DashboardData>.Filter.Eq("UserId", userId);
-            var update = Builders<DashboardData>.Update
-                .Set(s => s.PortfolioValue, portfolioValue)
-                .Set(s => s.LastUpdated, DateTime.UtcNow);
-            await _collection.FindOneAndUpdateAsync(filter, update, new FindOneAndUpdateOptions<DashboardData> { IsUpsert = true });
-        }
     }
 }

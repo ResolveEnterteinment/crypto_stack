@@ -1,6 +1,7 @@
 using Domain.Constants;
 using Domain.DTOs.Error;
 using Domain.Exceptions;
+using Microsoft.AspNetCore.Antiforgery;
 using System.Diagnostics;
 using System.Text.Json;
 
@@ -13,11 +14,16 @@ namespace crypto_investment_project.Server.Middleware
     {
         private readonly RequestDelegate _next;
         private readonly ILogger<GlobalExceptionHandlingMiddleware> _logger;
+        private readonly IWebHostEnvironment _environment;
 
-        public GlobalExceptionHandlingMiddleware(RequestDelegate next, ILogger<GlobalExceptionHandlingMiddleware> logger)
+        public GlobalExceptionHandlingMiddleware(
+            RequestDelegate next,
+            ILogger<GlobalExceptionHandlingMiddleware> logger,
+            IWebHostEnvironment environment)
         {
             _next = next;
             _logger = logger;
+            _environment = environment;
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -34,54 +40,81 @@ namespace crypto_investment_project.Server.Middleware
 
         private async Task HandleExceptionAsync(HttpContext context, Exception exception)
         {
-            _logger.LogError(exception, "Unhandled exception occurred");
+            // Get request details for logging
+            var request = context.Request;
+            var correlationId = Activity.Current?.Id ?? context.TraceIdentifier;
 
+            // Log the exception with enhanced context
+            _logger.LogError(exception,
+                "Unhandled exception occurred. Method: {Method}, Path: {Path}, QueryString: {QueryString}, CorrelationId: {CorrelationId}",
+                request.Method, request.Path, request.QueryString, correlationId);
+
+            // Create error response object
             var errorResponse = new ErrorResponse
             {
-                TraceId = Activity.Current?.Id ?? context.TraceIdentifier
+                TraceId = correlationId
             };
 
+            // Determine failure reason and status code
             var failureReason = FailureReasonExtensions.FromException(exception);
             context.Response.StatusCode = failureReason.ToStatusCode();
 
-            if (exception is DomainException domainException)
+            // Handle antiforgery token validation failures specifically
+            if (exception is AntiforgeryValidationException)
             {
-                errorResponse.Code = domainException.ErrorCode;
-                errorResponse.Message = domainException.Message;
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                errorResponse.Code = "INVALID_ANTIFORGERY_TOKEN";
+                errorResponse.Message = "Invalid antiforgery token or token missing from request.";
 
-                // Add validation errors if present
-                if (domainException is ValidationException validationException)
+                // Add detailed error info in development
+                if (_environment.IsDevelopment())
                 {
-                    errorResponse.ValidationErrors = validationException.ValidationErrors;
-                }
-
-                // For specific domain exceptions, add additional logging context
-                switch (domainException)
-                {
-                    case OrderExecutionException orderEx:
-                        _logger.LogError("Order execution failed. Exchange: {Exchange}, OrderId: {OrderId}",
-                            orderEx.Exchange, orderEx.OrderId ?? "Unknown");
-                        break;
-                    case PaymentProcessingException paymentEx:
-                        _logger.LogError("Payment processing failed. Provider: {Provider}, PaymentId: {PaymentId}",
-                            paymentEx.PaymentProvider, paymentEx.PaymentId ?? "Unknown");
-                        break;
+                    errorResponse.Message += " " + exception.Message;
                 }
             }
             else
             {
-                // Generic exception handling
-                errorResponse.Code = failureReason.ToString();
+                // Handle different exception types
+                if (exception is DomainException domainException)
+                {
+                    errorResponse.Code = domainException.ErrorCode;
+                    errorResponse.Message = domainException.Message;
 
-                // Sanitize messages for non-domain exceptions in production
-                errorResponse.Message = context.Request.Host.Host.Contains("localhost") ||
-                                       context.Request.Host.Host.Contains("127.0.0.1")
-                    ? exception.Message
-                    : "An unexpected error occurred. Please try again later.";
+                    // Add validation errors if present
+                    if (domainException is ValidationException validationException)
+                    {
+                        errorResponse.ValidationErrors = validationException.ValidationErrors;
+                    }
+
+                    // For specific domain exceptions, add additional logging context
+                    switch (domainException)
+                    {
+                        case OrderExecutionException orderEx:
+                            _logger.LogError("Order execution failed. Exchange: {Exchange}, OrderId: {OrderId}",
+                                orderEx.Exchange, orderEx.OrderId ?? "Unknown");
+                            break;
+                        case PaymentApiException paymentEx:
+                            _logger.LogError("Payment processing failed. Provider: {Provider}, PaymentId: {PaymentId}",
+                                paymentEx.PaymentProvider, paymentEx.PaymentId ?? "Unknown");
+                            break;
+                    }
+                }
+                else
+                {
+                    // Generic exception handling
+                    errorResponse.Code = failureReason.ToString();
+
+                    // Only return detailed errors in development
+                    errorResponse.Message = _environment.IsDevelopment()
+                        ? exception.Message
+                        : "An unexpected error occurred. Please try again later.";
+                }
             }
 
+            // Set response content type
             context.Response.ContentType = "application/json";
 
+            // Serialize and return the error response
             var jsonOptions = new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

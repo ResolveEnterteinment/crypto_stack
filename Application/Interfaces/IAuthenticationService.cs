@@ -11,6 +11,7 @@ namespace Application.Interfaces
         Task<BaseResponse> AddRoleToUser(AddRoleRequest request);
         Task<BaseResponse> RemoveRoleFromUser(AddRoleRequest request);
         Task<BaseResponse> ConfirmEmail(string userId, string token);
+        public Task<BaseResponse> RefreshToken(string accessToken, string refreshToken);
         Task<bool> UserHasRole(string userId, string roleName);
     }
 }

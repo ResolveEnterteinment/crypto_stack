@@ -3,9 +3,11 @@ using Application.Interfaces;
 using Application.Interfaces.Payment;
 using Domain.Constants;
 using Domain.DTOs;
+using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Exceptions;
 using Domain.Models.Payment;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
@@ -18,6 +20,7 @@ namespace Infrastructure.Services
     public class PaymentService : BaseService<PaymentData>, IPaymentService
     {
         private readonly Dictionary<string, IPaymentProvider> _providers = new Dictionary<string, IPaymentProvider>(StringComparer.OrdinalIgnoreCase);
+        private readonly IPaymentProvider _defaultProvider;
         private readonly IStripeService _stripeService;
         private readonly IAssetService _assetService;
         private readonly IEventService _eventService;
@@ -25,25 +28,38 @@ namespace Infrastructure.Services
         private readonly IIdempotencyService _idempotencyService;
 
         public Dictionary<string, IPaymentProvider> Providers { get => _providers; }
+        public IPaymentProvider Defaultprovider => _defaultProvider;
 
         public PaymentService(
+            IOptions<PaymentServiceSettings> paymentServiceSettings,
             IOptions<StripeSettings> stripeSettings,
             IAssetService assetService,
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
             ILogger<PaymentService> logger,
+            IMemoryCache cache,
             IEventService eventService,
             INotificationService notificationService,
             IIdempotencyService idempotencyService
             )
-            : base(mongoClient, mongoDbSettings, "payments", logger)
+            : base(
+                  mongoClient,
+                  mongoDbSettings,
+                  "payments",
+                  logger,
+                  cache
+                  )
         {
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
-            _stripeService = new StripeService(stripeSettings, logger);
+
+            _stripeService = new StripeService(stripeSettings);
+
             Providers.Add("Stripe", (IPaymentProvider)_stripeService);
+
+            _defaultProvider = Providers[paymentServiceSettings.Value.DefaultProvider] ?? Providers["Stripe"];
         }
 
         /// <summary>
@@ -111,7 +127,7 @@ namespace Infrastructure.Services
                     {
                         _logger.LogWarning("Failed to retrieve PaymentIntent {PaymentIntentId} for Charge {ChargeId}",
                             charge.PaymentIntentId, charge.Id);
-                        throw new PaymentProcessingException(
+                        throw new PaymentApiException(
                             $"Could not retrieve associated PaymentIntent {charge.PaymentIntentId}",
                             "Stripe",
                             charge.Id);
@@ -202,7 +218,7 @@ namespace Infrastructure.Services
                     _logger.LogWarning(ex, "Validation error processing charge {ChargeId}", charge?.Id);
                     return ResultWrapper<Guid>.Failure(FailureReason.ValidationError, ex.Message);
                 }
-                catch (PaymentProcessingException ex)
+                catch (PaymentApiException ex)
                 {
                     _logger.LogError(ex, "Payment processing error for charge {ChargeId}", charge?.Id);
                     return ResultWrapper<Guid>.Failure(FailureReason.PaymentProcessingError, ex.Message);
@@ -393,6 +409,36 @@ namespace Infrastructure.Services
                     return ResultWrapper<Guid>.FromException(ex);
                 }
             }
+        }
+        public async Task<ResultWrapper<string>> CreateCheckoutSession(Guid userId, Guid subscriptionId, decimal amount, string interval, string? providerName = null)
+        {
+            try
+            {
+                IPaymentProvider provider;
+
+                if (providerName == null || !Providers.ContainsKey(providerName))
+                {
+                    provider = _defaultProvider;
+                }
+                else
+                {
+                    provider = Providers[providerName];
+                }
+
+                var sessionUrl = await provider.CreateCheckoutSession(userId, subscriptionId, amount, interval);
+
+                if (string.IsNullOrEmpty(sessionUrl))
+                {
+                    throw new PaymentApiException($"Failed to create checkout session.", provider.Name);
+                }
+
+                return ResultWrapper<string>.Success(sessionUrl);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<string>.FromException(ex);
+            }
+
         }
     }
 }
