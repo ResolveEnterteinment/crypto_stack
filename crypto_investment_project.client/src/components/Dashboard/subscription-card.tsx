@@ -1,0 +1,135 @@
+import React, { useState } from 'react';
+
+const SubscriptionCard = ({ subscription, onEdit, onCancel, onViewHistory }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  
+  // Format date
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+  
+  // Calculate progress to next payment
+  const calculateProgress = () => {
+    const now = new Date();
+    const nextDue = new Date(subscription.nextDueDate);
+    const createdDate = new Date(subscription.createdAt);
+    
+    // Get interval in days
+    const intervalMap = {
+      DAILY: 1,
+      WEEKLY: 7,
+      MONTHLY: 30
+    };
+    
+    const intervalDays = intervalMap[subscription.interval.toUpperCase()] || 30;
+    const totalDuration = intervalDays * 24 * 60 * 60 * 1000; // in ms
+    const elapsed = now.getTime() - createdDate.getTime();
+    const progress = (elapsed % totalDuration) / totalDuration * 100;
+    
+    return Math.min(Math.max(progress, 0), 100);
+  };
+  
+  return (
+    <div className={`bg-white shadow-lg rounded-xl p-6 relative transition-all duration-200 ${subscription.isCancelled ? 'opacity-75' : ''}`}>
+      {/* Status badge */}
+      <div className={`absolute top-4 right-4 px-2 py-1 text-xs font-semibold rounded-full ${
+        subscription.isCancelled ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+      }`}>
+        {subscription.isCancelled ? 'Cancelled' : 'Active'}
+      </div>
+      
+      {/* Subscription header */}
+      <div className="mb-4">
+        <h3 className="text-xl font-semibold">
+          {subscription.amount} {subscription.currency} {subscription.interval}
+        </h3>
+        <p className="text-gray-500 text-sm">Created: {formatDate(subscription.createdAt)}</p>
+      </div>
+      
+      {/* Progress to next payment */}
+      <div className="mb-6">
+        <div className="flex justify-between text-xs text-gray-500 mb-1">
+          <span>Last payment</span>
+          <span>Next payment: {formatDate(subscription.nextDueDate)}</span>
+        </div>
+        <div className="w-full bg-gray-200 rounded-full h-2.5">
+          <div 
+            className="bg-blue-600 h-2.5 rounded-full" 
+            style={{ width: `${calculateProgress()}%` }}
+          />
+        </div>
+      </div>
+      
+      {/* Toggle details button */}
+      <button 
+        className="text-blue-600 text-sm font-medium mb-4 flex items-center"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        {isExpanded ? 'Hide details' : 'Show details'}
+        <svg 
+          className={`ml-1 w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} 
+          fill="none" 
+          stroke="currentColor" 
+          viewBox="0 0 24 24" 
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      
+      {/* Expanded details */}
+      {isExpanded && (
+        <div className="mb-6 space-y-2 text-sm">
+          <p className="text-gray-700">
+            <span className="font-semibold">ID:</span> {subscription.id}
+          </p>
+          <p className="text-gray-700">
+            <span className="font-semibold">Total invested:</span> {subscription.totalInvestments} {subscription.currency}
+          </p>
+          <div>
+            <p className="font-semibold mb-1">Allocations:</p>
+            <div className="bg-gray-50 p-3 rounded-md">
+              {subscription.allocations?.map((alloc) => (
+                <div key={alloc.id} className="flex justify-between py-1 border-b border-gray-100 last:border-0">
+                  <span>{alloc.ticker}</span>
+                  <span className="font-medium">{alloc.percentAmount}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Action buttons */}
+      <div className="flex space-x-2">
+        <button 
+          onClick={() => onEdit(subscription.id)}
+          className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 px-4 rounded-md text-sm font-medium transition-colors"
+          disabled={subscription.isCancelled}
+        >
+          Edit
+        </button>
+        {!subscription.isCancelled && (
+          <button 
+            onClick={() => onCancel(subscription.id)}
+            className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 px-4 rounded-md text-sm font-medium transition-colors"
+          >
+            Cancel
+          </button>
+        )}
+        <button 
+          onClick={() => onViewHistory(subscription.id)}
+          className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-4 rounded-md text-sm font-medium transition-colors"
+        >
+          History
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default SubscriptionCard;

@@ -1,184 +1,325 @@
 ﻿import React, { useEffect, useState } from 'react';
-import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
-import Navbar from "../components/Navbar"
-import { getSubscriptions, ISubscription } from "../services/subscription";
-import { getDashboardData, IBalance } from "../services/dashboard";
+import PortfolioChart from "../components/Dashboard/portfolio-chart";
+import AssetBalanceCard from "../components/Dashboard/asset-balance-card";
+import SubscriptionCard from "../components/Dashboard/subscription-card";
 
-const DashboardPage: React.FC = () => {
-    const [isModalOpen, setModalOpen] = useState(false);
-    const { user, logout } = useAuth();
-    const [balances, setBalances] = useState<IBalance[] | null>(null); // Changed from empty array to null
-    const [totalInvestments, setTotalInvestments] = useState<number | null>(null); // Changed from 0 to null
-    const [portfolioValue, setPortfolioValue] = useState<number | null>(null); // Changed from 0 to null
-    const [subscriptions, setSubscriptions] = useState<ISubscription[] | null>(null); // Changed from empty array to null
-    const navigate = useNavigate();
+const DashboardPage = ({ user, logout, navigate }) => {
+    // State management
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [isHistoryModalOpen, setHistoryModalOpen] = useState(false);
+    const [selectedSubscription, setSelectedSubscription] = useState(null);
+    const [dashboardData, setDashboardData] = useState({
+        balances: [],
+        totalInvestments: 0,
+        portfolioValue: 0
+    });
+    const [subscriptions, setSubscriptions] = useState([]);
 
+    // Mock data for demonstration
     useEffect(() => {
-        if (!user || !user.id) return;
-        fetchDashboardData(user.id);
-        fetchSubscriptions(user.id);
-    }, [user]);
+        // Simulating API call
+        setTimeout(() => {
+            setDashboardData({
+                balances: [
+                    { ticker: 'BTC', assetName: 'Bitcoin', total: 0.5, available: 0.5, locked: 0 },
+                    { ticker: 'ETH', assetName: 'Ethereum', total: 2.5, available: 2.5, locked: 0 },
+                    { ticker: 'USDT', assetName: 'Tether', total: 500, available: 500, locked: 0 }
+                ],
+                totalInvestments: 10000,
+                portfolioValue: 11500
+            });
 
-    const fetchDashboardData = async (id: string) => {
-        if (!id) return;
-        const data = await getDashboardData(id);
-        console.log("assetHoldings: ", data.assetHoldings);
-        console.log("totalInvestments: ", data.totalInvestments);
-        console.log("portfolioValue: ", data.portfolioValue);
-        setBalances(data.assetHoldings);
-        setTotalInvestments(data.totalInvestments);
-        setPortfolioValue(data.portfolioValue);
-    };
+            setSubscriptions([
+                {
+                    id: '1',
+                    createdAt: '2025-01-01T00:00:00Z',
+                    userId: '123',
+                    allocations: [
+                        { id: 'a1', ticker: 'BTC', percentAmount: 50 },
+                        { id: 'a2', ticker: 'ETH', percentAmount: 30 },
+                        { id: 'a3', ticker: 'USDT', percentAmount: 20 }
+                    ],
+                    interval: 'MONTHLY',
+                    amount: 500,
+                    currency: 'USD',
+                    nextDueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                    endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+                    totalInvestments: 5000,
+                    isCancelled: false
+                },
+                {
+                    id: '2',
+                    createdAt: '2025-02-01T00:00:00Z',
+                    userId: '123',
+                    allocations: [
+                        { id: 'b1', ticker: 'BTC', percentAmount: 100 }
+                    ],
+                    interval: 'WEEKLY',
+                    amount: 100,
+                    currency: 'USD',
+                    nextDueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+                    endDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000),
+                    totalInvestments: 1000,
+                    isCancelled: false
+                }
+            ]);
 
-    const fetchSubscriptions = async (id: string) => {
-        if (!id) return;
-        const data = await getSubscriptions(id);
-        setSubscriptions(data);
-    };
+            setLoading(false);
+        }, 1500);
+    }, []);
 
+    // Handler functions
     const handleLogout = () => {
         logout();
-        navigate("/auth");
+    };
+
+    const handleEditSubscription = (id) => {
+        // Implement edit functionality
+        console.log(`Edit subscription ${id}`);
+    };
+
+    const handleCancelSubscription = async (id) => {
+        // Implement cancel functionality
+        console.log(`Cancel subscription ${id}`);
+
+        // Update local state to simulate API call
+        setSubscriptions(subscriptions.map(sub =>
+            sub.id === id ? { ...sub, isCancelled: true } : sub
+        ));
+    };
+
+    const handleViewHistory = (id) => {
+        setSelectedSubscription(id);
+        setHistoryModalOpen(true);
     };
 
     const showProfile = () => {
-        alert("Showing user profile...");
+        console.log("Show profile");
     };
 
     const showSettings = () => {
-        alert("Showing user settings...");
+        console.log("Show settings");
     };
 
+    // Calculate profit/loss percentage
+    const calculateProfitPercentage = () => {
+        const { totalInvestments, portfolioValue } = dashboardData;
+        if (!totalInvestments || totalInvestments === 0) return 0;
+
+        return ((portfolioValue - totalInvestments) / totalInvestments) * 100;
+    };
+
+    const profitPercentage = calculateProfitPercentage();
+    const isProfitable = profitPercentage >= 0;
+
+    if (loading) {
+        return (
+            <div className="min-h-screen bg-gray-50 flex justify-center items-center">
+                <div className="text-center">
+                    <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-gray-500">Loading your dashboard...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="min-h-screen bg-gray-50 flex justify-center items-center">
+                <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full text-center">
+                    <div className="text-red-500 text-5xl mb-4">
+                        <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                    <h2 className="text-2xl font-bold mb-4">Error Loading Dashboard</h2>
+                    <p className="text-gray-600 mb-6">{error}</p>
+                    <button
+                        className="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
+                    >
+                        Retry
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <>
-            <Navbar showProfile={showProfile} showSettings={showSettings} logout={handleLogout} />
-            <div className="min-h-screen bg-gray-100 py-8 px-4 lg:px-10">
+        <div className="min-h-screen bg-gray-50 py-8 px-4 lg:px-10">
+            {/* Header with welcome message */}
+            <div className="mb-8">
+                <h1 className="text-3xl font-bold mb-2">Welcome back, {user?.username || 'Investor'}</h1>
+                <p className="text-gray-500">Here's the latest update on your investments</p>
+            </div>
+
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                {/* Total Investment Card */}
+                <div className="bg-white shadow rounded-lg p-6">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <p className="text-gray-500 mb-1">Total Investment</p>
+                            <h2 className="text-3xl font-bold">${dashboardData.totalInvestments.toFixed(2)}</h2>
+                        </div>
+                        <div className="bg-blue-100 p-3 rounded-full">
+                            <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Portfolio Value Card */}
+                <div className="bg-white shadow rounded-lg p-6">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <p className="text-gray-500 mb-1">Portfolio Value</p>
+                            <h2 className="text-3xl font-bold">${dashboardData.portfolioValue.toFixed(2)}</h2>
+                        </div>
+                        <div className="bg-green-100 p-3 rounded-full">
+                            <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Profit/Loss Card */}
+                <div className="bg-white shadow rounded-lg p-6">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <p className="text-gray-500 mb-1">Profit/Loss</p>
+                            <h2 className={`text-3xl font-bold ${isProfitable ? 'text-green-600' : 'text-red-600'}`}>
+                                {isProfitable ? '+' : ''}{profitPercentage.toFixed(2)}%
+                            </h2>
+                        </div>
+                        <div className={`${isProfitable ? 'bg-green-100' : 'bg-red-100'} p-3 rounded-full`}>
+                            <svg
+                                className={`w-6 h-6 ${isProfitable ? 'text-green-600' : 'text-red-600'}`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                                xmlns="http://www.w3.org/2000/svg"
+                            >
+                                <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth="2"
+                                    d={isProfitable
+                                        ? "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+                                        : "M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"
+                                    }
+                                ></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <p className="text-gray-500 text-sm mt-2">
+                        {isProfitable ? 'Profit' : 'Loss'} of ${Math.abs(dashboardData.portfolioValue - dashboardData.totalInvestments).toFixed(2)}
+                    </p>
+                </div>
+            </div>
+
+            {/* Chart & Assets Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                {/* Chart */}
+                <div className="bg-white shadow rounded-lg p-6 lg:col-span-2">
+                    <h2 className="text-xl font-semibold mb-4">Investment vs Portfolio Value</h2>
+                    <PortfolioChart
+                        investmentData={dashboardData.totalInvestments}
+                        portfolioData={dashboardData.portfolioValue}
+                    />
+                </div>
+
+                {/* Asset Balance */}
+                <div className="lg:col-span-1">
+                    <AssetBalanceCard balances={dashboardData.balances} />
+                </div>
+            </div>
+
+            {/* Subscriptions Section */}
+            <div className="mb-8">
                 <div className="flex justify-between items-center mb-6">
-                    <h1 className="text-3xl font-bold">Welcome, {user?.username}</h1>
+                    <h2 className="text-2xl font-bold">Your Subscriptions</h2>
+                    <button className="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors text-sm font-medium">
+                        New Subscription
+                    </button>
                 </div>
-                {/* Total Balances Section */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <div className="bg-white shadow rounded-lg p-4">
-                        <h2 className="text-xl font-semibold">Total USD Investment</h2>
-                        <p className="text-2xl font-bold mt-2">
-                            {totalInvestments !== null ? `${totalInvestments.valueOf()} USD` : "Loading..."}
-                        </p>
-                    </div>
-                    <div className="bg-white shadow rounded-lg p-4">
-                        <h2 className="text-xl font-semibold">Asset Holdings</h2>
-                        {balances && balances.length > 0 ? (
-                            balances.map((balance) => (
-                                <p key={balance.assetName} className="font-bold mt-2">
-                                    {balance.ticker}: <span className="font-normal">{balance.total}</span>
-                                </p>
-                            ))
-                        ) : (
-                            <p className="font-bold mt-2">Loading...</p>
-                        )}
-                    </div>
-                    <div className="bg-white shadow rounded-lg p-4">
-                        <h2 className="text-xl font-semibold">Portfolio Value</h2>
-                        <p className="text-2xl font-bold mt-2">
-                            {portfolioValue !== null ? `${portfolioValue} USD` : "Loading..."}
-                        </p>
-                    </div>
-                </div>
-                {/* Subscriptions Section */}
-                <div className="mb-8">
-                    <h2 className="text-2xl font-bold mb-4">Your Subscriptions</h2>
+
+                {subscriptions.length > 0 ? (
                     <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                        {subscriptions && subscriptions.length > 0 ? (
-                            subscriptions.map((sub, index) => (
-                                <div key={sub.id} className="bg-white shadow-lg rounded-xl p-6 relative">
-                                    <div className="mb-4">
-                                        <h3 className="text-xl font-semibold">Subscription #{index + 1}</h3>
-                                        <p className="text-gray-600">Id: {sub.id}</p>
-                                        <p className="text-gray-600">
-                                            Started: {new Date(Date.parse(sub.createdAt)).toLocaleDateString()}
-                                        </p>
-                                    </div>
-                                    <div className="mb-4">
-                                        <p className="text-sm font-semibold">
-                                            Interval: <span className="font-normal">{sub.interval}</span>
-                                        </p>
-                                        <p className="text-sm font-semibold">
-                                            Amount: <span className="font-normal">{sub.amount} {sub.currency}</span>
-                                        </p>
-                                        <p className="text-sm font-semibold">
-                                            Next Due Date: <span className="font-normal">
-                                                {new Date(sub.nextDueDate).toLocaleDateString()}
-                                            </span>
-                                        </p>
-                                        <p className="text-sm font-semibold">
-                                            Total Investments: <span className="font-normal">
-                                                {sub.totalInvestments} {sub.currency}
-                                            </span>
-                                        </p>
-                                        <p className="text-sm font-semibold">
-                                            Status: <span className="text-green-500 font-normal">
-                                                {sub.isCancelled ? "Cancelled" : "Active"}
-                                            </span>
-                                        </p>
-                                    </div>
-                                    <div className="mb-4">
-                                        <h4 className="font-semibold">Allocations:</h4>
-                                        <ul className="list-disc list-inside text-sm">
-                                            {sub.allocations?.map((alloc) => (
-                                                <li key={alloc.id}>
-                                                    {alloc.ticker}: {alloc.percentAmount}%
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                    <div className="flex gap-2 absolute bottom-4 right-4">
-                                        <button className="bg-blue-500 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-600">
-                                            Edit
-                                        </button>
-                                        <button className="bg-red-500 text-white px-3 py-1 rounded-md text-sm hover:bg-red-600">
-                                            Cancel
-                                        </button>
-                                        <button
-                                            onClick={() => setModalOpen(true)}
-                                            className="bg-gray-500 text-white px-3 py-1 rounded-md text-sm hover:bg-gray-600"
-                                        >
-                                            History
-                                        </button>
-                                    </div>
-                                </div>
-                            ))
-                        ) : (
-                            <p>Loading subscriptions...</p>
-                        )}
+                        {subscriptions.map((subscription) => (
+                            <SubscriptionCard
+                                key={subscription.id}
+                                subscription={subscription}
+                                onEdit={handleEditSubscription}
+                                onCancel={handleCancelSubscription}
+                                onViewHistory={handleViewHistory}
+                            />
+                        ))}
                     </div>
-                </div>
-                {/* Chart Placeholder */}
-                <div className="bg-white shadow rounded-lg p-4">
-                    <h2 className="text-2xl font-bold mb-4">Investment vs Portfolio (USD)</h2>
-                    <div className="h-64 flex items-center justify-center text-gray-400">
-                        [Chart Placeholder]
+                ) : (
+                    <div className="bg-white shadow-md rounded-lg p-8 text-center">
+                        <svg className="w-16 h-16 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <h3 className="text-xl font-medium mb-2">No subscriptions yet</h3>
+                        <p className="text-gray-500 mb-6">Start your investment journey by creating your first subscription</p>
+                        <button className="bg-blue-600 text-white py-2 px-6 rounded-md hover:bg-blue-700 transition-colors font-medium">
+                            Create Subscription
+                        </button>
                     </div>
-                </div>
-                {/* Transactions Modal */}
-                {isModalOpen && (
-                    <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center">
-                        <div className="bg-white p-6 rounded-xl shadow-lg max-w-xl w-full">
-                            <h3 className="text-xl font-bold mb-4">Transaction History</h3>
-                            <ul className="mb-4 max-h-72 overflow-auto">
-                                <li className="border-b py-2">Jan 10, 2025 - BTC Buy - $500</li>
-                                <li className="border-b py-2">Feb 10, 2025 - ETH Buy - $300</li>
-                            </ul>
+                )}
+            </div>
+
+            {/* Transaction History Modal */}
+            {isHistoryModalOpen && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
+                    <div className="bg-white p-6 rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-xl font-bold">Transaction History</h3>
                             <button
-                                className="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700"
-                                onClick={() => setModalOpen(false)}
+                                onClick={() => setHistoryModalOpen(false)}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div className="overflow-y-auto flex-grow">
+                            {/* This would be populated with actual transaction data */}
+                            <div className="space-y-4">
+                                {[1, 2, 3, 4, 5].map((item) => (
+                                    <div key={item} className="border-b pb-4 last:border-0">
+                                        <div className="flex justify-between items-center">
+                                            <div>
+                                                <p className="font-medium">BTC Purchase</p>
+                                                <p className="text-sm text-gray-500">March {item}, 2025</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="font-medium">+0.0034 BTC</p>
+                                                <p className="text-sm text-gray-500">$500.00</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="mt-6">
+                            <button
+                                className="w-full bg-blue-600 text-white py-3 rounded-md hover:bg-blue-700 font-medium"
+                                onClick={() => setHistoryModalOpen(false)}
                             >
                                 Close
                             </button>
                         </div>
                     </div>
-                )}
-            </div>
-        </>
+                </div>
+            )}
+        </div>
     );
 };
 
