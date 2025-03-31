@@ -1,10 +1,17 @@
 ﻿import React, { useState, useEffect, useRef, useCallback } from "react";
-import { getNotifications, markNotificationAsRead, connectToNotifications } from "../../services/notification";
+import {
+    getNotifications,
+    markNotificationAsRead,
+    connectToNotifications,
+    connectionErrors,
+    markAllAsRead,
+    forceReconnect
+} from "../../services/notification";
 import { useAuth } from "../../context/AuthContext";
 import { BellIcon } from '@heroicons/react/24/outline';
 import NotificationItem from "./NotificationItem";
 import INotification from "./INotification";
-import { HubConnection } from "@microsoft/signalr";
+import { HubConnection, HubConnectionState } from "@microsoft/signalr";
 
 const NotificationPanel: React.FC = () => {
     const [showNotifications, setShowNotifications] = useState(false);
@@ -13,9 +20,11 @@ const NotificationPanel: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
+    const [showConnectionDetails, setShowConnectionDetails] = useState(false);
 
     const notificationRef = useRef<HTMLDivElement>(null);
     const hubConnectionRef = useRef<HubConnection | null>(null);
+    const connectionCheckInterval = useRef<NodeJS.Timeout | null>(null);
 
     const { user } = useAuth();
 
@@ -59,7 +68,7 @@ const NotificationPanel: React.FC = () => {
             setUnreadCount(prev => Math.max(0, prev - 1));
         } catch (err) {
             console.error("Failed to mark notification as read:", err);
-            // Show error toast or message here
+            // We don't show UI errors for individual notification marking
         }
     };
 
@@ -74,13 +83,34 @@ const NotificationPanel: React.FC = () => {
         }
     }, [fetchNotifications]);
 
+    // Update connection status based on actual connection state
+    const updateConnectionStatus = useCallback(() => {
+        if (!hubConnectionRef.current) {
+            setConnectionStatus('disconnected');
+            return;
+        }
+
+        const currentState = hubConnectionRef.current.state;
+
+        if (currentState === HubConnectionState.Connected) {
+            setConnectionStatus('connected');
+        } else if (currentState === HubConnectionState.Connecting ||
+            currentState === HubConnectionState.Reconnecting) {
+            setConnectionStatus('connecting');
+        } else {
+            setConnectionStatus('disconnected');
+        }
+    }, []);
+
     // Handle SignalR connection
     useEffect(() => {
         if (!user?.id) return;
 
         // Clear previous connection if exists
         if (hubConnectionRef.current) {
-            hubConnectionRef.current.stop();
+            hubConnectionRef.current.stop().catch(err =>
+                console.warn("Error stopping previous connection:", err)
+            );
         }
 
         setConnectionStatus('connecting');
@@ -88,24 +118,6 @@ const NotificationPanel: React.FC = () => {
         // Connect to SignalR hub
         const connection = connectToNotifications(user.id, handleNewNotification);
         hubConnectionRef.current = connection;
-
-        // Setup connection state handlers
-        connection.onreconnecting(() => {
-            setConnectionStatus('connecting');
-        });
-
-        connection.onreconnected(() => {
-            setConnectionStatus('connected');
-        });
-
-        connection.onclose(() => {
-            setConnectionStatus('disconnected');
-        });
-
-        // Add event listener for the connected event
-        connection.on("Connected", () => {
-            setConnectionStatus('connected');
-        });
 
         // Initial fetch of notifications
         fetchNotifications();
@@ -115,14 +127,30 @@ const NotificationPanel: React.FC = () => {
             Notification.requestPermission();
         }
 
+        // Setup a periodic status check to ensure UI always reflects actual state
+        if (connectionCheckInterval.current) {
+            clearInterval(connectionCheckInterval.current);
+        }
+
+        connectionCheckInterval.current = setInterval(() => {
+            updateConnectionStatus();
+        }, 3000);
+
         // Cleanup function
         return () => {
+            if (connectionCheckInterval.current) {
+                clearInterval(connectionCheckInterval.current);
+                connectionCheckInterval.current = null;
+            }
+
             if (hubConnectionRef.current) {
-                hubConnectionRef.current.stop();
+                hubConnectionRef.current.stop().catch(err =>
+                    console.warn("Error stopping connection during cleanup:", err)
+                );
                 hubConnectionRef.current = null;
             }
         };
-    }, [user?.id, handleNewNotification, fetchNotifications]);
+    }, [user?.id, handleNewNotification, fetchNotifications, updateConnectionStatus]);
 
     // Handle outside clicks to close the notification panel
     useEffect(() => {
@@ -138,19 +166,21 @@ const NotificationPanel: React.FC = () => {
         };
     }, []);
 
-    // Mark all as read functionality
+    // Mark all as read functionality with improved error handling
     const handleMarkAllAsRead = async () => {
         if (notifications.length === 0 || unreadCount === 0) return;
 
         const unreadNotifications = notifications.filter(n => !n.isRead);
 
         try {
-            // Mark each unread notification as read
-            await Promise.all(
-                unreadNotifications.map(n => markNotificationAsRead(n.id))
-            );
+            // Use the batch operation function
+            const result = await markAllAsRead(unreadNotifications.map(n => n.id));
 
-            // Update local state
+            if (result.failedIds.length > 0) {
+                console.warn(`Failed to mark ${result.failedIds.length} notifications as read`);
+            }
+
+            // Update local state - mark all as read regardless of individual failures
             setNotifications(prev =>
                 prev.map(notification => ({ ...notification, isRead: true }))
             );
@@ -158,6 +188,25 @@ const NotificationPanel: React.FC = () => {
             setUnreadCount(0);
         } catch (err) {
             console.error("Failed to mark all notifications as read:", err);
+            setError("Failed to mark all as read. Please try again.");
+            setTimeout(() => setError(null), 3000);
+        }
+    };
+
+    // Handle manual reconnection
+    const handleReconnect = async () => {
+        setConnectionStatus('connecting');
+        setError(null);
+
+        try {
+            if (user?.id) {
+                await forceReconnect(user.id, handleNewNotification);
+                // The connection status will be updated automatically via the interval
+            }
+        } catch (err) {
+            console.error("Manual reconnection failed:", err);
+            setError("Reconnection failed. Please try again later.");
+            setConnectionStatus('disconnected');
         }
     };
 
@@ -192,24 +241,73 @@ const NotificationPanel: React.FC = () => {
                     </div>
 
                     {/* Connection status indicator */}
-                    <div className={`flex items-center mb-2 text-xs ${connectionStatus === 'connected'
-                            ? 'text-green-600'
-                            : connectionStatus === 'connecting'
-                                ? 'text-yellow-600'
-                                : 'text-red-600'
-                        }`}>
-                        <div className={`h-2 w-2 rounded-full mr-1 ${connectionStatus === 'connected'
-                                ? 'bg-green-600'
+                    <div className="mb-2">
+                        <div
+                            onClick={() => setShowConnectionDetails(!showConnectionDetails)}
+                            className={`flex items-center text-xs cursor-pointer ${connectionStatus === 'connected'
+                                    ? 'text-green-600'
+                                    : connectionStatus === 'connecting'
+                                        ? 'text-yellow-600'
+                                        : 'text-red-600'
+                                }`}
+                        >
+                            <div className={`h-2 w-2 rounded-full mr-1 ${connectionStatus === 'connected'
+                                    ? 'bg-green-600 animate-pulse'
+                                    : connectionStatus === 'connecting'
+                                        ? 'bg-yellow-600 animate-pulse'
+                                        : 'bg-red-600'
+                                }`}></div>
+                            {connectionStatus === 'connected'
+                                ? 'Connected'
                                 : connectionStatus === 'connecting'
-                                    ? 'bg-yellow-600'
-                                    : 'bg-red-600'
-                            }`}></div>
-                        {connectionStatus === 'connected'
-                            ? 'Connected'
-                            : connectionStatus === 'connecting'
-                                ? 'Connecting...'
-                                : 'Disconnected'}
+                                    ? 'Connecting...'
+                                    : 'Disconnected'}
+
+                            <svg
+                                className={`w-3 h-3 ml-1 transition-transform ${showConnectionDetails ? 'rotate-180' : ''}`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </div>
+
+                        {/* Connection error details */}
+                        {showConnectionDetails && (
+                            <div className="mt-1 text-xs">
+                                {connectionStatus !== 'connected' && connectionErrors.lastError && (
+                                    <div className="bg-red-50 p-2 rounded text-red-700 mb-2">
+                                        <p><strong>Error:</strong> {connectionErrors.lastError}</p>
+                                        {connectionErrors.lastErrorTime && (
+                                            <p><strong>Time:</strong> {connectionErrors.lastErrorTime.toLocaleTimeString()}</p>
+                                        )}
+                                        <p><strong>Attempts:</strong> {connectionErrors.connectionAttempts}</p>
+
+                                        <button
+                                            onClick={handleReconnect}
+                                            className="mt-1 bg-red-100 hover:bg-red-200 text-red-800 text-xs px-2 py-1 rounded"
+                                        >
+                                            Retry Connection
+                                        </button>
+                                    </div>
+                                )}
+
+                                {connectionStatus === 'connected' && (
+                                    <p className="text-green-600">
+                                        Real-time notifications are working properly.
+                                    </p>
+                                )}
+                            </div>
+                        )}
                     </div>
+
+                    {/* Notification error message */}
+                    {error && (
+                        <div className="bg-red-100 text-red-700 p-2 rounded mb-2 text-xs">
+                            {error}
+                        </div>
+                    )}
 
                     <div className="divide-y divide-gray-200">
                         {isLoading ? (
@@ -219,16 +317,6 @@ const NotificationPanel: React.FC = () => {
                                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                 </svg>
                                 Loading notifications...
-                            </div>
-                        ) : error ? (
-                            <div className="py-4 text-center text-red-500">
-                                {error}
-                                <button
-                                    onClick={fetchNotifications}
-                                    className="block w-full mt-2 text-blue-600 hover:text-blue-800 text-sm"
-                                >
-                                    Try again
-                                </button>
                             </div>
                         ) : notifications.length === 0 ? (
                             <div className="py-6 text-center text-gray-500">
@@ -246,6 +334,22 @@ const NotificationPanel: React.FC = () => {
                                 />
                             ))
                         )}
+                    </div>
+
+                    {/* Connection status footer */}
+                    <div className="mt-3 pt-2 border-t border-gray-100 text-xs text-gray-500 flex justify-between items-center">
+                        <span>
+                            {connectionStatus === 'connected'
+                                ? 'Live updates enabled'
+                                : 'Live updates unavailable'}
+                        </span>
+
+                        <button
+                            onClick={fetchNotifications}
+                            className="text-blue-600 hover:text-blue-800"
+                        >
+                            Refresh
+                        </button>
                     </div>
                 </div>
             )}
