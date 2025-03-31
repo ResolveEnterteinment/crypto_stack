@@ -18,7 +18,7 @@ const DashboardPage: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [isHistoryModalOpen, setHistoryModalOpen] = useState(false);
-    const [selectedSubscription, setSelectedSubscription] = useState<string | null>(null);
+    const [currentSubscriptionId, setCurrentSubscriptionId] = useState<string | null>(null);
     const [dashboardData, setDashboardData] = useState<IDashboardData | null>(null);
     const [subscriptions, setSubscriptions] = useState<ISubscription[]>([]);
 
@@ -91,7 +91,7 @@ const DashboardPage: React.FC = () => {
     };
 
     const handleViewHistory = (id: string) => {
-        setSelectedSubscription(id);
+        setCurrentSubscriptionId(id);
         setHistoryModalOpen(true);
     };
 
@@ -290,9 +290,15 @@ const DashboardPage: React.FC = () => {
                     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
                         <div className="bg-white p-6 rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col">
                             <div className="flex justify-between items-center mb-6">
-                                <h3 className="text-xl font-bold">Transaction History</h3>
+                                <h3 className="text-xl font-bold">
+                                    {/* Use the currentSubscriptionId here */}
+                                    Transaction History for Subscription {currentSubscriptionId}
+                                </h3>
                                 <button
-                                    onClick={() => setHistoryModalOpen(false)}
+                                    onClick={() => {
+                                        setHistoryModalOpen(false);
+                                        setCurrentSubscriptionId(null); // Reset the ID when closing
+                                    }}
                                     className="text-gray-500 hover:text-gray-700"
                                 >
                                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -302,16 +308,33 @@ const DashboardPage: React.FC = () => {
                             </div>
 
                             <div className="overflow-y-auto flex-grow">
-                                {/* TODO: implement transaction history loading */}
-                                <div className="flex justify-center items-center h-32 text-gray-400">
-                                    Transaction history loading not yet implemented
+                                {/* This would be populated with actual transaction data */}
+                                <div className="space-y-4">
+                                    {/* You could filter transactions based on currentSubscriptionId */}
+                                    {[1, 2, 3, 4, 5].map((item) => (
+                                        <div key={item} className="border-b pb-4 last:border-0">
+                                            <div className="flex justify-between items-center">
+                                                <div>
+                                                    <p className="font-medium">BTC Purchase</p>
+                                                    <p className="text-sm text-gray-500">March {item}, 2025</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="font-medium">+0.0034 BTC</p>
+                                                    <p className="text-sm text-gray-500">$500.00</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
 
                             <div className="mt-6">
                                 <button
                                     className="w-full bg-blue-600 text-white py-3 rounded-md hover:bg-blue-700 font-medium"
-                                    onClick={() => setHistoryModalOpen(false)}
+                                    onClick={() => {
+                                        setHistoryModalOpen(false);
+                                        setCurrentSubscriptionId(null); // Reset the ID when closing
+                                    }}
                                 >
                                     Close
                                 </button>
