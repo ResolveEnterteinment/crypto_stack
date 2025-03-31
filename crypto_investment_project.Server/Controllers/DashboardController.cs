@@ -21,10 +21,11 @@ namespace crypto_investment_project.Server.Controllers
             _logger = logger;
         }
 
-        [HttpPost("/user/{user}")]
+        [HttpPost]
+        [Route("user/{user}")]
+        [IgnoreAntiforgeryToken]
         [Authorize(Roles = "USER")]
         [EnableRateLimiting("standard")]
-        [IgnoreAntiforgeryToken]
         public async Task<IActionResult> GetUserDashboardData(string user)
         {
             if (!Guid.TryParse(user, out var userId) || userId == Guid.Empty)
