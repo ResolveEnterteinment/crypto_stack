@@ -1,4 +1,4 @@
-﻿using Domain.Models.Crypto;
+﻿using Domain.Models.Asset;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace Domain.Models.Balance

@@ -78,23 +78,22 @@ namespace crypto_investment_project.Server.Controllers
                         return BadRequest(new { message = "A valid user ID is required." });
                     }
 
-                    // Authorization check - verify current user can access this data
-                    var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-
-                    // Temporarily allow the request to proceed for debugging
-                    if (!User.IsInRole("ADMIN") && currentUserId != user)
-                    {
-                        _logger.LogWarning("Unauthorized access attempt to user {TargetUserId} subscriptions by user {CurrentUserId}",
-                            user, currentUserId);
-                        return Forbid();
-                    }
-
                     // Verify user exists
                     var userExists = await _userService.CheckUserExists(userId);
                     if (!userExists)
                     {
                         _logger.LogWarning("User not found: {UserId}", user);
                         return NotFound(new { message = "User not found" });
+                    }
+
+                    // Authorization check - verify current user can access this data
+                    var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                    if (!User.IsInRole("ADMIN") && currentUserId != user)
+                    {
+                        _logger.LogWarning("Unauthorized access attempt to user {TargetUserId} subscriptions by user {CurrentUserId}",
+                            user, currentUserId);
+                        return Forbid();
                     }
 
                     // ETag support for caching

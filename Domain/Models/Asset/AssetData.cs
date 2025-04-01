@@ -1,6 +1,4 @@
-﻿using Domain.Constants;
-
-namespace Domain.Models.Crypto
+﻿namespace Domain.Models.Asset
 {
     public class AssetData : BaseEntity
     {
@@ -10,6 +8,6 @@ namespace Domain.Models.Crypto
         public required uint Precision { get; set; }
         public string? SubunitName { get; set; }
         public string Exchange { get; set; }
-        public string Class { get; set; } = AssetClass.Crypto;
+        public string Type { get; set; }
     }
 }

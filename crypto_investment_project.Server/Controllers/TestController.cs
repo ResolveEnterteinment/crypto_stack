@@ -1,7 +1,7 @@
 using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
 using Application.Interfaces.Exchange;
-using Domain.Models.Crypto;
+using Domain.Models.Asset;
 using Domain.Models.Payment;
 using Domain.Models.Subscription;
 using Microsoft.AspNetCore.Mvc;

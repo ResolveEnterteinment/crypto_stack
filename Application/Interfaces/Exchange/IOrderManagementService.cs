@@ -1,7 +1,7 @@
 ﻿using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Exchange;
-using Domain.Models.Crypto;
+using Domain.Models.Asset;
 using Domain.Models.Payment;
 
 namespace Application.Interfaces.Exchange

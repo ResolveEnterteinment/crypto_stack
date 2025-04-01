@@ -1,6 +1,6 @@
 ﻿using Domain.DTOs;
 using Domain.Interfaces;
-using Domain.Models.Crypto;
+using Domain.Models.Asset;
 
 namespace Application.Interfaces
 {

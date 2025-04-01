@@ -1,5 +1,5 @@
 ﻿using Domain.DTOs;
-using Domain.Interfaces;
+using Domain.DTOs.Exchange;
 using Domain.Models.Exchange;
 using MongoDB.Driver;
 
@@ -20,6 +20,11 @@ namespace Application.Interfaces.Exchange
         /// Gets the default exchange to use when none is specified.
         /// </summary>
         IExchange DefaultExchange { get; }
+
+        /// <summary>
+        /// Gets exchange balance with caching
+        /// </summary>
+        public Task<ResultWrapper<ExchangeBalance>> GetCachedExchangeBalanceAsync(string exchange, string ticker);
 
         /// <summary>
         /// Starts a new MongoDB client session for transaction management.

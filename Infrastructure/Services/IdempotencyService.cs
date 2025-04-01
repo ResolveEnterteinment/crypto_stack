@@ -1,4 +1,5 @@
-﻿using Domain.DTOs.Settings;
+﻿using Application.Interfaces;
+using Domain.DTOs.Settings;
 using Domain.Models.Idempotency;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -10,52 +11,15 @@ using System.Text.Json;
 namespace Infrastructure.Services
 {
     /// <summary>
-    /// Interface for idempotency operations to ensure operations are executed exactly once.
-    /// </summary>
-    public interface IIdempotencyService
-    {
-        /// <summary>
-        /// Gets the result of a previously executed operation by its idempotency key.
-        /// </summary>
-        /// <typeparam name="T">The return type of the operation.</typeparam>
-        /// <param name="idempotencyKey">The unique key identifying the operation.</param>
-        /// <returns>A tuple containing whether the result exists and the result itself if it exists.</returns>
-        Task<(bool exists, T result)> GetResultAsync<T>(string idempotencyKey);
-
-        /// <summary>
-        /// Stores the result of an operation with the given idempotency key.
-        /// </summary>
-        /// <typeparam name="T">The type of the result.</typeparam>
-        /// <param name="idempotencyKey">The unique key identifying the operation.</param>
-        /// <param name="result">The result to store.</param>
-        /// <param name="expiration">Optional custom expiration timespan for this record.</param>
-        Task StoreResultAsync<T>(string idempotencyKey, T result, TimeSpan? expiration = null);
-
-        /// <summary>
-        /// Checks if an operation with the given idempotency key has been executed.
-        /// </summary>
-        /// <param name="idempotencyKey">The unique key identifying the operation.</param>
-        /// <returns>True if the operation has been executed, otherwise false.</returns>
-        Task<bool> HasKeyAsync(string idempotencyKey);
-
-        /// <summary>
-        /// Executes an operation with idempotency guarantees.
-        /// </summary>
-        /// <typeparam name="T">The return type of the operation.</typeparam>
-        /// <param name="idempotencyKey">The unique key identifying the operation.</param>
-        /// <param name="operation">The operation to execute.</param>
-        /// <param name="expiration">Optional custom expiration timespan for this record.</param>
-        /// <returns>The result of the operation.</returns>
-        Task<T> ExecuteIdempotentOperationAsync<T>(string idempotencyKey, Func<Task<T>> operation, TimeSpan? expiration = null);
-    }
-
-    /// <summary>
-    /// MongoDB-based implementation of the idempotency service to ensure operations are executed exactly once.
+    /// MongoDB-based implementation of the idempotency service with enhanced caching.
     /// </summary>
     public class IdempotencyService : BaseService<IdempotencyData>, IIdempotencyService
     {
         // Default expiration of 24 hours for idempotency records
-        private static readonly TimeSpan DefaultExpiration = TimeSpan.FromHours(24);
+        private static readonly TimeSpan DEFAULT_EXPIRATION = TimeSpan.FromHours(24);
+        private static readonly TimeSpan CACHE_DURATION = TimeSpan.FromMinutes(30);
+        private const string IDEMPOTENCY_CACHE_PREFIX = "idempotency:";
+
         private readonly JsonSerializerOptions _jsonOptions;
 
         public IdempotencyService(
@@ -63,25 +27,24 @@ namespace Infrastructure.Services
             IMongoClient mongoClient,
             ILogger<IdempotencyService> logger,
             IMemoryCache cache
-            )
-            : base(
-                  mongoClient,
-                  mongoDbSettings,
-                  "idempotency",
-                  logger,
-                  cache,
-                  new List<CreateIndexModel<IdempotencyData>>
-                    {
-                        new (
-                            Builders<IdempotencyData>.IndexKeys.Ascending(x => x.Key),
-                            new CreateIndexOptions { Name = "Key_Index" }
-                        ),
-                        new (
-                            Builders<IdempotencyData>.IndexKeys.Ascending(x => x.ExpiresAt),
-                            new CreateIndexOptions { Name = "ExpiresAt_1", ExpireAfter = TimeSpan.Zero }
-                        )
-                    }
-                  )
+        ) : base(
+            mongoClient,
+            mongoDbSettings,
+            "idempotency",
+            logger,
+            cache,
+            new List<CreateIndexModel<IdempotencyData>>
+            {
+                new CreateIndexModel<IdempotencyData>(
+                    Builders<IdempotencyData>.IndexKeys.Ascending(x => x.Key),
+                    new CreateIndexOptions { Name = "Key_Index", Unique = true }
+                ),
+                new CreateIndexModel<IdempotencyData>(
+                    Builders<IdempotencyData>.IndexKeys.Ascending(x => x.ExpiresAt),
+                    new CreateIndexOptions { Name = "ExpiresAt_1", ExpireAfter = TimeSpan.Zero }
+                )
+            }
+        )
         {
             // Setup json serialization options
             _jsonOptions = new JsonSerializerOptions
@@ -90,58 +53,54 @@ namespace Infrastructure.Services
                 WriteIndented = false,
                 DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
             };
-
-            // Create TTL index on ExpiresAt field to auto-clean expired records
-            CreateTtlIndex();
         }
 
         /// <summary>
-        /// Creates a TTL (Time-To-Live) index on the ExpiresAt field to automatically remove expired records.
-        /// </summary>
-        private void CreateTtlIndex()
-        {
-            try
-            {
-                var indexModel = new CreateIndexModel<IdempotencyData>(
-                    Builders<IdempotencyData>.IndexKeys.Ascending(x => x.ExpiresAt),
-                    new CreateIndexOptions { ExpireAfter = TimeSpan.Zero, Name = "TTL_ExpiresAt" }
-                );
-
-                _collection.Indexes.CreateOne(indexModel);
-                _logger.LogInformation("Created TTL index on idempotency collection");
-            }
-            catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
-            {
-                // Index already exists, this is fine
-                _logger.LogDebug("TTL index already exists on idempotency collection");
-            }
-            catch (Exception ex)
-            {
-                // Log but don't fail initialization
-                _logger.LogWarning(ex, "Failed to create TTL index on idempotency collection");
-            }
-        }
-
-        /// <summary>
-        /// Gets the stored result for a given idempotency key.
+        /// Gets the stored result for a given idempotency key with in-memory caching.
         /// </summary>
         public async Task<(bool exists, T result)> GetResultAsync<T>(string idempotencyKey)
         {
             if (string.IsNullOrEmpty(idempotencyKey))
                 throw new ArgumentNullException(nameof(idempotencyKey), "Idempotency key cannot be null or empty.");
 
-            var record = await _collection.Find(r => r.Key == idempotencyKey).FirstOrDefaultAsync();
-            if (record == null || string.IsNullOrEmpty(record.ResultJson))
-                return (false, default);
+            // Check in-memory cache first for fast access
+            string cacheKey = $"{IDEMPOTENCY_CACHE_PREFIX}{idempotencyKey}";
+
+            if (_cache.TryGetValue(cacheKey, out T cachedResult))
+            {
+                _logger.LogDebug("Cache hit for idempotency key: {Key}", idempotencyKey);
+                return (true, cachedResult);
+            }
 
             try
             {
-                var result = JsonSerializer.Deserialize<T>(record.ResultJson, _jsonOptions);
-                return (true, result);
+                // Not in cache, check database
+                var filter = Builders<IdempotencyData>.Filter.Eq(r => r.Key, idempotencyKey);
+                var record = await _collection.Find(filter).FirstOrDefaultAsync();
+
+                if (record == null || string.IsNullOrEmpty(record.ResultJson))
+                {
+                    return (false, default);
+                }
+
+                try
+                {
+                    var result = JsonSerializer.Deserialize<T>(record.ResultJson, _jsonOptions);
+
+                    // Store in cache for future fast access
+                    _cache.Set(cacheKey, result, CACHE_DURATION);
+
+                    return (true, result);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogError(ex, "Failed to deserialize stored result for key {IdempotencyKey}", idempotencyKey);
+                    return (false, default);
+                }
             }
-            catch (JsonException ex)
+            catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to deserialize stored result for key {IdempotencyKey}", idempotencyKey);
+                _logger.LogError(ex, "Error retrieving idempotency record for key {Key}", idempotencyKey);
                 return (false, default);
             }
         }
@@ -171,16 +130,18 @@ namespace Infrastructure.Services
             try
             {
                 // First check if a record already exists
-                var existingRecord = await _collection.Find(r => r.Key == idempotencyKey).FirstOrDefaultAsync();
+                var filter = Builders<IdempotencyData>.Filter.Eq(r => r.Key, idempotencyKey);
+                var exists = await _collection.CountDocumentsAsync(filter) > 0;
 
-                if (existingRecord != null)
+                if (exists)
                 {
-                    // Update the existing record without changing the _id
-                    var updateDef = Builders<IdempotencyData>.Update
+                    // Update the existing record without changing the ID
+                    var update = Builders<IdempotencyData>.Update
                         .Set(r => r.ResultJson, resultJson)
-                        .Set(r => r.ExpiresAt, DateTime.UtcNow.Add(expiration ?? DefaultExpiration));
+                        .Set(r => r.ExpiresAt, DateTime.UtcNow.Add(expiration ?? DEFAULT_EXPIRATION));
 
-                    await _collection.UpdateOneAsync(r => r.Key == idempotencyKey, updateDef);
+                    await _collection.UpdateOneAsync(filter, update);
+                    _logger.LogDebug("Updated existing idempotency record for key {Key}", idempotencyKey);
                 }
                 else
                 {
@@ -191,37 +152,58 @@ namespace Infrastructure.Services
                         Key = idempotencyKey,
                         ResultJson = resultJson,
                         CreatedAt = DateTime.UtcNow,
-                        ExpiresAt = DateTime.UtcNow.Add(expiration ?? DefaultExpiration)
+                        ExpiresAt = DateTime.UtcNow.Add(expiration ?? DEFAULT_EXPIRATION)
                     };
 
                     await _collection.InsertOneAsync(record);
+                    _logger.LogDebug("Created new idempotency record for key {Key}", idempotencyKey);
                 }
 
-                _logger.LogDebug("Stored idempotency record for key {IdempotencyKey}", idempotencyKey);
+                // Store in cache for future fast access
+                if (result != null)
+                {
+                    string cacheKey = $"{IDEMPOTENCY_CACHE_PREFIX}{idempotencyKey}";
+                    _cache.Set(cacheKey, result, CACHE_DURATION);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to store idempotency record for key {IdempotencyKey}", idempotencyKey);
+                _logger.LogError(ex, "Failed to store idempotency record for key {Key}", idempotencyKey);
                 throw;
             }
         }
 
         /// <summary>
-        /// Checks if an idempotency key already exists.
+        /// Checks if an idempotency key already exists, using caching for performance.
         /// </summary>
         public async Task<bool> HasKeyAsync(string idempotencyKey)
         {
             if (string.IsNullOrEmpty(idempotencyKey))
                 throw new ArgumentNullException(nameof(idempotencyKey), "Idempotency key cannot be null or empty.");
 
+            // Fast path - check cache first
+            string cacheKey = $"{IDEMPOTENCY_CACHE_PREFIX}exists:{idempotencyKey}";
+
+            if (_cache.TryGetValue(cacheKey, out bool exists))
+            {
+                return exists;
+            }
+
             try
             {
-                var count = await _collection.CountDocumentsAsync(r => r.Key == idempotencyKey);
-                return count > 0;
+                // Check database
+                var filter = Builders<IdempotencyData>.Filter.Eq(r => r.Key, idempotencyKey);
+                var count = await _collection.CountDocumentsAsync(filter);
+                exists = count > 0;
+
+                // Cache the result
+                _cache.Set(cacheKey, exists, CACHE_DURATION);
+
+                return exists;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error checking for idempotency key {IdempotencyKey}", idempotencyKey);
+                _logger.LogError(ex, "Error checking for idempotency key {Key}", idempotencyKey);
                 // In case of error, safer to return false so operation can proceed
                 return false;
             }
@@ -246,7 +228,7 @@ namespace Infrastructure.Services
             var (resultExists, existingResult) = await GetResultAsync<T>(idempotencyKey);
             if (resultExists)
             {
-                _logger.LogInformation("Found existing result for idempotency key: {IdempotencyKey}", idempotencyKey);
+                _logger.LogInformation("Found existing result for idempotency key: {Key}", idempotencyKey);
                 activity?.SetTag("idempotency.cached", true);
                 return existingResult;
             }
@@ -265,7 +247,7 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Operation failed for idempotency key: {IdempotencyKey}", idempotencyKey);
+                _logger.LogError(ex, "Operation failed for idempotency key: {Key}", idempotencyKey);
                 activity?.SetTag("error", true);
                 activity?.SetTag("error.message", ex.Message);
                 throw;
@@ -274,7 +256,6 @@ namespace Infrastructure.Services
 
         /// <summary>
         /// Removes an idempotency key and its associated result.
-        /// Useful for testing or administrative cleanup.
         /// </summary>
         public async Task<bool> RemoveKeyAsync(string idempotencyKey)
         {
@@ -283,19 +264,27 @@ namespace Infrastructure.Services
 
             try
             {
-                var result = await _collection.DeleteOneAsync(r => r.Key == idempotencyKey);
+                var filter = Builders<IdempotencyData>.Filter.Eq(r => r.Key, idempotencyKey);
+                var result = await _collection.DeleteOneAsync(filter);
+
+                // Remove from cache
+                string cacheKey = $"{IDEMPOTENCY_CACHE_PREFIX}{idempotencyKey}";
+                _cache.Remove(cacheKey);
+
+                string existsKey = $"{IDEMPOTENCY_CACHE_PREFIX}exists:{idempotencyKey}";
+                _cache.Remove(existsKey);
+
                 return result.DeletedCount > 0;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error removing idempotency key {IdempotencyKey}", idempotencyKey);
+                _logger.LogError(ex, "Error removing idempotency key {Key}", idempotencyKey);
                 return false;
             }
         }
 
         /// <summary>
-        /// Purges expired idempotency records manually if needed.
-        /// Normally this would be handled by MongoDB's TTL index.
+        /// Purges expired idempotency records manually.
         /// </summary>
         public async Task<long> PurgeExpiredRecordsAsync()
         {

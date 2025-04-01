@@ -1,7 +1,7 @@
 ﻿using Application.Interfaces;
 using Domain.DTOs.Balance;
 using Domain.Models.Balance;
-using Domain.Models.Crypto;
+using Domain.Models.Asset;
 using Microsoft.AspNetCore.SignalR;
 using MongoDB.Bson;
 using MongoDB.Driver;

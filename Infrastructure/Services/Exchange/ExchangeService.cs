@@ -1,4 +1,5 @@
-﻿using Application.Interfaces;
+﻿// Simplified excerpt of ExchangeService refactoring
+using Application.Interfaces;
 using Application.Interfaces.Exchange;
 using BinanceLibrary;
 using Domain.DTOs;
@@ -21,7 +22,7 @@ namespace Infrastructure.Services.Exchange
     /// </summary>
     public class ExchangeService : BaseService<ExchangeOrderData>, IExchangeService
     {
-        private readonly Dictionary<string, IExchange> _exchanges = new Dictionary<string, IExchange>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, IExchange> _exchanges = new(StringComparer.OrdinalIgnoreCase);
         private readonly IOptions<ExchangeServiceSettings> _exchangeServiceSettings;
         private readonly IEventService _eventService;
         private readonly ISubscriptionService _subscriptionService;
@@ -29,6 +30,10 @@ namespace Infrastructure.Services.Exchange
         private readonly ITransactionService _transactionService;
         private readonly IAssetService _assetService;
         private readonly AsyncRetryPolicy _retryPolicy;
+
+        // Cache durations
+        private static readonly TimeSpan PRICE_CACHE_DURATION = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan EXCHANGE_BALANCE_CACHE_DURATION = TimeSpan.FromMinutes(2);
 
         /// <summary>
         /// Gets a dictionary of available exchange integrations.
@@ -60,13 +65,32 @@ namespace Infrastructure.Services.Exchange
             IAssetService assetService,
             ILogger<ExchangeService> logger,
             IMemoryCache cache
-            ) : base(
-                mongoClient,
-                mongoDbSettings,
-                "exchange_orders",
-                logger,
-                cache
+        ) : base(
+            mongoClient,
+            mongoDbSettings,
+            "exchange_orders",
+            logger,
+            cache,
+            new List<CreateIndexModel<ExchangeOrderData>>
+            {
+                new CreateIndexModel<ExchangeOrderData>(
+                    Builders<ExchangeOrderData>.IndexKeys.Ascending(o => o.UserId),
+                    new CreateIndexOptions { Name = "UserId_1" }
+                ),
+                new CreateIndexModel<ExchangeOrderData>(
+                    Builders<ExchangeOrderData>.IndexKeys.Ascending(o => o.PaymentProviderId),
+                    new CreateIndexOptions { Name = "PaymentProviderId_1" }
+                ),
+                new CreateIndexModel<ExchangeOrderData>(
+                    Builders<ExchangeOrderData>.IndexKeys.Ascending(o => o.Status),
+                    new CreateIndexOptions { Name = "Status_1" }
+                ),
+                new CreateIndexModel<ExchangeOrderData>(
+                    Builders<ExchangeOrderData>.IndexKeys.Ascending(o => o.PlacedOrderId),
+                    new CreateIndexOptions { Name = "PlacedOrderId_1" }
                 )
+            }
+        )
         {
             _exchangeServiceSettings = exchangeServiceSettings ?? throw new ArgumentNullException(nameof(exchangeServiceSettings));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
@@ -144,6 +168,78 @@ namespace Infrastructure.Services.Exchange
         }
 
         /// <summary>
+        /// Gets asset price with caching
+        /// </summary>
+        public async Task<ResultWrapper<decimal>> GetCachedAssetPriceAsync(string exchange, string ticker)
+        {
+            if (string.IsNullOrEmpty(exchange) || string.IsNullOrEmpty(ticker))
+            {
+                return ResultWrapper<decimal>.Failure(
+                    Domain.Constants.FailureReason.ValidationError,
+                    "Exchange and ticker are required");
+            }
+
+            // Generate cache key
+            string cacheKey = $"price:{exchange}:{ticker}";
+
+            return await GetOrCreateCachedItemAsync(
+                cacheKey,
+                async () =>
+                {
+                    if (!Exchanges.TryGetValue(exchange, out var exchangeInstance))
+                    {
+                        return ResultWrapper<decimal>.Failure(
+                            Domain.Constants.FailureReason.ValidationError,
+                            $"Exchange {exchange} not found");
+                    }
+
+                    var priceResult = await exchangeInstance.GetAssetPrice(ticker);
+                    _logger.LogDebug("Fetched price for {Ticker} on {Exchange}: {Price}",
+                        ticker, exchange, priceResult.IsSuccess ? priceResult.Data.ToString() : "failed");
+
+                    return priceResult;
+                },
+                PRICE_CACHE_DURATION
+            );
+        }
+
+        /// <summary>
+        /// Gets exchange balance with caching
+        /// </summary>
+        public async Task<ResultWrapper<ExchangeBalance>> GetCachedExchangeBalanceAsync(string exchange, string ticker)
+        {
+            if (string.IsNullOrEmpty(exchange) || string.IsNullOrEmpty(ticker))
+            {
+                return ResultWrapper<ExchangeBalance>.Failure(
+                    Domain.Constants.FailureReason.ValidationError,
+                    "Exchange and ticker are required");
+            }
+
+            // Generate cache key
+            string cacheKey = $"balance:{exchange}:{ticker}";
+
+            return await GetOrCreateCachedItemAsync(
+                cacheKey,
+                async () =>
+                {
+                    if (!Exchanges.TryGetValue(exchange, out var exchangeInstance))
+                    {
+                        return ResultWrapper<ExchangeBalance>.Failure(
+                            Domain.Constants.FailureReason.ValidationError,
+                            $"Exchange {exchange} not found");
+                    }
+
+                    var balanceResult = await exchangeInstance.GetBalanceAsync(ticker);
+                    _logger.LogDebug("Fetched balance for {Ticker} on {Exchange}: {Available} available",
+                        ticker, exchange, balanceResult.IsSuccess ? balanceResult.Data?.Available.ToString() : "failed");
+
+                    return balanceResult;
+                },
+                EXCHANGE_BALANCE_CACHE_DURATION
+            );
+        }
+
+        /// <summary>
         /// Starts a new MongoDB client session for transaction management.
         /// </summary>
         public async Task<IClientSessionHandle> StartDBSession(CancellationToken cancellationToken = default)
@@ -172,13 +268,15 @@ namespace Infrastructure.Services.Exchange
             }
         }
 
+        // Remaining methods would be refactored similarly
+
         /// <summary>
         /// Creates a new exchange order.
         /// </summary>
         public async Task<ResultWrapper<ExchangeOrderData>> CreateOrderAsync(
-            ExchangeOrderData order,
-            IClientSessionHandle session = null,
-            CancellationToken cancellationToken = default)
+                    ExchangeOrderData order,
+                    IClientSessionHandle session = null,
+                    CancellationToken cancellationToken = default)
         {
             try
             {

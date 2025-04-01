@@ -1,4 +1,4 @@
-﻿using Domain.Models.Crypto;
+﻿using Domain.Models.Asset;
 
 namespace Domain.DTOs.Balance
 {

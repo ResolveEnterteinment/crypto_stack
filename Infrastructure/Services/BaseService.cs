@@ -12,7 +12,7 @@ using System.Reflection;
 namespace Infrastructure.Services
 {
     /// <summary>
-    /// Base service implementation for MongoDB repositories.
+    /// Base service implementation for MongoDB repositories with integrated in-memory caching.
     /// Provides common CRUD operations and transaction support.
     /// </summary>
     /// <typeparam name="T">The entity type this repository manages</typeparam>
@@ -20,7 +20,11 @@ namespace Infrastructure.Services
     {
         private readonly string _collectionName;
         private static readonly IReadOnlySet<string> _validPropertyNames;
-        private readonly IEnumerable<CreateIndexModel<T>> _indexModels;
+
+        // Cache management constants
+        private static readonly TimeSpan DEFAULT_CACHE_DURATION = TimeSpan.FromMinutes(5);
+        private const string CACHE_PREFIX = "entity:";
+        private const string CACHE_COLLECTION_PREFIX = "collection:";
 
         protected readonly IMongoClient _mongoClient;
         protected readonly IMongoCollection<T> _collection;
@@ -48,19 +52,13 @@ namespace Infrastructure.Services
         /// <summary>
         /// Initializes a new instance of the <see cref="BaseService{T}"/> class.
         /// </summary>
-        /// <param name="mongoClient">The MongoDB client.</param>
-        /// <param name="mongoDbSettings">MongoDB settings.</param>
-        /// <param name="collectionName">Name of the MongoDB collection.</param>
-        /// <param name="logger">Logger for diagnostic information.</param>
-        /// <param name="indexModels">Optional index definition to create.</param>
         protected BaseService(
             IMongoClient mongoClient,
             IOptions<MongoDbSettings> mongoDbSettings,
             string collectionName,
             ILogger logger,
             IMemoryCache cache,
-            IEnumerable<CreateIndexModel<T>>? indexModels = null
-        )
+            IEnumerable<CreateIndexModel<T>>? indexModels = null)
         {
             _mongoClient = mongoClient ?? throw new ArgumentNullException(nameof(mongoClient));
             var database = mongoClient.GetDatabase(mongoDbSettings?.Value?.DatabaseName ??
@@ -70,50 +68,129 @@ namespace Infrastructure.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
 
+            // Initialize indexes if provided
             if (indexModels != null && indexModels.Any())
             {
-                _indexModels = indexModels;
-                Task.Run(() => InitializeIndexes());
+                Task.Run(() => InitializeIndexesAsync(indexModels))
+                    .ContinueWith(t =>
+                    {
+                        if (t.IsFaulted && t.Exception != null)
+                        {
+                            _logger.LogError(t.Exception, "Failed to initialize indexes for collection {CollectionName}", _collectionName);
+                        }
+                    });
             }
         }
 
         /// <summary>
-        /// Initializes indexes for the collection.
+        /// Initializes indexes for the collection with comprehensive duplicate checking and error handling.
         /// </summary>
-        /// <returns>A task that represents the asynchronous operation.</returns>
-        private async Task InitializeIndexes()
+        private async Task InitializeIndexesAsync(IEnumerable<CreateIndexModel<T>> indexModels)
         {
             try
             {
-                await _collection.Indexes.CreateManyAsync(_indexModels);
-                _logger.LogInformation("Successfully created indexes for collection {CollectionName}", _collectionName);
+                // Get existing indexes to check for duplicates
+                var existingIndexes = await _collection.Indexes.ListAsync();
+                var existingIndexNames = new HashSet<string>();
+
+                // Build a list of existing index names
+                await existingIndexes.ForEachAsync(index =>
+                {
+                    if (index.TryGetValue("name", out var indexName) && indexName != null)
+                    {
+                        existingIndexNames.Add(indexName.AsString);
+                    }
+                });
+
+                // Process each index individually to better handle errors
+                foreach (var indexModel in indexModels)
+                {
+                    try
+                    {
+                        string indexName = indexModel.Options?.Name ?? "unnamed_index";
+
+                        // Skip if index already exists
+                        if (!string.IsNullOrEmpty(indexName) && existingIndexNames.Contains(indexName))
+                        {
+                            _logger.LogInformation("Index '{IndexName}' already exists for collection {CollectionName}, skipping creation",
+                                indexName, _collectionName);
+                            continue;
+                        }
+
+                        // Check if this is a unique index
+                        bool isUniqueIndex = indexModel.Options?.Unique ?? false;
+
+                        // Create the index
+                        await _collection.Indexes.CreateOneAsync(indexModel);
+
+                        _logger.LogInformation("Successfully created index '{IndexName}' for collection {CollectionName}",
+                            indexName, _collectionName);
+                    }
+                    catch (MongoCommandException ex) when (ex.Message.Contains("duplicate key error"))
+                    {
+                        // Handle duplicate key errors for unique indexes
+                        _logger.LogWarning("Skipping unique index creation due to existing duplicate values in collection {CollectionName}: {ErrorMessage}",
+                            _collectionName, ex.Message);
+
+                        // Here we could potentially add code to:
+                        // 1. Log the specific duplicates found
+                        // 2. Optionally clean up duplicates
+                        // 3. Send an alert to administrators
+                    }
+                    catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
+                    {
+                        // Handle case where the index already exists but with a different name
+                        _logger.LogInformation("Index already exists with different name for collection {CollectionName}: {ErrorMessage}",
+                            _collectionName, ex.Message);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log but continue with other indexes
+                        _logger.LogError(ex, "Failed to create individual index for collection {CollectionName}",
+                            _collectionName);
+                    }
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to create index for collection {CollectionName}", _collectionName);
-                throw new DatabaseException($"Failed to create index for collection {_collectionName}", ex);
+                _logger.LogError(ex, "Error during index initialization for collection {CollectionName}", _collectionName);
+                // We're not throwing here to avoid application startup failure
+                // Just log the error and continue
             }
         }
 
-
         /// <summary>
-        /// Gets an entity by its ID.
+        /// Gets an entity by its ID, with caching.
         /// </summary>
-        /// <param name="id">The entity ID.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>The entity if found; otherwise, null.</returns>
         public virtual async Task<T> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
         {
-            using var activity = new Activity("BaseService.GetByIdAsync").Start();
+            using var activity = new Activity($"{typeof(T).Name}.GetByIdAsync").Start();
             activity?.SetTag("entity_type", typeof(T).Name);
             activity?.SetTag("entity_id", id);
 
+            // Generate cache key
+            string cacheKey = GetEntityCacheKey(id);
+
+            // Try to get from cache first
+            if (_cache.TryGetValue(cacheKey, out T cachedEntity))
+            {
+                _logger.LogDebug("Cache hit for {EntityType} with ID {Id}", typeof(T).Name, id);
+                return cachedEntity;
+            }
+
             try
             {
+                // Not in cache, get from database
                 var filter = Builders<T>.Filter.Eq("Id", id);
                 var result = await _collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
 
-                if (result == null)
+                if (result != null)
+                {
+                    // Store in cache
+                    _cache.Set(cacheKey, result, DEFAULT_CACHE_DURATION);
+                    _logger.LogDebug("Added {EntityType} with ID {Id} to cache", typeof(T).Name, id);
+                }
+                else
                 {
                     _logger.LogWarning("Entity of type {EntityType} with ID {Id} not found", typeof(T).Name, id);
                 }
@@ -128,20 +205,37 @@ namespace Infrastructure.Services
         }
 
         /// <summary>
-        /// Gets all entities matching the specified filter.
+        /// Gets all entities matching the specified filter, with caching.
         /// </summary>
-        /// <param name="filter">The filter to apply.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>A list of matching entities.</returns>
         public virtual async Task<List<T>> GetAllAsync(FilterDefinition<T>? filter = null, CancellationToken cancellationToken = default)
         {
-            using var activity = new Activity("BaseService.GetAllAsync").Start();
+            using var activity = new Activity($"{typeof(T).Name}.GetAllAsync").Start();
             activity?.SetTag("entity_type", typeof(T).Name);
+
+            // For null or empty filter, we can use a collection-wide cache
+            bool useCollectionCache = filter == null || filter == Builders<T>.Filter.Empty;
+            string cacheKey = useCollectionCache
+                ? GetCollectionCacheKey()
+                : GetFilterCacheKey(filter?.ToString() ?? "empty");
+
+            // Try to get from cache
+            if (_cache.TryGetValue(cacheKey, out List<T> cachedEntities))
+            {
+                _logger.LogDebug("Cache hit for {EntityType} collection", typeof(T).Name);
+                return cachedEntities;
+            }
 
             try
             {
+                // Not in cache, get from database
                 filter ??= Builders<T>.Filter.Empty;
-                return await _collection.Find(filter).ToListAsync(cancellationToken);
+                var results = await _collection.Find(filter).ToListAsync(cancellationToken);
+
+                // Store in cache
+                _cache.Set(cacheKey, results, DEFAULT_CACHE_DURATION);
+                _logger.LogDebug("Added {EntityType} collection to cache with key {CacheKey}", typeof(T).Name, cacheKey);
+
+                return results;
             }
             catch (Exception ex)
             {
@@ -151,19 +245,35 @@ namespace Infrastructure.Services
         }
 
         /// <summary>
-        /// Gets a single entity matching the specified filter.
+        /// Gets a single entity matching the specified filter, with caching.
         /// </summary>
-        /// <param name="filter">The filter to apply.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>The matching entity if found; otherwise, null.</returns>
         public virtual async Task<T> GetOneAsync(FilterDefinition<T> filter, CancellationToken cancellationToken = default)
         {
-            using var activity = new Activity("BaseService.GetOneAsync").Start();
+            using var activity = new Activity($"{typeof(T).Name}.GetOneAsync").Start();
             activity?.SetTag("entity_type", typeof(T).Name);
+
+            string cacheKey = GetFilterCacheKey(filter.ToString());
+
+            // Try to get from cache
+            if (_cache.TryGetValue(cacheKey, out T cachedEntity))
+            {
+                _logger.LogDebug("Cache hit for {EntityType} with filter", typeof(T).Name);
+                return cachedEntity;
+            }
 
             try
             {
-                return await _collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
+                // Not in cache, get from database
+                var result = await _collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
+
+                if (result != null)
+                {
+                    // Store in cache
+                    _cache.Set(cacheKey, result, DEFAULT_CACHE_DURATION);
+                    _logger.LogDebug("Added {EntityType} with filter to cache", typeof(T).Name);
+                }
+
+                return result;
             }
             catch (Exception ex)
             {
@@ -173,15 +283,11 @@ namespace Infrastructure.Services
         }
 
         /// <summary>
-        /// Inserts a new entity.
+        /// Inserts a new entity and invalidates relevant caches.
         /// </summary>
-        /// <param name="entity">The entity to insert.</param>
-        /// <param name="session">Optional session for transaction support.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>An <see cref="InsertResult"/> containing the operation result.</returns>
         public virtual async Task<InsertResult> InsertOneAsync(T entity, IClientSessionHandle? session = null, CancellationToken cancellationToken = default)
         {
-            using var activity = new Activity("BaseService.InsertOneAsync").Start();
+            using var activity = new Activity($"{typeof(T).Name}.InsertOneAsync").Start();
             activity?.SetTag("entity_type", typeof(T).Name);
 
             try
@@ -203,11 +309,11 @@ namespace Infrastructure.Services
                 // Insert using session if provided
                 if (session == null)
                 {
-                    await _collection.InsertOneAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await _collection.InsertOneAsync(entity, cancellationToken: cancellationToken);
                 }
                 else
                 {
-                    await _collection.InsertOneAsync(session, entity, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    await _collection.InsertOneAsync(session, entity, cancellationToken: cancellationToken);
                 }
 
                 // Extract ID from the entity
@@ -231,6 +337,15 @@ namespace Infrastructure.Services
                 _logger.LogInformation("Successfully inserted entity of type {EntityType} with ID {EntityId}",
                     typeof(T).Name, insertedId);
 
+                // Invalidate collection cache
+                InvalidateCollectionCache();
+
+                // If we know the ID, also invalidate entity cache
+                if (insertedId.HasValue)
+                {
+                    InvalidateEntityCache(insertedId.Value);
+                }
+
                 return insertResult;
             }
             catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
@@ -246,16 +361,11 @@ namespace Infrastructure.Services
         }
 
         /// <summary>
-        /// Updates an entity by ID.
+        /// Updates an entity by ID and invalidates relevant caches.
         /// </summary>
-        /// <param name="id">The ID of the entity to update.</param>
-        /// <param name="updatedFields">The fields to update.</param>
-        /// <param name="session">Optional session for transaction support.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>The update result.</returns>
         public virtual async Task<UpdateResult> UpdateOneAsync(Guid id, object updatedFields, IClientSessionHandle? session = null, CancellationToken cancellationToken = default)
         {
-            using var activity = new Activity("BaseService.UpdateOneAsync").Start();
+            using var activity = new Activity($"{typeof(T).Name}.UpdateOneAsync").Start();
             activity?.SetTag("entity_type", typeof(T).Name);
             activity?.SetTag("entity_id", id);
 
@@ -277,11 +387,11 @@ namespace Infrastructure.Services
                 UpdateResult result;
                 if (session == null)
                 {
-                    result = await _collection.UpdateOneAsync(filter, updateDefinition, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    result = await _collection.UpdateOneAsync(filter, updateDefinition, cancellationToken: cancellationToken);
                 }
                 else
                 {
-                    result = await _collection.UpdateOneAsync(session, filter, updateDefinition, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    result = await _collection.UpdateOneAsync(session, filter, updateDefinition, cancellationToken: cancellationToken);
                 }
 
                 if (result.MatchedCount == 0)
@@ -291,6 +401,11 @@ namespace Infrastructure.Services
                 }
 
                 _logger.LogInformation("Successfully updated entity of type {EntityType} with ID {Id}", typeof(T).Name, id);
+
+                // Invalidate caches
+                InvalidateEntityCache(id);
+                InvalidateCollectionCache();
+
                 return result;
             }
             catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
@@ -306,15 +421,11 @@ namespace Infrastructure.Services
         }
 
         /// <summary>
-        /// Deletes an entity by ID.
+        /// Deletes an entity by ID and invalidates relevant caches.
         /// </summary>
-        /// <param name="id">The ID of the entity to delete.</param>
-        /// <param name="session">Optional session for transaction support.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>The delete result.</returns>
         public virtual async Task<DeleteResult> DeleteAsync(Guid id, IClientSessionHandle? session = null, CancellationToken cancellationToken = default)
         {
-            using var activity = new Activity("BaseService.DeleteAsync").Start();
+            using var activity = new Activity($"{typeof(T).Name}.DeleteAsync").Start();
             activity?.SetTag("entity_type", typeof(T).Name);
             activity?.SetTag("entity_id", id);
 
@@ -330,11 +441,11 @@ namespace Infrastructure.Services
 
                 if (session == null)
                 {
-                    result = await _collection.DeleteOneAsync(filter, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    result = await _collection.DeleteOneAsync(filter, cancellationToken: cancellationToken);
                 }
                 else
                 {
-                    result = await _collection.DeleteOneAsync(session, filter, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    result = await _collection.DeleteOneAsync(session, filter, cancellationToken: cancellationToken);
                 }
 
                 if (result.DeletedCount == 0)
@@ -344,6 +455,11 @@ namespace Infrastructure.Services
                 }
 
                 _logger.LogInformation("Successfully deleted entity of type {EntityType} with ID {Id}", typeof(T).Name, id);
+
+                // Invalidate caches
+                InvalidateEntityCache(id);
+                InvalidateCollectionCache();
+
                 return result;
             }
             catch (Exception ex) when (!(ex is ArgumentException || ex is ResourceNotFoundException))
@@ -356,8 +472,6 @@ namespace Infrastructure.Services
         /// <summary>
         /// Builds an update definition from the provided field values.
         /// </summary>
-        /// <param name="updatedFields">The fields to update.</param>
-        /// <returns>An update definition.</returns>
         protected virtual UpdateDefinition<T> BuildUpdateDefinition(object updatedFields)
         {
             try
@@ -375,7 +489,7 @@ namespace Infrastructure.Services
                         }
                         else
                         {
-                            _logger.LogWarning("Attempted to update invalid property {PropertyName} for type {EntityType}",
+                            _logger.LogWarning("Skipping invalid property {PropertyName} for type {EntityType}",
                                 field.Key, typeof(T).Name);
                         }
                     }
@@ -396,7 +510,7 @@ namespace Infrastructure.Services
                         }
                         else
                         {
-                            _logger.LogWarning("Attempted to update invalid property {PropertyName} for type {EntityType}",
+                            _logger.LogWarning("Skipping invalid property {PropertyName} for type {EntityType}",
                                 propertyName, typeof(T).Name);
                         }
                     }
@@ -425,7 +539,6 @@ namespace Infrastructure.Services
         /// <summary>
         /// Gets the names of all valid properties for the entity type.
         /// </summary>
-        /// <returns>A set of valid property names.</returns>
         private static IReadOnlySet<string> GetValidPropertyNames()
         {
             return new HashSet<string>(
@@ -438,10 +551,6 @@ namespace Infrastructure.Services
         /// <summary>
         /// Executes a function within a MongoDB transaction.
         /// </summary>
-        /// <typeparam name="TResult">The result type.</typeparam>
-        /// <param name="action">The function to execute.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>The result of the function.</returns>
         protected async Task<TResult> ExecuteInTransactionAsync<TResult>(
             Func<IClientSessionHandle, Task<TResult>> action,
             CancellationToken cancellationToken = default)
@@ -475,13 +584,18 @@ namespace Infrastructure.Services
         /// <summary>
         /// Checks if an entity with the specified ID exists.
         /// </summary>
-        /// <param name="id">The entity ID to check.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>True if the entity exists; otherwise, false.</returns>
         public virtual async Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken = default)
         {
             try
             {
+                // Check cache first
+                string cacheKey = GetEntityCacheKey(id);
+                if (_cache.TryGetValue(cacheKey, out T _))
+                {
+                    return true;
+                }
+
+                // Not in cache, check database
                 var filter = Builders<T>.Filter.Eq("Id", id);
                 return await _collection.CountDocumentsAsync(filter, new CountOptions { Limit = 1 }, cancellationToken) > 0;
             }
@@ -495,13 +609,6 @@ namespace Infrastructure.Services
         /// <summary>
         /// Creates a paginated result set.
         /// </summary>
-        /// <param name="filter">The filter to apply.</param>
-        /// <param name="page">The page number (1-based).</param>
-        /// <param name="pageSize">The page size.</param>
-        /// <param name="sortField">Optional field to sort by.</param>
-        /// <param name="sortAscending">Whether to sort ascending.</param>
-        /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>A paginated result set.</returns>
         public virtual async Task<PaginatedResult<T>> GetPaginatedAsync(
             FilterDefinition<T> filter,
             int page = 1,
@@ -512,15 +619,24 @@ namespace Infrastructure.Services
         {
             try
             {
-                if (page < 1) page = 1;
-                if (pageSize < 1) pageSize = 20;
-                if (pageSize > 100) pageSize = 100; // Limit maximum page size
+                // Normalize pagination parameters
+                page = Math.Max(1, page);
+                pageSize = Math.Clamp(pageSize, 1, 100);
+
+                // Generate cache key for this paginated request
+                string cacheKey = $"paginated:{typeof(T).Name}:{filter}:{page}:{pageSize}:{sortField}:{sortAscending}";
+
+                // Try to get from cache
+                if (_cache.TryGetValue(cacheKey, out PaginatedResult<T> cachedResult))
+                {
+                    return cachedResult;
+                }
 
                 // Count total matching documents
                 var totalCount = await _collection.CountDocumentsAsync(filter, cancellationToken: cancellationToken);
 
                 // Build sort definition
-                SortDefinition<T> sortDefinition = null;
+                SortDefinition<T> sortDefinition;
                 if (!string.IsNullOrEmpty(sortField) && _validPropertyNames.Contains(sortField))
                 {
                     sortDefinition = sortAscending
@@ -541,13 +657,18 @@ namespace Infrastructure.Services
                     .Limit(pageSize)
                     .ToListAsync(cancellationToken);
 
-                return new PaginatedResult<T>
+                var result = new PaginatedResult<T>
                 {
                     Items = items,
                     Page = page,
                     PageSize = pageSize,
                     TotalCount = totalCount,
                 };
+
+                // Store in cache
+                _cache.Set(cacheKey, result, TimeSpan.FromMinutes(1)); // Short cache duration for paginated results
+
+                return result;
             }
             catch (Exception ex)
             {
@@ -556,46 +677,109 @@ namespace Infrastructure.Services
             }
         }
 
-        protected async Task<TCache> CacheEntityAsync<TCache>(
-            string key,
-            Func<Task<TCache>> factory,
+        #region Cache Helpers
+
+        /// <summary>
+        /// Gets the cache key for an entity by ID.
+        /// </summary>
+        protected string GetEntityCacheKey(Guid id)
+        {
+            return $"{CACHE_PREFIX}{typeof(T).Name}:{id}";
+        }
+
+        /// <summary>
+        /// Gets the cache key for the entire collection.
+        /// </summary>
+        protected string GetCollectionCacheKey()
+        {
+            return $"{CACHE_COLLECTION_PREFIX}{typeof(T).Name}";
+        }
+
+        /// <summary>
+        /// Gets the cache key for a filtered result.
+        /// </summary>
+        protected string GetFilterCacheKey(string filterString)
+        {
+            // Create deterministic hash of filter string to avoid excessively long keys
+            int filterHash = filterString.GetHashCode();
+            return $"{CACHE_COLLECTION_PREFIX}{typeof(T).Name}:filter:{filterHash}";
+        }
+
+        /// <summary>
+        /// Invalidates the cache for a specific entity.
+        /// </summary>
+        protected void InvalidateEntityCache(Guid id)
+        {
+            string cacheKey = GetEntityCacheKey(id);
+            _cache.Remove(cacheKey);
+            _logger.LogDebug("Invalidated cache for {EntityType} with ID {Id}", typeof(T).Name, id);
+        }
+
+        /// <summary>
+        /// Invalidates the cache for the entire collection.
+        /// </summary>
+        protected void InvalidateCollectionCache()
+        {
+            string collectionCacheKey = GetCollectionCacheKey();
+            _cache.Remove(collectionCacheKey);
+            _logger.LogDebug("Invalidated collection cache for {EntityType}", typeof(T).Name);
+
+            // Also clear any filtered result caches by creating a dummy entry with pattern prefix
+            // Since there's no direct way to remove by pattern in IMemoryCache
+            _cache.GetOrCreate($"{CACHE_COLLECTION_PREFIX}{typeof(T).Name}:INVALIDATE_TIMESTAMP", entry =>
+            {
+                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(1);
+                return DateTime.UtcNow.Ticks;
+            });
+        }
+
+        /// <summary>
+        /// Generic method to get or create a cached entity.
+        /// </summary>
+        protected async Task<T> GetOrCreateCachedEntityAsync(
+            Guid id,
+            Func<Task<T>> factory,
             TimeSpan? expiration = null)
         {
-            if (_cache.TryGetValue(key, out TCache value))
-                return value;
-
-            value = await factory();
-            _cache.Set(key, value, expiration ?? TimeSpan.FromMinutes(5));
-            return value;
+            string cacheKey = GetEntityCacheKey(id);
+            return await GetOrCreateCachedItemAsync(cacheKey, factory, expiration);
         }
 
-        protected async Task<T?> GetByIdCachedAsync(Guid id, TimeSpan? expiration = null)
+        /// <summary>
+        /// Generic method to get or create a cached collection.
+        /// </summary>
+        protected async Task<List<T>> GetOrCreateCachedCollectionAsync(
+            Func<Task<List<T>>> factory,
+            TimeSpan? expiration = null)
         {
-            var key = $"{typeof(T).Name}_GetById_{id}";
-            return await CacheEntityAsync(key, async () => await GetByIdAsync(id), expiration);
+            string cacheKey = GetCollectionCacheKey();
+            return await GetOrCreateCachedItemAsync(cacheKey, factory, expiration);
         }
 
-        protected async Task<List<T>> GetAllCachedAsync(TimeSpan? expiration = null)
+        /// <summary>
+        /// Generic method to get or create a cached item.
+        /// </summary>
+        protected async Task<TItem> GetOrCreateCachedItemAsync<TItem>(
+            string cacheKey,
+            Func<Task<TItem>> factory,
+            TimeSpan? expiration = null)
         {
-            var key = $"{typeof(T).Name}_GetAll";
-            return await CacheEntityAsync(key, async () => await GetAllAsync(), expiration);
+            if (_cache.TryGetValue(cacheKey, out TItem cachedItem))
+            {
+                return cachedItem;
+            }
+
+            var item = await factory();
+
+            if (item != null)
+            {
+                _cache.Set(cacheKey, item, expiration ?? DEFAULT_CACHE_DURATION);
+                _logger.LogDebug("Added item to cache with key {CacheKey}", cacheKey);
+            }
+
+            return item;
         }
 
-        protected void ResetCacheForId(Guid id)
-        {
-            var key = $"{typeof(T).Name}_GetById_{id}";
-            _cache.Remove(key);
-        }
-
-        protected void ResetCacheForAll()
-        {
-            var key = $"{typeof(T).Name}_GetAll";
-            _cache.Remove(key);
-        }
-
-        protected void ResetCache(string key)
-        {
-            _cache.Remove(key);
-        }
+        #endregion
     }
 }

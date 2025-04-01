@@ -26,7 +26,7 @@ namespace crypto_investment_project.Server.Controllers
             {
                 return ValidationProblem("A valid user is required.");
             }
-            var balancesResult = await _balanceService.GetAllByUserIdAsync(userId, AssetClass.Crypto);
+            var balancesResult = await _balanceService.GetAllByUserIdAsync(userId, AssetType.Exchange);
             if (balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
             {
                 return BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.");
@@ -44,7 +44,7 @@ namespace crypto_investment_project.Server.Controllers
             {
                 return ValidationProblem("A valid user is required.");
             }
-            var balancesResult = await _balanceService.GetAllByUserIdAsync(userId, AssetClass.Fiat);
+            var balancesResult = await _balanceService.GetAllByUserIdAsync(userId, AssetType.Platform);
             if (balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
             {
                 return BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.");
@@ -62,7 +62,7 @@ namespace crypto_investment_project.Server.Controllers
             {
                 return ValidationProblem("A valid user is required.");
             }
-            var balancesResult = await _balanceService.GetAllByUserIdAsync(userId, AssetClass.Crypto);
+            var balancesResult = await _balanceService.GetAllByUserIdAsync(userId, AssetType.Exchange);
             if (balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
             {
                 return BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.");

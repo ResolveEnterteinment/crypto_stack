@@ -1,18 +1,18 @@
 import React, { useState } from 'react';
 
 // Define interfaces for better type safety
-interface Allocation {
+interface IAllocation {
     assetId: string;
     assetName: string;
     assetTicker: string;
     percentAmount: number;
 }
 
-interface Subscription {
+interface ISubscription {
     id: string;
     createdAt: string;
     userId: string;
-    allocations: Allocation[];
+    allocations: IAllocation[];
     interval: string;
     amount: number;
     currency: string;
@@ -22,14 +22,14 @@ interface Subscription {
     isCancelled: boolean;
 }
 
-interface SubscriptionCardProps {
-    subscription: Subscription;
+interface ISubscriptionCardProps {
+    subscription: ISubscription;
     onEdit: (id: string) => void;
     onCancel: (id: string) => void;
     onViewHistory: (id: string) => void;
 }
 
-const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
+const SubscriptionCard: React.FC<ISubscriptionCardProps> = ({
     subscription,
     onEdit,
     onCancel,
@@ -141,7 +141,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
                     <div>
                         <p className="font-semibold mb-1">Allocations:</p>
                         <div className="mb-4 h-4 bg-gray-200 rounded-full overflow-hidden flex">
-                            {subscription.allocations?.map((alloc: Allocation) => {
+                            {subscription.allocations?.map((alloc: IAllocation) => {
                                 // Calculate percentage width for the bar
                                 const percentage = alloc.percentAmount;
                                 return (
@@ -159,7 +159,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
                         </div>
                         {/* List of balances */}
                         <div className="space-y-3">
-                        {subscription.allocations.map((alloc: Allocation) => (
+                        {subscription.allocations.map((alloc: IAllocation) => (
                             <div key={alloc.assetTicker} className="flex justify-between items-center">
                                 <div className="flex items-center">
                                     <div

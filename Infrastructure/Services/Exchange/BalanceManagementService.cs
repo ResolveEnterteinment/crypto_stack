@@ -1,10 +1,12 @@
-﻿using Application.Interfaces;
+﻿// Refactored BalanceManagementService 
+using Application.Interfaces;
 using Application.Interfaces.Exchange;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.Events;
 using Domain.Exceptions;
 using Domain.Models.Event;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using Polly;
@@ -22,21 +24,23 @@ namespace Infrastructure.Services.Exchange
         private readonly IEventService _eventService;
         private readonly ILogger<BalanceManagementService> _logger;
         private readonly AsyncRetryPolicy _retryPolicy;
+        private readonly IMemoryCache _cache;
+        private const string BALANCE_CHECK_CACHE_PREFIX = "balance_check:";
+        private static readonly TimeSpan BALANCE_CHECK_CACHE_DURATION = TimeSpan.FromMinutes(1);
 
         /// <summary>
         /// Initializes a new instance of the <see cref="BalanceManagementService"/> class.
         /// </summary>
-        /// <param name="exchangeService">The exchange service for interacting with crypto exchanges.</param>
-        /// <param name="eventService">The event service for publishing events.</param>
-        /// <param name="logger">The logger instance.</param>
         public BalanceManagementService(
             IExchangeService exchangeService,
             IEventService eventService,
-            ILogger<BalanceManagementService> logger)
+            ILogger<BalanceManagementService> logger,
+            IMemoryCache cache)
         {
             _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _cache = cache ?? throw new ArgumentNullException(nameof(cache));
 
             // Configure retry policy for exchange operations
             _retryPolicy = Policy
@@ -54,12 +58,8 @@ namespace Infrastructure.Services.Exchange
         }
 
         /// <summary>
-        /// Checks the exchange balance for a specific ticker and ensures it has sufficient funds.
+        /// Checks the exchange balance for a specific ticker and ensures it has sufficient funds, with caching.
         /// </summary>
-        /// <param name="exchangeName">The name of the exchange.</param>
-        /// <param name="ticker">The ticker symbol to check balance for.</param>
-        /// <param name="amount">The required amount.</param>
-        /// <returns>A result wrapper containing the available balance amount or an error.</returns>
         public async Task<ResultWrapper<bool>> CheckExchangeBalanceAsync(string exchangeName, string ticker, decimal amount)
         {
             #region Validate
@@ -87,6 +87,15 @@ namespace Infrastructure.Services.Exchange
 
             var correlationId = Activity.Current?.Id ?? Guid.NewGuid().ToString();
 
+            // Check cache first to avoid excessive balance checks for the same parameters
+            string cacheKey = $"{BALANCE_CHECK_CACHE_PREFIX}{exchangeName}:{ticker}:{Math.Round(amount, 2)}";
+
+            if (_cache.TryGetValue(cacheKey, out ResultWrapper<bool> cachedResult))
+            {
+                _logger.LogInformation("Using cached balance check for {Exchange}:{Ticker}", exchangeName, ticker);
+                return cachedResult;
+            }
+
             using (_logger.BeginScope(new Dictionary<string, object>
             {
                 ["Exchange"] = exchangeName,
@@ -101,7 +110,7 @@ namespace Infrastructure.Services.Exchange
                     _logger.LogInformation("Checking balance for {Exchange}:{Ticker}", exchangeName, ticker);
 
                     // Apply retry policy for balance check
-                    return await _retryPolicy.ExecuteAsync(async () =>
+                    var result = await _retryPolicy.ExecuteAsync(async () =>
                     {
                         if (!_exchangeService.Exchanges.TryGetValue(exchangeName, out var exchange))
                         {
@@ -110,16 +119,19 @@ namespace Infrastructure.Services.Exchange
 
                         // Get the reserve asset (typically a stablecoin)
                         var reserveAssetTicker = exchange.ReserveAssetTicker;
-                        var balanceData = await exchange.GetBalanceAsync(reserveAssetTicker);
 
-                        if (!balanceData.IsSuccess)
+                        // Use the cached balance method from exchange service
+                        var balanceResult = await _exchangeService.GetCachedExchangeBalanceAsync(exchangeName, reserveAssetTicker);
+
+                        if (!balanceResult.IsSuccess)
                         {
-                            throw new ExchangeApiException($"Failed to fetch exchange balance {exchange.Name}:{reserveAssetTicker}: {balanceData.ErrorMessage}",
+                            throw new ExchangeApiException(
+                                $"Failed to fetch exchange balance {exchange.Name}:{reserveAssetTicker}: {balanceResult.ErrorMessage}",
                                 exchangeName
-                                );
+                            );
                         }
 
-                        decimal fiatBalance = balanceData.Data?.Available ?? 0m;
+                        decimal fiatBalance = balanceResult.Data?.Available ?? 0m;
                         decimal threshold = amount * 0.05m; // 5% buffer
 
                         _logger.LogInformation(
@@ -135,10 +147,15 @@ namespace Infrastructure.Services.Exchange
                             // Request more funds if balance is below required amount
                             await RequestFunding(amount - fiatBalance + threshold);
 
-                            return ResultWrapper<bool>.Failure(
+                            var insufficientResult = ResultWrapper<bool>.Failure(
                                 FailureReason.InsufficientBalance,
                                 $"Insufficient balance. Available: {fiatBalance}, Required: {amount}",
                                 "INSUFFICIENT_FUNDS");
+
+                            // Cache the negative result for a short period
+                            _cache.Set(cacheKey, insufficientResult, TimeSpan.FromSeconds(30));
+
+                            return insufficientResult;
                         }
 
                         // Check if balance is getting low (less than 20% over required amount)
@@ -152,8 +169,15 @@ namespace Infrastructure.Services.Exchange
                             _ = Task.Run(() => RequestFunding(amount));
                         }
 
-                        return ResultWrapper<bool>.Success(true);
+                        var successResult = ResultWrapper<bool>.Success(true);
+
+                        // Cache the successful result
+                        _cache.Set(cacheKey, successResult, BALANCE_CHECK_CACHE_DURATION);
+
+                        return successResult;
                     });
+
+                    return result;
                 }
                 catch (Exception ex)
                 {
@@ -161,7 +185,12 @@ namespace Infrastructure.Services.Exchange
                         "Error checking exchange balance for {Exchange}:{Ticker}",
                         exchangeName, ticker);
 
-                    return ResultWrapper<bool>.FromException(ex);
+                    var errorResult = ResultWrapper<bool>.FromException(ex);
+
+                    // Cache error results for a very short time to prevent hammering the service
+                    _cache.Set(cacheKey, errorResult, TimeSpan.FromSeconds(15));
+
+                    return errorResult;
                 }
             }
         }
@@ -169,8 +198,6 @@ namespace Infrastructure.Services.Exchange
         /// <summary>
         /// Requests additional funding by publishing a funding request event.
         /// </summary>
-        /// <param name="amount">The amount of funding requested.</param>
-        /// <returns>A task representing the asynchronous operation.</returns>
         public async Task RequestFunding(decimal amount)
         {
             if (amount <= 0)
@@ -190,6 +217,17 @@ namespace Infrastructure.Services.Exchange
             {
                 try
                 {
+                    // Check if we've recently requested funding for a similar amount
+                    string cacheKey = $"funding_request:{Math.Round(amount, 0)}";
+
+                    if (_cache.TryGetValue(cacheKey, out bool _))
+                    {
+                        _logger.LogInformation(
+                            "Skipping duplicate funding request for {Amount} - already requested recently",
+                            amount);
+                        return;
+                    }
+
                     _logger.LogInformation("Requesting additional funding of {Amount}", amount);
 
                     // Create an event record
@@ -215,6 +253,9 @@ namespace Infrastructure.Services.Exchange
 
                     // Publish the event to be handled by relevant services
                     await _eventService.Publish(new RequestfundingEvent(amount, storedEventResult.InsertedId.Value));
+
+                    // Cache the request to prevent duplicates
+                    _cache.Set(cacheKey, true, TimeSpan.FromMinutes(15));
 
                     _logger.LogInformation(
                         "Successfully published funding request event. Amount: {Amount}, EventId: {EventId}",
