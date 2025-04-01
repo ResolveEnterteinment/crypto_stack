@@ -15,25 +15,39 @@ const NotificationItem: React.FC<NotificationItemProps> = ({ data, handleRead })
         const now = new Date();
         const diff = now.getTime() - date.getTime();
 
-        // If less than a day, show relative time
+        // Just now (less than a minute ago)
+        if (diff < 60 * 1000) {
+            return 'Just now';
+        }
+
+        // Minutes ago (less than an hour)
+        if (diff < 60 * 60 * 1000) {
+            const minutes = Math.floor(diff / (60 * 1000));
+            return `${minutes}m ago`;
+        }
+
+        // Hours ago (less than a day)
         if (diff < 24 * 60 * 60 * 1000) {
             const hours = Math.floor(diff / (60 * 60 * 1000));
-
-            if (hours < 1) {
-                const minutes = Math.floor(diff / (60 * 1000));
-                return minutes < 1 ? 'Just now' : `${minutes}m ago`;
-            }
-
             return `${hours}h ago`;
         }
 
-        // If less than a week, show day of week
+        // Yesterday
+        if (diff < 48 * 60 * 60 * 1000) {
+            return 'Yesterday';
+        }
+
+        // Day of week (less than a week)
         if (diff < 7 * 24 * 60 * 60 * 1000) {
             return date.toLocaleDateString(undefined, { weekday: 'long' });
         }
 
-        // Otherwise show full date
-        return date.toLocaleDateString();
+        // Full date for older notifications
+        return date.toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            year: now.getFullYear() !== date.getFullYear() ? 'numeric' : undefined
+        });
     };
 
     // Handle mark as read with loading state
@@ -48,10 +62,12 @@ const NotificationItem: React.FC<NotificationItemProps> = ({ data, handleRead })
         }
     };
 
-    // Determine icon based on notification type (you can extend this based on your app's notification types)
-    const getNotificationIcon = () => {
-        // This is a simple example - you would want to parse the message or use a type field
-        if (data.message.toLowerCase().includes('payment')) {
+    // Determine notification icon based on content analysis
+    const NotificationIcon = () => {
+        const message = data.message.toLowerCase();
+
+        // Payment related notification
+        if (message.includes('payment') || message.includes('transaction') || message.includes('deposit')) {
             return (
                 <div className="bg-green-100 rounded-full p-2 flex-shrink-0">
                     <svg className="h-5 w-5 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -61,17 +77,29 @@ const NotificationItem: React.FC<NotificationItemProps> = ({ data, handleRead })
             );
         }
 
-        if (data.message.toLowerCase().includes('subscription')) {
+        // Subscription related notification
+        if (message.includes('subscription') || message.includes('invested')) {
             return (
                 <div className="bg-blue-100 rounded-full p-2 flex-shrink-0">
                     <svg className="h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                     </svg>
                 </div>
             );
         }
 
-        // Default icon
+        // System notification
+        if (message.includes('system') || message.includes('update') || message.includes('maintenance')) {
+            return (
+                <div className="bg-yellow-100 rounded-full p-2 flex-shrink-0">
+                    <svg className="h-5 w-5 text-yellow-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                </div>
+            );
+        }
+
+        // Default icon for other notifications
         return (
             <div className="bg-gray-100 rounded-full p-2 flex-shrink-0">
                 <svg className="h-5 w-5 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -83,15 +111,18 @@ const NotificationItem: React.FC<NotificationItemProps> = ({ data, handleRead })
 
     return (
         <div
-            className={`py-3 transition-all duration-200 hover:bg-gray-50 ${!data.isRead ? 'border-l-4 border-blue-500 pl-3' : 'pl-4'}`}
+            className={`py-3 px-4 transition-all duration-200 hover:bg-gray-50 ${!data.isRead ? 'bg-blue-50 bg-opacity-30' : ''
+                }`}
         >
             <div className="flex gap-3 items-start">
-                {getNotificationIcon()}
+                <NotificationIcon />
 
                 <div className="flex-1 min-w-0">
-                    <p className={`text-sm ${data.isRead ? 'text-gray-500' : 'text-gray-800 font-medium'}`}>
+                    <p className={`text-sm ${data.isRead ? 'text-gray-600' : 'text-gray-800 font-medium'
+                        }`}>
                         {data.message}
                     </p>
+
                     <div className="flex items-center justify-between mt-1">
                         <span className="text-xs text-gray-500">
                             {formatDate(data.createdAt)}
@@ -99,9 +130,11 @@ const NotificationItem: React.FC<NotificationItemProps> = ({ data, handleRead })
 
                         {!data.isRead && (
                             <button
-                                className={`text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors flex items-center ${isMarking ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                className={`text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors flex items-center ${isMarking ? 'opacity-50 cursor-not-allowed' : ''
+                                    }`}
                                 onClick={onMarkAsRead}
                                 disabled={isMarking}
+                                aria-label="Mark as read"
                             >
                                 {isMarking ? (
                                     <>
@@ -112,7 +145,12 @@ const NotificationItem: React.FC<NotificationItemProps> = ({ data, handleRead })
                                         Marking...
                                     </>
                                 ) : (
-                                    'Mark as read'
+                                    <>
+                                        <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+                                        </svg>
+                                        Mark as read
+                                    </>
                                 )}
                             </button>
                         )}

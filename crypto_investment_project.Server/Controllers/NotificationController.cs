@@ -18,47 +18,75 @@ namespace crypto_investment_project.Server.Controllers
             IHubContext<NotificationHub> notificationHub,
             ILogger<NotificationController> logger)
         {
-            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
-            _notificationHub = notificationHub ?? throw new ArgumentNullException(nameof(notificationHub));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _notificationService = notificationService;
+            _notificationHub = notificationHub;
+            _logger = logger;
         }
 
+        /// <summary>
+        /// Retrieves notifications for a specific user
+        /// </summary>
+        /// <param name="userId">User ID</param>
+        /// <param name="page">Page number (optional)</param>
+        /// <param name="pageSize">Page size (optional)</param>
+        /// <returns>List of user notifications</returns>
         [HttpGet("{userId}")]
-        public async Task<IActionResult> GetUserNotifications(string userId)
+        public async Task<IActionResult> GetUserNotifications(
+            string userId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
             if (string.IsNullOrEmpty(userId))
             {
                 return BadRequest("User ID is required");
             }
 
-            var requestId = Request.Headers["X-Request-ID"].ToString() ?? Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+            var requestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
             try
             {
-                var notifications = await _notificationService.GetUserNotificationsAsync(userId);
-                _logger.LogInformation("Retrieved {Count} notifications for user {UserId} (RequestID: {RequestId})",
-                    notifications?.Count() ?? 0, userId, requestId);
+                var notifications = await _notificationService.GetUserNotificationsAsync(
+                    userId
+                //page,
+                //pageSize
+                );
+
+                _logger.LogInformation(
+                    "Retrieved {Count} notifications for user {UserId} (RequestID: {RequestId})",
+                    notifications?.Count() ?? 0,
+                    userId,
+                    requestId
+                );
 
                 return Ok(notifications);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving notifications for user {UserId} (RequestID: {RequestId})",
-                    userId, requestId);
-                return StatusCode(500, "An error occurred while retrieving notifications");
+                _logger.LogError(
+                    ex,
+                    "Error retrieving notifications for user {UserId} (RequestID: {RequestId})",
+                    userId,
+                    requestId
+                );
+
+                return StatusCode(500, new { message = "An error occurred while retrieving notifications" });
             }
         }
 
+        /// <summary>
+        /// Creates a new notification for a user
+        /// </summary>
+        /// <param name="notification">Notification data</param>
+        /// <returns>Result of the operation</returns>
         [HttpPost("create")]
         [IgnoreAntiforgeryToken]
         public async Task<IActionResult> CreateNotification([FromBody] NotificationData notification)
         {
-            var requestId = Request.Headers["X-Request-ID"].ToString() ?? Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+            var requestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
             // Validate input
             if (notification == null)
             {
-                _logger.LogWarning("Null notification data received (RequestID: {RequestId})", requestId);
                 return BadRequest("Notification data is required");
             }
 
@@ -69,104 +97,127 @@ namespace crypto_investment_project.Server.Controllers
 
             if (string.IsNullOrEmpty(notification.UserId))
             {
-                return BadRequest("Notification user id is required");
+                return BadRequest("User ID is required");
             }
 
             try
             {
+                // Create notification in database
                 var insertResult = await _notificationService.CreateNotificationAsync(notification);
+
                 if (!insertResult.IsSuccess)
                 {
-                    _logger.LogWarning("Failed to create notification: {ErrorMessage} (RequestID: {RequestId})",
-                        insertResult.ErrorMessage, requestId);
+                    _logger.LogWarning(
+                        "Failed to create notification: {ErrorMessage} (RequestID: {RequestId})",
+                        insertResult.ErrorMessage,
+                        requestId
+                    );
+
                     return BadRequest(insertResult.ErrorMessage);
                 }
 
-                // Try to send real-time notification via SignalR
+                // Send real-time notification via SignalR
                 try
                 {
-                    await _notificationHub.Clients.Group($"user-{notification.UserId}")
+                    await _notificationHub.Clients
+                        .Group($"user-{notification.UserId}")
                         .SendAsync("ReceiveNotification", notification.UserId, notification.Message);
 
-                    _logger.LogInformation("Real-time notification sent to user {UserId} (RequestID: {RequestId})",
-                        notification.UserId, requestId);
+                    _logger.LogInformation(
+                        "Real-time notification sent to user {UserId} (RequestID: {RequestId})",
+                        notification.UserId,
+                        requestId
+                    );
                 }
                 catch (Exception signalREx)
                 {
-                    // Log but don't fail the whole operation if SignalR delivery fails
-                    _logger.LogWarning(signalREx, "Failed to send real-time notification to user {UserId} (RequestID: {RequestId})",
-                        notification.UserId, requestId);
+                    // Log but don't fail the operation if real-time delivery fails
+                    _logger.LogWarning(
+                        signalREx,
+                        "Failed to send real-time notification to user {UserId} (RequestID: {RequestId})",
+                        notification.UserId,
+                        requestId
+                    );
                 }
 
-                return Ok($"Notification {insertResult.Data.InsertedId} created successfully.");
+                return Ok(new
+                {
+                    id = insertResult.Data.InsertedId.ToString(),
+                    message = "Notification created successfully"
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error creating notification (RequestID: {RequestId})", requestId);
-                return StatusCode(500, "An error occurred while creating the notification");
+                _logger.LogError(
+                    ex,
+                    "Error creating notification (RequestID: {RequestId})",
+                    requestId
+                );
+
+                return StatusCode(500, new { message = "An error occurred while creating the notification" });
             }
         }
 
+        /// <summary>
+        /// Marks a notification as read
+        /// </summary>
+        /// <param name="notificationId">Notification ID</param>
+        /// <returns>Result of the operation</returns>
         [HttpPost("read/{notificationId}")]
         [IgnoreAntiforgeryToken]
         public async Task<IActionResult> MarkAsRead(string notificationId)
         {
-            var requestId = Request.Headers["X-Request-ID"].ToString() ?? Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-
-            // Validate input
-            if (string.IsNullOrEmpty(notificationId))
+            if (string.IsNullOrEmpty(notificationId) || !Guid.TryParse(notificationId, out var notificationGuid))
             {
-                _logger.LogWarning("Empty notification ID received (RequestID: {RequestId})", requestId);
-                return BadRequest("Notification ID is required");
+                return BadRequest("Valid notification ID is required");
             }
+
+            var requestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
             try
             {
-                // Safely parse the GUID
-                if (!Guid.TryParse(notificationId, out var notificationGuid) || notificationGuid == Guid.Empty)
-                {
-                    _logger.LogWarning("Invalid notification ID format: {NotificationId} (RequestID: {RequestId})",
-                        notificationId, requestId);
-                    return BadRequest("Invalid notification ID format");
-                }
+                var result = await _notificationService.MarkAsReadAsync(notificationGuid);
 
-                var markAsReadResult = await _notificationService.MarkAsReadAsync(notificationGuid);
-                if (!markAsReadResult.IsSuccess)
+                if (!result.IsSuccess)
                 {
-                    // Check for a "not found" scenario - return 404 instead of 400
-                    if (markAsReadResult.ErrorMessage?.Contains("not found") == true)
+                    // Check for a "not found" scenario
+                    if (result.ErrorMessage?.Contains("not found") == true)
                     {
-                        _logger.LogInformation("Notification not found: {NotificationId} (RequestID: {RequestId})",
-                            notificationId, requestId);
-                        return NotFound($"Notification {notificationId} not found");
+                        return NotFound(new { message = $"Notification {notificationId} not found" });
                     }
 
-                    _logger.LogWarning("Failed to mark notification as read: {ErrorMessage} (RequestID: {RequestId})",
-                        markAsReadResult.ErrorMessage, requestId);
-                    return BadRequest(markAsReadResult.ErrorMessage);
+                    return BadRequest(new { message = result.ErrorMessage });
                 }
 
-                return Ok("Notification successfully marked as read.");
-            }
-            catch (FormatException)
-            {
-                _logger.LogWarning("Invalid notification ID format: {NotificationId} (RequestID: {RequestId})",
-                    notificationId, requestId);
-                return BadRequest("Invalid notification ID format");
+                return Ok(new { message = "Notification marked as read" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error marking notification {NotificationId} as read (RequestID: {RequestId})",
-                    notificationId, requestId);
-                return StatusCode(500, "An error occurred while marking the notification as read");
+                _logger.LogError(
+                    ex,
+                    "Error marking notification {NotificationId} as read (RequestID: {RequestId})",
+                    notificationId,
+                    requestId
+                );
+
+                return StatusCode(500, new { message = "An error occurred while marking the notification as read" });
             }
         }
 
+        /// <summary>
+        /// Health check endpoint for the notification service
+        /// </summary>
+        /// <returns>Health status</returns>
         [HttpGet("health")]
         [IgnoreAntiforgeryToken]
         public IActionResult HealthCheck()
         {
-            return Ok(new { status = "healthy", timestamp = DateTime.UtcNow });
+            return Ok(new
+            {
+                status = "healthy",
+                timestamp = DateTime.UtcNow,
+                service = "NotificationService"
+            });
         }
     }
 }

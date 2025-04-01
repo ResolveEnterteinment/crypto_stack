@@ -75,7 +75,7 @@ public class NotificationService : BaseService<NotificationData>, INotificationS
         }
     }
 
-    public string GetUserConnectionById(string connectionId)
+    public string GetById(string connectionId)
     {
         lock (_users)
         {
@@ -84,7 +84,7 @@ public class NotificationService : BaseService<NotificationData>, INotificationS
         }
     }
 
-    public string GetUserConnectionByUser(string user)
+    public string GetByUser(string user)
     {
         lock (_users)
         {
@@ -120,7 +120,7 @@ public class NotificationService : BaseService<NotificationData>, INotificationS
             }
 
             // ✅ Ensure user has a valid connection ID before sending
-            var clientId = GetUserConnectionByUser(notification.UserId);
+            var clientId = GetByUser(notification.UserId);
             if (!string.IsNullOrEmpty(clientId))
             {
                 await _hubContext.Clients.Client(clientId).SendAsync("ReceiveNotification", notification.UserId, notification.Message);

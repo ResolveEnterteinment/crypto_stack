@@ -9,6 +9,6 @@ public interface INotificationService
     public bool AddUserToList(string userToAdd);
     public void RemoveUserFromList(string user);
     public void AddUserConnectionId(string user, string connectionId);
-    public string GetUserConnectionById(string connectionId);
-    public string GetUserConnectionByUser(string user);
+    public string GetById(string connectionId);
+    public string GetByUser(string user);
 }

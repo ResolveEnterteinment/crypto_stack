@@ -1,8 +1,9 @@
-﻿import * as signalR from "@microsoft/signalr";
+﻿// src/services/notification.ts
+import * as signalR from "@microsoft/signalr";
 import api from "./api";
 import INotification from "../components/Notification/INotification";
 
-// Track the active connection
+// Connection state management
 let activeConnection: signalR.HubConnection | null = null;
 
 // Cache the connection errors for UI display
@@ -12,8 +13,18 @@ export const connectionErrors = {
     connectionAttempts: 0
 };
 
-// Fetch notifications with paging support
-export const getNotifications = async (userId: string, page: number = 1, pageSize: number = 20): Promise<INotification[]> => {
+/**
+ * Fetches notifications with paging support
+ * @param userId The ID of the user
+ * @param page Page number (optional, defaults to 1)
+ * @param pageSize Page size (optional, defaults to 20)
+ * @returns Promise with array of notifications
+ */
+export const getNotifications = async (
+    userId: string,
+    page: number = 1,
+    pageSize: number = 20
+): Promise<INotification[]> => {
     if (!userId) {
         console.error("getNotifications called with undefined userId");
         return Promise.reject(new Error("User ID is required"));
@@ -37,8 +48,16 @@ export const getNotifications = async (userId: string, page: number = 1, pageSiz
     }
 };
 
-// Mark notification as read with retry mechanism and better error handling
-export const markNotificationAsRead = async (notificationId: string, maxRetries = 3): Promise<void> => {
+/**
+ * Marks a notification as read
+ * @param notificationId The ID of the notification
+ * @param maxRetries Maximum number of retry attempts (default: 3)
+ * @returns Promise
+ */
+export const markNotificationAsRead = async (
+    notificationId: string,
+    maxRetries = 3
+): Promise<void> => {
     if (!notificationId) {
         console.error("markNotificationAsRead called with undefined notificationId");
         return Promise.reject(new Error("Notification ID is required"));
@@ -93,8 +112,14 @@ export const markNotificationAsRead = async (notificationId: string, maxRetries 
     return attemptRequest();
 };
 
-// Handle batch operations more gracefully
-export const markAllAsRead = async (notificationIds: string[]): Promise<{ success: boolean, failedIds: string[] }> => {
+/**
+ * Marks multiple notifications as read
+ * @param notificationIds Array of notification IDs
+ * @returns Promise with success status and array of failed IDs
+ */
+export const markAllAsRead = async (
+    notificationIds: string[]
+): Promise<{ success: boolean, failedIds: string[] }> => {
     if (!notificationIds.length) {
         return { success: true, failedIds: [] };
     }
@@ -109,42 +134,35 @@ export const markAllAsRead = async (notificationIds: string[]): Promise<{ succes
     };
 };
 
-// SignalR Connection for real-time notifications with better error handling
-export const connectToNotifications = (userId: string, onNotificationReceived: (message: string) => void): signalR.HubConnection => {
-    if (!userId) {
-        throw new Error("User ID is required for notification connection");
+/**
+ * Helper function to check server availability
+ * @returns Promise with boolean indicating server availability
+ */
+export const checkServerAvailability = async (): Promise<boolean> => {
+    try {
+        // Try a simple health check endpoint, or fallback to a HEAD request
+        const response = await api.head("/health", {
+            timeout: 3000
+        });
+        return response.status >= 200 && response.status < 300;
+    } catch (error) {
+        console.warn("Server health check failed:", error);
+        return false;
     }
+};
 
-    // If there's an existing connection for this user and it's not in a failed state, return it
-    if (activeConnection && activeConnection.state !== signalR.HubConnectionState.Disconnected) {
-        console.log("Reusing existing SignalR connection");
-        return activeConnection;
-    }
-
-    // Get the authentication token
-    const token = localStorage.getItem("access_token");
-    if (!token) {
-        console.warn("No authentication token found, notifications may not work correctly");
-    }
-
-    // Get API base URL from environment variable or api config
-    const apiBaseUrl = api.defaults.baseURL || "https://localhost:7144";
-    const hubUrl = `${apiBaseUrl}/hubs/notificationHub`.replace('/api', '');
-
-    console.log("Connecting to SignalR hub at:", hubUrl);
-
-    // Create connection with better settings for reliability
-    const connection = new signalR.HubConnectionBuilder()
-        .withUrl(hubUrl, {
-            accessTokenFactory: () => token || "",
-            transport: signalR.HttpTransportType.WebSockets,
-            skipNegotiation: true
-        })
-        .withAutomaticReconnect([0, 2000, 5000, 10000, 15000, 30000])
-        .configureLogging(signalR.LogLevel.Warning)
-        .build();
-
-    // Set up event handlers
+/**
+ * Sets up connection event handlers for SignalR
+ * @param connection The SignalR connection
+ * @param userId User ID for the connection
+ * @param onNotificationReceived Callback for new notifications
+ */
+const setupConnectionEventHandlers = (
+    connection: signalR.HubConnection,
+    userId: string,
+    onNotificationReceived: (message: string) => void
+) => {
+    // Set up message handler
     connection.on("ReceiveNotification", (targetUserId, message) => {
         // Only process notifications meant for this user
         if (targetUserId === userId) {
@@ -153,13 +171,13 @@ export const connectToNotifications = (userId: string, onNotificationReceived: (
         }
     });
 
+    // Connection state change handlers
     connection.on("Connected", (connectionId) => {
         console.log(`✅ Connected to Notification Hub with ID: ${connectionId}`);
         connectionErrors.lastError = null;
         connectionErrors.connectionAttempts = 0;
     });
 
-    // Connection state change handlers
     connection.onreconnecting((error) => {
         console.warn("SignalR reconnecting:", error?.message || "Unknown reason");
         connectionErrors.lastError = error?.message || "Connection lost, attempting to reconnect";
@@ -179,12 +197,28 @@ export const connectToNotifications = (userId: string, onNotificationReceived: (
         console.log("SignalR connection closed:", error?.message || "Unknown reason");
         connectionErrors.lastError = error?.message || "Connection closed";
         connectionErrors.lastErrorTime = new Date();
-        activeConnection = null;
+        if (activeConnection === connection) {
+            activeConnection = null;
+        }
     });
+};
 
-    // Start the connection with robust retry logic
-    const startConnection = async (retryAttempt = 0): Promise<signalR.HubConnection> => {
+/**
+ * Starts a SignalR connection with robust retry logic
+ * @param connection SignalR connection to start
+ * @param userId User ID for the connection
+ * @returns Promise with the started connection
+ */
+const startConnection = async (
+    connection: signalR.HubConnection,
+    userId: string
+): Promise<signalR.HubConnection> => {
+    let retryAttempt = 0;
+    const maxRetries = 5;
+
+    const attemptStart = async (): Promise<signalR.HubConnection> => {
         connectionErrors.connectionAttempts = retryAttempt + 1;
+
         try {
             await connection.start();
             console.log("SignalR connection established successfully");
@@ -202,16 +236,16 @@ export const connectToNotifications = (userId: string, onNotificationReceived: (
 
             return connection;
         } catch (err: any) {
-            const maxRetries = 5;
             const retryDelayMs = Math.min(1000 * Math.pow(2, retryAttempt), 30000);
             connectionErrors.lastError = err?.message || "Failed to connect";
             connectionErrors.lastErrorTime = new Date();
 
             if (retryAttempt < maxRetries) {
                 console.warn(`Connection failed, retrying in ${retryDelayMs / 1000}s... (Attempt ${retryAttempt + 1}/${maxRetries})`);
+                retryAttempt++;
 
                 return new Promise(resolve => {
-                    setTimeout(() => resolve(startConnection(retryAttempt + 1)), retryDelayMs);
+                    setTimeout(() => resolve(attemptStart()), retryDelayMs);
                 });
             } else {
                 console.error("SignalR connection failed after multiple attempts:", err);
@@ -220,30 +254,74 @@ export const connectToNotifications = (userId: string, onNotificationReceived: (
         }
     };
 
+    return attemptStart();
+};
+
+/**
+ * Connects to the notification hub
+ * @param userId User ID for the connection
+ * @param onNotificationReceived Callback for new notifications
+ * @returns SignalR connection
+ */
+export const connectToNotifications = (
+    userId: string,
+    onNotificationReceived: (message: string) => void
+): signalR.HubConnection => {
+    if (!userId) {
+        throw new Error("User ID is required for notification connection");
+    }
+
+    // If there's an existing connection for this user and it's not in a failed state, return it
+    if (activeConnection && activeConnection.state !== signalR.HubConnectionState.Disconnected) {
+        console.log("Reusing existing SignalR connection");
+        return activeConnection;
+    }
+
+    // Get the authentication token
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+        console.warn("No authentication token found, notifications may not work correctly");
+    }
+
+    // Get API base URL from environment variable or config
+    const apiBaseUrl = import.meta.env.VITE_SIGNALR_BASE_URL || "https://localhost:7144";
+    const hubUrl = `${apiBaseUrl}/hubs/notificationHub`;
+
+    console.log("Connecting to SignalR hub at:", hubUrl);
+
+    // Create connection with better settings for reliability
+    const connection = new signalR.HubConnectionBuilder()
+        .withUrl(hubUrl, {
+            accessTokenFactory: () => token || "",
+            transport: signalR.HttpTransportType.WebSockets,
+            skipNegotiation: true
+        })
+        .withAutomaticReconnect([0, 2000, 5000, 10000, 15000, 30000])
+        .configureLogging(signalR.LogLevel.Warning)
+        .build();
+
+    // Set up event handlers
+    setupConnectionEventHandlers(connection, userId, onNotificationReceived);
+
     // Start connection asynchronously 
-    startConnection().catch(err => {
+    startConnection(connection, userId).catch(err => {
         console.error("Failed to establish notification connection:", err);
     });
 
     return connection;
 };
 
-// Helper function to check server availability
-export const checkServerAvailability = async (): Promise<boolean> => {
-    try {
-        // Try a simple health check endpoint, or fallback to a HEAD request
-        const response = await api.head("/health", {
-            timeout: 3000
-        });
-        return response.status >= 200 && response.status < 300;
-    } catch (error) {
-        console.warn("Server health check failed:", error);
-        return false;
-    }
-};
-
-// Force reconnection when needed
-export const forceReconnect = async (userId: string, onNotificationReceived: (message: string) => void): Promise<signalR.HubConnection | null> => {
+/**
+ * Force reconnection to the notification hub
+ * @param userId User ID for the connection
+ * @param onNotificationReceived Callback for new notifications
+ * @returns Promise with the new connection or null if unsuccessful
+ */
+export const forceReconnect = async (
+    userId: string,
+    onNotificationReceived: (message: string) => void
+): Promise<signalR.HubConnection | null> => {
+    // Stop existing connection if any
     if (activeConnection) {
         try {
             await activeConnection.stop();
