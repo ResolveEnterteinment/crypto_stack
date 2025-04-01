@@ -1,6 +1,7 @@
 ﻿using Application.Interfaces;
 using Domain.Constants;
 using Domain.DTOs;
+using Domain.DTOs.Balance;
 using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Models.Balance;

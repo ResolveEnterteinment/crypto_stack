@@ -4,6 +4,7 @@ using Application.Interfaces.Payment;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Settings;
+using Domain.DTOs.Subscription;
 using Domain.Events;
 using Domain.Models.Subscription;
 using MediatR;
@@ -225,7 +226,7 @@ namespace Infrastructure.Services
                 return ResultWrapper<long>.FromException(ex);
             }
         }
-        public async Task<ResultWrapper<IReadOnlyCollection<AllocationData>>> GetAllocationsAsync(Guid subscriptionId)
+        public async Task<ResultWrapper<IEnumerable<AllocationDto>>> GetAllocationsAsync(Guid subscriptionId)
         {
             try
             {
@@ -238,25 +239,62 @@ namespace Infrastructure.Services
                 {
                     throw new ArgumentException($"Asset allocation fetch error. No allocation(s) found for subscription #{subscriptionId}.");
                 }
-                return ResultWrapper<IReadOnlyCollection<AllocationData>>.Success(subscription.Allocations.ToList().AsReadOnly());
+                var allocationDtos = new List<AllocationDto>();
+                foreach (var allocation in subscription.Allocations)
+                {
+                    var asset = await _assetService.GetByIdAsync(allocation.AssetId);
+                    allocationDtos.Add(new AllocationDto
+                    {
+                        AssetName = asset.Name,
+                        AssetTicker = asset.Ticker,
+                        PercentAmount = allocation.PercentAmount
+                    });
+                }
+                return ResultWrapper<IEnumerable<AllocationDto>>.Success(allocationDtos);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Fetch subscription failed: {Message}", ex.Message);
-                return ResultWrapper<IReadOnlyCollection<AllocationData>>.FromException(ex);
+                return ResultWrapper<IEnumerable<AllocationDto>>.FromException(ex);
             }
         }
-        public async Task<ResultWrapper<IEnumerable<SubscriptionData>>> GetAllByUserIdAsync(Guid userId)
+        public async Task<ResultWrapper<IEnumerable<SubscriptionDto>>> GetAllByUserIdAsync(Guid userId)
         {
             try
             {
                 var filter = Builders<SubscriptionData>.Filter.Eq(doc => doc.UserId, userId);
                 var subscriptions = await GetAllAsync(filter);
-                return ResultWrapper<IEnumerable<SubscriptionData>>.Success(subscriptions);
+                var subscriptionDtos = new List<SubscriptionDto>();
+                foreach (var subscription in subscriptions)
+                {
+                    var allocationDtos = new List<AllocationDto>();
+                    foreach (var allocation in subscription.Allocations)
+                    {
+                        var asset = await _assetService.GetByIdAsync(allocation.AssetId);
+                        allocationDtos.Add(new AllocationDto
+                        {
+                            AssetId = asset.Id,
+                            AssetName = asset.Name,
+                            AssetTicker = asset.Ticker,
+                            PercentAmount = allocation.PercentAmount
+                        });
+                    }
+                    subscriptionDtos.Add(new SubscriptionDto
+                    {
+                        Allocations = allocationDtos,
+                        Interval = subscription.Interval,
+                        Amount = subscription.Amount,
+                        Currency = subscription.Currency,
+                        CreatedAt = subscription.CreatedAt,
+                        NextDueDate = subscription.NextDueDate,
+                        TotalInvestments = subscription.TotalInvestments,
+                    });
+                }
+                return ResultWrapper<IEnumerable<SubscriptionDto>>.Success(subscriptionDtos);
             }
             catch (Exception ex)
             {
-                return ResultWrapper<IEnumerable<SubscriptionData>>.FromException(ex);
+                return ResultWrapper<IEnumerable<SubscriptionDto>>.FromException(ex);
             }
 
         }

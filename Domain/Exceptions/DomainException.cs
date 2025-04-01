@@ -444,6 +444,16 @@ namespace Domain.Exceptions
             : base(message, "BALANCE_FETCH_ERROR", inner) { }
     }
 
+    [Serializable]
+    public class SubscriptionFetchException : DomainException
+    {
+        public SubscriptionFetchException(string message)
+            : base(message, "SUBSCRIPTION_FETCH_ERROR") { }
+
+        public SubscriptionFetchException(string message, Exception inner)
+            : base(message, "SUBSCRIPTION_FETCH_ERROR", inner) { }
+    }
+
     /// <summary>
     /// Exception thrown when a payment processing error occurs
     /// </summary>

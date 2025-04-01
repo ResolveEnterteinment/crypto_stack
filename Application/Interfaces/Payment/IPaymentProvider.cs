@@ -1,5 +1,4 @@
-﻿using Domain.DTOs;
-using Domain.DTOs.Payment;
+﻿using Domain.DTOs.Payment;
 
 namespace Application.Interfaces
 {
@@ -10,7 +9,7 @@ namespace Application.Interfaces
         public Task<DateTime?> GetNextDueDate(string subscriptionId);
         public Task<Invoice> GetInvoiceAsync(string invoiceId);
         public Task<Subscription> GetSubscriptionAsync(string? subscriptionId);
-        public Task<Domain.DTOs.Payment.Subscription> GetSubscriptionByPaymentAsync(string paymentProviderId);
+        public Task<Subscription> GetSubscriptionByPaymentAsync(string paymentProviderId);
         public Task<string> CreateCheckoutSession(Guid userId, Guid subscriptionId, decimal amount, string interval);
     }
 }

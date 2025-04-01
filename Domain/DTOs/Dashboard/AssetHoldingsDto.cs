@@ -1,15 +1,13 @@
-﻿using Domain.Models.Crypto;
-
-namespace Domain.DTOs
+﻿namespace Domain.DTOs.Dashboard
 {
-    public class BalanceDto
+    public class AssetHoldingsDto
     {
-        public string AssetName { get; set; }
+        public string Name { get; set; }
         public string Ticker { get; set; }
         public string Symbol { get; set; }
         public decimal Available { get; set; }
         public decimal Locked { get; set; }
         public decimal Total { get; set; }
-        public AssetData AssetDocs { get; set; }
+        public decimal Value { get; set; }
     }
 }

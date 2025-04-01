@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 
 // Define interfaces for better type safety
 interface Allocation {
-    id: string;
-    ticker: string;
+    assetId: string;
+    assetName: string;
+    assetTicker: string;
     percentAmount: number;
 }
 
@@ -35,6 +36,20 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
     onViewHistory
 }) => {
     const [isExpanded, setIsExpanded] = useState(false);
+
+    const assetColors: Record<string, string> = {
+        BTC: '#F7931A',   // Bitcoin orange
+        ETH: '#627EEA',   // Ethereum blue
+        USDT: '#26A17B',  // Tether green
+        USDC: '#2775CA',  // USD Coin blue
+        BNB: '#F3BA2F',   // Binance Coin yellow
+        XRP: '#23292F',   // Ripple dark gray
+        ADA: '#0033AD',   // Cardano blue
+        SOL: '#14F195',   // Solana green
+        DOGE: '#C3A634',  // Dogecoin gold
+        DOT: '#E6007A',   // Polkadot pink
+        // Add more cryptocurrency colors as needed
+    };
 
     // Format date
     const formatDate = (dateString: string | Date): string => {
@@ -125,14 +140,41 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
                     </p>
                     <div>
                         <p className="font-semibold mb-1">Allocations:</p>
-                        <div className="bg-gray-50 p-3 rounded-md">
-                            {subscription.allocations?.map((alloc: Allocation) => (
-                                <div key={alloc.id} className="flex justify-between py-1 border-b border-gray-100 last:border-0">
-                                    <span>{alloc.ticker}</span>
-                                    <span className="font-medium">{alloc.percentAmount}%</span>
+                        <div className="mb-4 h-4 bg-gray-200 rounded-full overflow-hidden flex">
+                            {subscription.allocations?.map((alloc: Allocation) => {
+                                // Calculate percentage width for the bar
+                                const percentage = alloc.percentAmount;
+                                return (
+                                    <div
+                                        key={alloc.assetId}
+                                        style={{
+                                            width: `${percentage}%`,
+                                            backgroundColor: assetColors[alloc.assetTicker]
+                                        }}
+                                        className="h-full"
+                                        title={`${alloc.assetTicker}: ${percentage.toFixed(1)}%`}
+                                    />
+                                );
+                            })}
+                        </div>
+                        {/* List of balances */}
+                        <div className="space-y-3">
+                        {subscription.allocations.map((alloc: Allocation) => (
+                            <div key={alloc.assetTicker} className="flex justify-between items-center">
+                                <div className="flex items-center">
+                                    <div
+                                        className="w-3 h-3 rounded-full mr-2"
+                                    style={{ backgroundColor: assetColors[alloc.assetTicker] }}
+                                    />
+                                    <span className="font-medium">
+                                        {(alloc.assetName || alloc.assetTicker) && <span className="text-gray-500 ml-1">{alloc.assetName} ({alloc.assetTicker})</span>}
+                                    </span>
                                 </div>
+                                <div className="font-bold">%{alloc.percentAmount}</div>
+                            </div>
                             ))}
                         </div>
+                            
                     </div>
                 </div>
             )}

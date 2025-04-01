@@ -205,7 +205,7 @@ namespace Infrastructure.Services.Exchange
                 }
 
                 _logger.LogInformation("Processing {Count} allocations for subscription {SubscriptionId}",
-                    fetchAllocationsResult.Data.Count, payment.SubscriptionId);
+                    fetchAllocationsResult.Data.Count(), payment.SubscriptionId);
 
                 // Process each allocation
                 foreach (var alloc in fetchAllocationsResult.Data)

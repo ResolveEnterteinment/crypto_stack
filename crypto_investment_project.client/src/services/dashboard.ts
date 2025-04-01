@@ -2,14 +2,14 @@
 import api from "./api";
 
 export interface IBalance {
-    userId?: string;
     assetId?: string;
+    name?: string;
     ticker: string;
-    assetName?: string;
     symbol?: string;
     available: number;
     locked: number;
     total: number;
+    value: number;
 }
 
 export interface IDashboardData {

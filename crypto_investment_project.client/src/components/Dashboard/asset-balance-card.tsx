@@ -30,10 +30,10 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
     // Calculate total value to determine proportions
     const calculateTotal = (): number => {
         if (!balances || !balances.length) return 0;
-        return balances.reduce((sum, balance) => sum + balance.total, 0);
+        return balances.reduce((sum, balance) => sum + balance.value, 0);
     };
 
-    const totalBalance = calculateTotal();
+    const totalValue = calculateTotal();
 
     // Format number with appropriate precision
     const formatAmount = (amount: number): string => {
@@ -64,10 +64,10 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
                     <div className="mb-4 h-4 bg-gray-200 rounded-full overflow-hidden flex">
                         {balances.map((balance) => {
                             // Calculate percentage width for the bar
-                            const percentage = (balance.total / totalBalance) * 100;
+                            const percentage = (balance.value / totalValue) * 100;
                             return (
                                 <div
-                                    key={balance.ticker}
+                                    key={balance.assetId}
                                     style={{
                                         width: `${percentage}%`,
                                         backgroundColor: getAssetColor(balance.ticker)
@@ -89,11 +89,13 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
                                         style={{ backgroundColor: getAssetColor(balance.ticker) }}
                                     />
                                     <span className="font-medium">
-                                        {balance.assetName || balance.ticker}
-                                        {balance.assetName && <span className="text-gray-500 ml-1">({balance.ticker})</span>}
+                                        {(balance.name || balance.ticker) &&
+                                            <span className="text-gray-500 ml-1">{balance.name}({balance.ticker})</span>
+                                        }
                                     </span>
                                 </div>
                                 <div className="font-bold">{formatAmount(balance.total)}</div>
+                                <div className="font-bold">${balance.value.toFixed(2)}</div>
                             </div>
                         ))}
                     </div>

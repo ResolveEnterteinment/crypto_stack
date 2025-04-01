@@ -1,4 +1,5 @@
 ﻿using Domain.DTOs;
+using Domain.DTOs.Dashboard;
 
 namespace Application.Interfaces
 {
@@ -8,7 +9,7 @@ namespace Application.Interfaces
         public Task<ResultWrapper> UpdateDashboardData(
             Guid userId,
             decimal totalInvestments,
-            IEnumerable<BalanceDto> balances,
+            IEnumerable<AssetHoldingsDto> balances,
             decimal portfolioValue
             );
     }

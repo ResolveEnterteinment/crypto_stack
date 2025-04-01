@@ -303,7 +303,7 @@ namespace StripeLibrary
         /// <param name="invoiceId">The ID of the invoice to retrieve.</param>
         /// <returns>The invoice.</returns>
         /// <exception cref="PaymentApiException">Thrown when an error occurs during invoice retrieval.</exception>
-        public async Task<Domain.DTOs.Invoice> GetInvoiceAsync(string invoiceId)
+        public async Task<Domain.DTOs.Payment.Invoice> GetInvoiceAsync(string invoiceId)
         {
             if (string.IsNullOrEmpty(invoiceId))
             {
@@ -313,7 +313,7 @@ namespace StripeLibrary
             string cacheKey = $"{InvoiceCacheKeyPrefix}{invoiceId}";
 
             // Try to get from cache first if caching is available
-            if (_cache != null && _cache.TryGetValue(cacheKey, out Domain.DTOs.Invoice cachedInvoice))
+            if (_cache != null && _cache.TryGetValue(cacheKey, out Domain.DTOs.Payment.Invoice cachedInvoice))
             {
                 return cachedInvoice;
             }
@@ -335,7 +335,7 @@ namespace StripeLibrary
                             $"Failed to retrieve invoice {invoiceId}", "Stripe", invoiceId);
                     }
 
-                    var result = new Domain.DTOs.Invoice()
+                    var result = new Domain.DTOs.Payment.Invoice()
                     {
                         Id = stripeInvoice.Id,
                         CreatedAt = stripeInvoice.Created,

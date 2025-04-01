@@ -1,9 +1,9 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Exchange;
 using Domain.DTOs;
+using Domain.DTOs.Dashboard;
 using Domain.DTOs.Settings;
 using Domain.Exceptions;
-using Domain.Models.Crypto;
 using Domain.Models.Dashboard;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -58,16 +58,16 @@ namespace Infrastructure.Services
 
                 var cached = await CacheEntityAsync(cacheKey, async () =>
                 {
-                    var totalInvestments = await FetchTotalInvestmentsAsync(userId);
-                    var balancesTask = await FetchBalancesWithAssetsAsync(userId);
+                    var totalInvestmentsTask = await FetchTotalInvestmentsAsync(userId);
+                    var balancesTask = await FetchAssetHoldingsAsync(userId);
                     var portfolioValueTask = await FetchPortfolioValueAsync(userId, balancesTask.Data);
 
-                    await UpdateDashboardData(userId, totalInvestments, balancesTask.Data, portfolioValueTask.Data);
+                    await UpdateDashboardData(userId, totalInvestmentsTask.Data, balancesTask.Data, portfolioValueTask.Data);
 
                     var result = new DashboardDto
                     {
                         AssetHoldings = balancesTask.Data,
-                        TotalInvestments = totalInvestments,
+                        TotalInvestments = totalInvestmentsTask.Data,
                         PortfolioValue = portfolioValueTask.Data
                     };
                     return result;
@@ -81,7 +81,7 @@ namespace Infrastructure.Services
             }
         }
 
-        private async Task<ResultWrapper<IEnumerable<BalanceDto>>> FetchBalancesWithAssetsAsync(Guid userId)
+        private async Task<ResultWrapper<IEnumerable<AssetHoldingsDto>>> FetchAssetHoldingsAsync(Guid userId)
         {
             try
             {
@@ -100,7 +100,7 @@ namespace Infrastructure.Services
                 if (!rawBalances.Any())
                 {
                     _logger.LogInformation("No balances found for user {UserId}", userId);
-                    return ResultWrapper<IEnumerable<BalanceDto>>.Success(new List<BalanceDto>());
+                    return ResultWrapper<IEnumerable<AssetHoldingsDto>>.Success(new List<AssetHoldingsDto>());
                 }
 
                 // Log the asset IDs we're looking up
@@ -108,7 +108,7 @@ namespace Infrastructure.Services
                     string.Join(", ", rawBalances.Select(b => b.AssetId)));
 
                 // Use a simpler approach with multiple queries instead of aggregation
-                var result = new List<BalanceDto>();
+                var result = new List<AssetHoldingsDto>();
 
                 foreach (var balance in rawBalances)
                 {
@@ -124,17 +124,25 @@ namespace Infrastructure.Services
                             continue;
                         }
 
-                        // Create the DTO
-                        var balanceDto = new BalanceDto
+                        var rateResult = await _exchangeService.Exchanges[asset.Exchange].GetAssetPrice(asset.Ticker);
+                        if (rateResult == null || !rateResult.IsSuccess)
                         {
-                            AssetName = asset.Name,
+                            _logger.LogWarning($"Failed to fetch {asset.Ticker} value from exchange {asset.Exchange}: {rateResult?.ErrorMessage ?? "Asset price fetch returned null."}");
+
+                        }
+                        var value = balance.Total * rateResult?.Data ?? 0m;
+                        // Create the DTO
+                        var asetHoldingsDto = new AssetHoldingsDto
+                        {
+                            Name = asset.Name,
                             Ticker = asset.Ticker,
                             Available = balance.Available,
                             Locked = balance.Locked,
-                            Total = balance.Total
+                            Total = balance.Total,
+                            Value = value
                         };
 
-                        result.Add(balanceDto);
+                        result.Add(asetHoldingsDto);
 
                         _logger.LogDebug("Successfully mapped balance for asset {Ticker}", asset.Ticker);
                     }
@@ -148,23 +156,39 @@ namespace Infrastructure.Services
                 _logger.LogInformation("Returning {Count} balance DTOs for user {UserId}",
                     result.Count, userId);
 
-                return ResultWrapper<IEnumerable<BalanceDto>>.Success(result);
+                return ResultWrapper<IEnumerable<AssetHoldingsDto>>.Success(result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to fetch balances with assets for user {UserId}: {ErrorMessage}",
                     userId, ex.Message);
-                return ResultWrapper<IEnumerable<BalanceDto>>.FromException(ex);
+                return ResultWrapper<IEnumerable<AssetHoldingsDto>>.FromException(ex);
             }
         }
 
-        private async Task<decimal> FetchTotalInvestmentsAsync(Guid userId)
+        private async Task<ResultWrapper<decimal>> FetchTotalInvestmentsAsync(Guid userId)
         {
-            var subscriptionResult = await _subscriptionService.GetAllByUserIdAsync(userId);
-            return subscriptionResult.Data?.Select(s => s.TotalInvestments).Sum() ?? 0;
+            try
+            {
+                var subscriptionResult = await _subscriptionService.GetAllByUserIdAsync(userId);
+
+                if (subscriptionResult == null || !subscriptionResult.IsSuccess || subscriptionResult.Data == null)
+                {
+                    throw new SubscriptionFetchException($"Failed to fetch subscriptions for user {userId}: {subscriptionResult?.ErrorMessage ?? "Subscription fetch returned null."}");
+                }
+
+                decimal total = subscriptionResult.Data?.Select(s => s.TotalInvestments).Sum() ?? 0m;
+
+                return ResultWrapper<decimal>.Success(total);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<decimal>.FromException(ex);
+            }
+
         }
 
-        private async Task<ResultWrapper<decimal>> FetchPortfolioValueAsync(Guid userId, IEnumerable<BalanceDto> balances)
+        private async Task<ResultWrapper<decimal>> FetchPortfolioValueAsync(Guid userId, IEnumerable<AssetHoldingsDto> assetHoldings)
         {
             try
             {
@@ -173,7 +197,7 @@ namespace Infrastructure.Services
                 if (summary != null && (DateTime.UtcNow - summary.LastUpdated).TotalMinutes < PortfolioValueCacheTTLMinutes)
                     return ResultWrapper<decimal>.Success(summary.PortfolioValue);
 
-                decimal portfolioValue = await CalculatePortfolioValue(balances);
+                decimal portfolioValue = CalculatePortfolioValue(assetHoldings);
                 return ResultWrapper<decimal>.Success(portfolioValue);
             }
             catch (Exception ex)
@@ -186,7 +210,7 @@ namespace Infrastructure.Services
         public async Task<ResultWrapper> UpdateDashboardData(
             Guid userId,
             decimal totalInvestments,
-            IEnumerable<BalanceDto> balances,
+            IEnumerable<AssetHoldingsDto> assetHoldings,
             decimal portfolioValue
             )
         {
@@ -201,7 +225,7 @@ namespace Infrastructure.Services
                     // Document exists, simple update
                     var update = Builders<DashboardData>.Update
                         .Set(s => s.TotalInvestments, totalInvestments)
-                        .Set(s => s.AssetHoldings, balances)
+                        .Set(s => s.AssetHoldings, assetHoldings)
                         .Set(s => s.PortfolioValue, portfolioValue)
                         .Set(s => s.LastUpdated, DateTime.UtcNow);
 
@@ -215,7 +239,7 @@ namespace Infrastructure.Services
                         Id = Guid.NewGuid(),  // Explicitly set the Guid ID
                         UserId = userId,
                         TotalInvestments = totalInvestments,
-                        AssetHoldings = balances,
+                        AssetHoldings = assetHoldings,
                         PortfolioValue = portfolioValue,
                         LastUpdated = DateTime.UtcNow
                     };
@@ -231,27 +255,13 @@ namespace Infrastructure.Services
             }
         }
 
-        private async Task<decimal> CalculatePortfolioValue(IEnumerable<BalanceDto> balances)
+        private decimal CalculatePortfolioValue(IEnumerable<AssetHoldingsDto> assetHoldings)
         {
             var portfolioValue = 0m;
 
-            foreach (var balance in balances)
+            foreach (var asset in assetHoldings)
             {
-                var assetResult = await _assetService.GetByTickerAsync(balance.Ticker);
-                if (!ResultWrapper<AssetData>.TryParse(assetResult, out var asset))
-                {
-                    throw new AssetFetchException($"Failed to fetch asset for ticker {balance.Ticker}: {assetResult.ErrorMessage}");
-                }
-                if (asset.Exchange == "Platform")
-                    continue;
-
-                var rateResult = await _exchangeService.Exchanges[asset.Exchange].GetAssetPrice(balance.Ticker);
-                if (!ResultWrapper<decimal>.TryParse(rateResult, out var rate))
-                {
-                    throw new ExchangeApiException(rateResult.ErrorMessage, this.GetType().Name);
-                }
-
-                portfolioValue += balance.Total * rate;
+                portfolioValue += asset.Value;
             }
             return portfolioValue;
         }

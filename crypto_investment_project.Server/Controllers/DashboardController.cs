@@ -36,7 +36,7 @@ namespace crypto_investment_project.Server.Controllers
             var dashboardResult = await _dashboardService.GetDashboardDataAsync(userId);
             if (!dashboardResult.IsSuccess)
             {
-                dashboardResult.ToActionResult(this);
+                return dashboardResult.ToActionResult(this);
             }
             _logger.LogInformation("Dashboard data fetched for {UserId} in {ElapsedMs}ms", userId, stopwatch.ElapsedMilliseconds);
             return Ok(dashboardResult.Data);

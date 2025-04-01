@@ -3,6 +3,7 @@ import api from "./api";
 
 export interface IAllocation {
     id: string;
+    assetName: string
     ticker: string;
     percentAmount: number;
 }
