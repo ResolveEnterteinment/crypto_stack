@@ -1,45 +1,9 @@
 ﻿// src/services/subscription.ts
 import api from "./api";
-
-export interface IAllocation {
-    id: string;
-    assetName: string
-    ticker: string;
-    percentAmount: number;
-}
-
-export interface ISubscription {
-    id: string;
-    createdAt: string;
-    userId: string;
-    allocations: IAllocation[];
-    interval: string;
-    amount: number;
-    currency: string;
-    nextDueDate: Date;
-    endDate: Date;
-    totalInvestments: number;
-    isCancelled: boolean;
-    isRead?: boolean;
-}
-
-export interface ICreateSubscriptionRequest {
-    userId: string;
-    allocations: Omit<IAllocation, 'id'>[];
-    interval: string;
-    amount: number;
-    currency: string;
-    endDate?: Date;
-}
-
-export interface IUpdateSubscriptionRequest {
-    allocations?: Omit<IAllocation, 'id'>[];
-    interval?: string;
-    amount?: number;
-    currency?: string;
-    endDate?: Date;
-    isCancelled?: boolean;
-}
+import ISubscription from "../interfaces/ISubscription";
+import ITransaction from "../interfaces/ITransaction";
+import ICreateSubscriptionRequest from "../interfaces/ICreateSubscriptionRequest";
+import IUpdateSubscriptionRequest from "../interfaces/IUpdateSubscriptionRequest";
 
 /**
  * Fetches all subscriptions for a user
@@ -105,6 +69,41 @@ export const getSubscription = async (subscriptionId: string): Promise<ISubscrip
         };
     } catch (error) {
         console.error(`Error fetching subscription ${subscriptionId}:`, error);
+        throw error;
+    }
+};
+
+/*
+* Fetches all transaction of a subscription
+* @param subscriptionId The ID of the subscription
+* @returns Promise with array of transaction objects
+*/
+export const getTransactions = async (subscriptionId: string): Promise<ITransaction[]> => {
+    if (!subscriptionId) {
+        console.error("getTransactions called with undefined subscriptionId");
+        return Promise.reject(new Error("Subscription ID is required"));
+    }
+
+    try {
+        const { data } = await api.post(`/Transaction/subscription/${subscriptionId}`);
+
+        // Process dates and ensure proper typing
+        const processedData = Array.isArray(data) ? data.map((transaction: ITransaction) => ({
+            ...transaction,
+            createdAt: new Date(transaction.createdAt),
+            // Ensure quantity is a number
+            quantity: typeof transaction.quantity === 'number'
+                ? transaction.quantity
+                : parseFloat(transaction.quantity),
+            // Ensure quantity is a number
+            quoteQuantity: typeof transaction.quoteQuantity === 'number'
+                ? transaction.quoteQuantity
+                : parseFloat(transaction.quoteQuantity)
+        })) : [];
+
+        return processedData;
+    } catch (error) {
+        console.error("Error fetching transactions:", error);
         throw error;
     }
 };
@@ -256,7 +255,7 @@ export const getSubscriptionTransactions = async (subscriptionId: string): Promi
     }
 
     try {
-        const response = await api.get(`/Subscription/${subscriptionId}/transactions`);
+        const response = await api.post(`/Transaction/subscription/${subscriptionId}`);
         return Array.isArray(response.data) ? response.data : [];
     } catch (error) {
         console.error(`Error fetching transactions for subscription ${subscriptionId}:`, error);

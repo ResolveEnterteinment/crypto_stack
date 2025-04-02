@@ -1,35 +1,9 @@
 import React, { useState } from 'react';
+import IAllocation from '../../interfaces/IAllocation';
+import SubscriptionCardProps from '../../interfaces/SubscriptionCardProps';
 
-// Define interfaces for better type safety
-interface IAllocation {
-    assetId: string;
-    assetName: string;
-    assetTicker: string;
-    percentAmount: number;
-}
 
-interface ISubscription {
-    id: string;
-    createdAt: string;
-    userId: string;
-    allocations: IAllocation[];
-    interval: string;
-    amount: number;
-    currency: string;
-    nextDueDate: Date | string;
-    endDate: Date | string;
-    totalInvestments: number;
-    isCancelled: boolean;
-}
-
-interface ISubscriptionCardProps {
-    subscription: ISubscription;
-    onEdit: (id: string) => void;
-    onCancel: (id: string) => void;
-    onViewHistory: (id: string) => void;
-}
-
-const SubscriptionCard: React.FC<ISubscriptionCardProps> = ({
+const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
     subscription,
     onEdit,
     onCancel,
@@ -82,6 +56,15 @@ const SubscriptionCard: React.FC<ISubscriptionCardProps> = ({
         return Math.min(Math.max(progress, 0), 100);
     };
 
+    // Handle view history click with proper ID validation
+    const handleViewHistoryClick = () => {
+        if (subscription && subscription.id) {
+            onViewHistory(subscription.id);
+        } else {
+            console.error("Cannot view history: Missing subscription ID");
+        }
+    };
+
     return (
         <div className={`bg-white shadow-lg rounded-xl p-6 relative transition-all duration-200 ${subscription.isCancelled ? 'opacity-75' : ''}`}>
             {/* Status badge */}
@@ -93,7 +76,7 @@ const SubscriptionCard: React.FC<ISubscriptionCardProps> = ({
             {/* Subscription header */}
             <div className="mb-4">
                 <h3 className="text-xl font-semibold">
-                    {subscription.amount} {subscription.currency} {subscription.interval}
+                    {subscription.amount} {subscription.currency} {subscription.interval.toLowerCase()}
                 </h3>
                 <p className="text-gray-500 text-sm">Created: {formatDate(subscription.createdAt)}</p>
             </div>
@@ -116,6 +99,8 @@ const SubscriptionCard: React.FC<ISubscriptionCardProps> = ({
             <button
                 className="text-blue-600 text-sm font-medium mb-4 flex items-center"
                 onClick={() => setIsExpanded(!isExpanded)}
+                type="button"
+                aria-expanded={isExpanded}
             >
                 {isExpanded ? 'Hide details' : 'Show details'}
                 <svg
@@ -149,7 +134,7 @@ const SubscriptionCard: React.FC<ISubscriptionCardProps> = ({
                                         key={alloc.assetId}
                                         style={{
                                             width: `${percentage}%`,
-                                            backgroundColor: assetColors[alloc.assetTicker]
+                                            backgroundColor: assetColors[alloc.assetTicker] || '#6B7280'
                                         }}
                                         className="h-full"
                                         title={`${alloc.assetTicker}: ${percentage.toFixed(1)}%`}
@@ -159,22 +144,22 @@ const SubscriptionCard: React.FC<ISubscriptionCardProps> = ({
                         </div>
                         {/* List of balances */}
                         <div className="space-y-3">
-                        {subscription.allocations.map((alloc: IAllocation) => (
-                            <div key={alloc.assetTicker} className="flex justify-between items-center">
-                                <div className="flex items-center">
-                                    <div
-                                        className="w-3 h-3 rounded-full mr-2"
-                                    style={{ backgroundColor: assetColors[alloc.assetTicker] }}
-                                    />
-                                    <span className="font-medium">
-                                        {(alloc.assetName || alloc.assetTicker) && <span className="text-gray-500 ml-1">{alloc.assetName} ({alloc.assetTicker})</span>}
-                                    </span>
+                            {subscription.allocations.map((alloc: IAllocation) => (
+                                <div key={alloc.assetId} className="flex justify-between items-center">
+                                    <div className="flex items-center">
+                                        <div
+                                            className="w-3 h-3 rounded-full mr-2"
+                                            style={{ backgroundColor: assetColors[alloc.assetTicker] || '#6B7280' }}
+                                        />
+                                        <span className="font-medium">
+                                            {(alloc.assetName || alloc.assetTicker) && <span className="text-gray-500 ml-1">{alloc.assetName} ({alloc.assetTicker})</span>}
+                                        </span>
+                                    </div>
+                                    <div className="font-bold">{alloc.percentAmount}%</div>
                                 </div>
-                                <div className="font-bold">%{alloc.percentAmount}</div>
-                            </div>
                             ))}
                         </div>
-                            
+
                     </div>
                 </div>
             )}
@@ -197,7 +182,7 @@ const SubscriptionCard: React.FC<ISubscriptionCardProps> = ({
                     </button>
                 )}
                 <button
-                    onClick={() => onViewHistory(subscription.id)}
+                    onClick={handleViewHistoryClick}
                     className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-4 rounded-md text-sm font-medium transition-colors"
                 >
                     History

@@ -7,7 +7,9 @@ import PortfolioChart from "../components/Dashboard/portfolio-chart";
 import AssetBalanceCard from "../components/Dashboard/asset-balance-card";
 import SubscriptionCard from "../components/Dashboard/subscription-card";
 import { getDashboardData, IDashboardData } from "../services/dashboard";
-import { getSubscriptions, ISubscription, updateSubscription } from "../services/subscription";
+import { getSubscriptions, getTransactions, updateSubscription } from "../services/subscription";
+import ISubscription from "../interfaces/ISubscription";
+import ITransaction from "../interfaces/ITransaction";
 
 const DashboardPage: React.FC = () => {
     // Get authenticated user and navigation
@@ -21,6 +23,8 @@ const DashboardPage: React.FC = () => {
     const [currentSubscriptionId, setCurrentSubscriptionId] = useState<string | null>(null);
     const [dashboardData, setDashboardData] = useState<IDashboardData | null>(null);
     const [subscriptions, setSubscriptions] = useState<ISubscription[]>([]);
+    const [transactions, setTransactions] = useState<ITransaction[]>([]);
+    const [transactionsLoading, setTransactionsLoading] = useState(false);
 
     // Fetch data when component mounts
     useEffect(() => {
@@ -39,7 +43,7 @@ const DashboardPage: React.FC = () => {
                 setError('Failed to load dashboard data. Please try again.');
                 setLoading(false);
             });
-    }, [user]);
+    }, [user, navigate]);
 
     // Fetch dashboard data
     const fetchDashboardData = async () => {
@@ -62,6 +66,26 @@ const DashboardPage: React.FC = () => {
         } catch (err) {
             console.error('Error fetching subscriptions:', err);
             throw err;
+        }
+    };
+
+    // Fetch subscription transactions
+    const fetchTransactionHistory = async (subscriptionId: string) => {
+        if (!subscriptionId) {
+            console.error('Cannot fetch transaction history: Subscription ID is undefined');
+            return;
+        }
+
+        try {
+            setTransactionsLoading(true);
+            const data = await getTransactions(subscriptionId);
+            setTransactions(data);
+        } catch (err) {
+            console.error('Error fetching transactions:', err);
+            // Show a user-friendly error in the modal instead of failing completely
+            setTransactions([]);
+        } finally {
+            setTransactionsLoading(false);
         }
     };
 
@@ -90,9 +114,15 @@ const DashboardPage: React.FC = () => {
         }
     };
 
-    const handleViewHistory = (id: string) => {
+    const handleViewHistory = async (id: string) => {
+        if (!id) {
+            console.error("Cannot view history: Subscription ID is missing");
+            return;
+        }
+
         setCurrentSubscriptionId(id);
         setHistoryModalOpen(true);
+        await fetchTransactionHistory(id);
     };
 
     const showProfile = () => {
@@ -115,6 +145,9 @@ const DashboardPage: React.FC = () => {
 
     const profitPercentage = calculateProfitPercentage();
     const isProfitable = profitPercentage >= 0;
+
+    // Find current subscription details for the modal
+    const currentSubscription = subscriptions.find(sub => sub.id === currentSubscriptionId);
 
     if (loading) {
         return (
@@ -291,12 +324,16 @@ const DashboardPage: React.FC = () => {
                         <div className="bg-white p-6 rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col">
                             <div className="flex justify-between items-center mb-6">
                                 <h3 className="text-xl font-bold">
-                                    {/* Use the currentSubscriptionId here */}
-                                    Transaction History for Subscription {currentSubscriptionId}
+                                    {currentSubscription ? (
+                                        <span>Transaction History: ${currentSubscription.amount} {currentSubscription.interval.toLowerCase()} plan</span>
+                                    ) : (
+                                        <span>Transaction History</span>
+                                    )}
                                 </h3>
                                 <button
                                     onClick={() => {
                                         setHistoryModalOpen(false);
+                                        setTransactions([]);
                                         setCurrentSubscriptionId(null); // Reset the ID when closing
                                     }}
                                     className="text-gray-500 hover:text-gray-700"
@@ -308,24 +345,43 @@ const DashboardPage: React.FC = () => {
                             </div>
 
                             <div className="overflow-y-auto flex-grow">
-                                {/* This would be populated with actual transaction data */}
-                                <div className="space-y-4">
-                                    {/* You could filter transactions based on currentSubscriptionId */}
-                                    {[1, 2, 3, 4, 5].map((item) => (
-                                        <div key={item} className="border-b pb-4 last:border-0">
-                                            <div className="flex justify-between items-center">
-                                                <div>
-                                                    <p className="font-medium">BTC Purchase</p>
-                                                    <p className="text-sm text-gray-500">March {item}, 2025</p>
-                                                </div>
-                                                <div className="text-right">
-                                                    <p className="font-medium">+0.0034 BTC</p>
-                                                    <p className="text-sm text-gray-500">$500.00</p>
+                                {transactionsLoading ? (
+                                    <div className="flex justify-center items-center h-40">
+                                        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                    </div>
+                                ) : transactions.length > 0 ? (
+                                    <div className="space-y-4">
+                                        {transactions.map((item, index) => (
+                                            <div key={index} className="border-b pb-4 last:border-0">
+                                                <div className="flex justify-between items-center">
+                                                    <div>
+                                                        <p className="font-medium">{item.assetName} {item.action}</p>
+                                                        <p className="text-sm text-gray-500">
+                                                            {new Date(item.createdAt).toLocaleDateString('en-US', {
+                                                                year: 'numeric',
+                                                                month: 'short',
+                                                                day: 'numeric',
+                                                                hour: '2-digit',
+                                                                minute: '2-digit'
+                                                            })}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="font-medium">+{item.quantity.toFixed(6)} {item.assetTicker}</p>
+                                                        <p className="text-sm text-gray-500">{item.quoteCurrency} {item.quoteQuantity.toFixed(2)}</p>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
-                                    ))}
-                                </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="py-6 text-center text-gray-500">
+                                        <svg className="h-10 w-10 mx-auto mb-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                        </svg>
+                                        <p>No transaction history found for this subscription</p>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="mt-6">
@@ -333,6 +389,7 @@ const DashboardPage: React.FC = () => {
                                     className="w-full bg-blue-600 text-white py-3 rounded-md hover:bg-blue-700 font-medium"
                                     onClick={() => {
                                         setHistoryModalOpen(false);
+                                        setTransactions([]);
                                         setCurrentSubscriptionId(null); // Reset the ID when closing
                                     }}
                                 >

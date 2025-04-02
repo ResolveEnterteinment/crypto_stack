@@ -1,7 +1,10 @@
 ﻿// Improved and refactored TransactionService
 using Application.Interfaces;
+using Application.Interfaces.Payment;
 using Domain.DTOs;
 using Domain.DTOs.Settings;
+using Domain.DTOs.Subscription;
+using Domain.Models.Payment;
 using Domain.Models.Transaction;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -14,11 +17,19 @@ namespace Infrastructure.Services
     {
         // Cache duration specific to transactions
         private static readonly TimeSpan TRANSACTION_CACHE_DURATION = TimeSpan.FromMinutes(10);
+        private readonly ISubscriptionService _subscriptionService;
+        private readonly IAssetService _assetService;
+        private readonly IBalanceService _balanceService;
+        private readonly IPaymentService _paymentService;
 
         public TransactionService(
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
             ILogger<TransactionService> logger,
+            ISubscriptionService subscriptionService,
+            IAssetService assetService,
+            IBalanceService balanceService,
+            IPaymentService paymentService,
             IMemoryCache cache
         ) : base(
             mongoClient,
@@ -43,6 +54,10 @@ namespace Infrastructure.Services
             }
         )
         {
+            _subscriptionService = subscriptionService;
+            _assetService = assetService;
+            _balanceService = balanceService;
+            _paymentService = paymentService;
         }
 
         /// <summary>
@@ -81,7 +96,7 @@ namespace Infrastructure.Services
         /// </summary>
         /// <param name="subscriptionId">The subscription ID</param>
         /// <returns>List of transactions for the subscription</returns>
-        public async Task<ResultWrapper<IEnumerable<TransactionData>>> GetBySubscriptionAsync(Guid subscriptionId)
+        public async Task<ResultWrapper<IEnumerable<TransactionDto>>> GetBySubscriptionIdAsync(Guid subscriptionId)
         {
             try
             {
@@ -94,14 +109,37 @@ namespace Infrastructure.Services
                     {
                         var filter = Builders<TransactionData>.Filter.Eq(t => t.SubscriptionId, subscriptionId);
                         var transactions = await GetAllAsync(filter);
-                        return ResultWrapper<IEnumerable<TransactionData>>.Success(transactions);
+                        var transactionsDto = new List<TransactionDto>();
+                        foreach (var transaction in transactions)
+                        {
+                            var balance = await _balanceService.GetByIdAsync(transaction.BalanceId);
+                            var payment = await _paymentService.GetOneAsync(new FilterDefinitionBuilder<PaymentData>().Eq(t => t.PaymentProviderId, transaction.PaymentProviderId));
+
+                            if (balance == null || payment == null)
+                            {
+                                _logger.LogError($"Failed to fetch balance and payment data. Skipping transaction {transaction.Id}");
+                                continue;
+                            }
+                            var asset = await _assetService.GetByIdAsync(balance.AssetId);
+                            transactionsDto.Add(new TransactionDto
+                            {
+                                Action = transaction.Action,
+                                AssetName = asset.Name,
+                                AssetTicker = asset.Ticker,
+                                Quantity = transaction.Quantity,
+                                CreatedAt = transaction.CreatedAt,
+                                QuoteQuantity = payment.NetAmount,
+                                QuoteCurrency = payment.Currency
+                            });
+                        }
+                        return ResultWrapper<IEnumerable<TransactionDto>>.Success(transactionsDto);
                     },
                     TRANSACTION_CACHE_DURATION);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get transactions for subscription {SubscriptionId}", subscriptionId);
-                return ResultWrapper<IEnumerable<TransactionData>>.FromException(ex);
+                return ResultWrapper<IEnumerable<TransactionDto>>.FromException(ex);
             }
         }
 

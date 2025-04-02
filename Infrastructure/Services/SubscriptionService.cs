@@ -354,11 +354,12 @@ namespace Infrastructure.Services
 
                             subscriptionDtos.Add(new SubscriptionDto
                             {
+                                Id = subscription.Id,
+                                CreatedAt = subscription.CreatedAt,
                                 Allocations = allocationDtos,
                                 Interval = subscription.Interval,
                                 Amount = subscription.Amount,
                                 Currency = subscription.Currency,
-                                CreatedAt = subscription.CreatedAt,
                                 NextDueDate = subscription.NextDueDate,
                                 TotalInvestments = subscription.TotalInvestments,
                                 EndDate = subscription.EndDate,
