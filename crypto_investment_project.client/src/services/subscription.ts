@@ -22,14 +22,14 @@ export const getSubscriptions = async (userId: string): Promise<ISubscription[]>
         // Process dates and ensure proper typing
         const processedData = Array.isArray(data) ? data.map((subscription: any) => ({
             ...subscription,
-            nextDueDate: new Date(subscription.nextDueDate),
-            endDate: new Date(subscription.endDate),
+            nextDueDate: subscription.nextDueDate ? new Date(subscription.nextDueDate) : null,
+            endDate: subscription.endDate ? new Date(subscription.endDate) : null,
             // Ensure amount is a number
             amount: typeof subscription.amount === 'number' ? subscription.amount : parseFloat(subscription.amount),
             // Ensure totalInvestments is a number
             totalInvestments: typeof subscription.totalInvestments === 'number'
                 ? subscription.totalInvestments
-                : parseFloat(subscription.totalInvestments),
+                : parseFloat(subscription.totalInvestments || '0'),
             // Ensure isCancelled is a boolean
             isCancelled: Boolean(subscription.isCancelled)
         })) : [];
@@ -59,12 +59,12 @@ export const getSubscription = async (subscriptionId: string): Promise<ISubscrip
         const subscription = response.data;
         return {
             ...subscription,
-            nextDueDate: new Date(subscription.nextDueDate),
-            endDate: new Date(subscription.endDate),
+            nextDueDate: subscription.nextDueDate ? new Date(subscription.nextDueDate) : null,
+            endDate: subscription.endDate ? new Date(subscription.endDate) : null,
             amount: typeof subscription.amount === 'number' ? subscription.amount : parseFloat(subscription.amount),
             totalInvestments: typeof subscription.totalInvestments === 'number'
                 ? subscription.totalInvestments
-                : parseFloat(subscription.totalInvestments),
+                : parseFloat(subscription.totalInvestments || '0'),
             isCancelled: Boolean(subscription.isCancelled)
         };
     } catch (error) {
@@ -73,11 +73,11 @@ export const getSubscription = async (subscriptionId: string): Promise<ISubscrip
     }
 };
 
-/*
-* Fetches all transaction of a subscription
-* @param subscriptionId The ID of the subscription
-* @returns Promise with array of transaction objects
-*/
+/**
+ * Fetches all transaction of a subscription
+ * @param subscriptionId The ID of the subscription
+ * @returns Promise with array of transaction objects
+ */
 export const getTransactions = async (subscriptionId: string): Promise<ITransaction[]> => {
     if (!subscriptionId) {
         console.error("getTransactions called with undefined subscriptionId");
@@ -95,7 +95,7 @@ export const getTransactions = async (subscriptionId: string): Promise<ITransact
             quantity: typeof transaction.quantity === 'number'
                 ? transaction.quantity
                 : parseFloat(transaction.quantity),
-            // Ensure quantity is a number
+            // Ensure quoteQuantity is a number
             quoteQuantity: typeof transaction.quoteQuantity === 'number'
                 ? transaction.quoteQuantity
                 : parseFloat(transaction.quoteQuantity)
@@ -201,10 +201,14 @@ export const createSubscription = async (subscriptionData: ICreateSubscriptionRe
 
         const response = await api.post('/Subscription/new', subscriptionData, { headers });
 
+        if (!response.data || !response.data.id) {
+            throw new Error("Failed to create subscription - no ID returned from server");
+        }
+
         return response.data.id;
-    } catch (error) {
+    } catch (error: any) {
         console.error('Error creating subscription:', error);
-        throw error;
+        throw new Error(error.response?.data?.message || error.message || "Failed to create subscription");
     }
 };
 
