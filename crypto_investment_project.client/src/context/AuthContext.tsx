@@ -35,6 +35,7 @@ const AUTH_CONFIG = {
     STORAGE_KEYS: {
         ACCESS_TOKEN: "access_token",
         REFRESH_TOKEN: "refresh_token",
+        TOKEN_EXPIRY: "token_expiry",
         USER: "user"
     },
     TOKEN_REFRESH_THRESHOLD_MS: 5 * 60 * 1000, // 5 minutes before expiry
@@ -55,6 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.USER);
             localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN);
             localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.REFRESH_TOKEN);
+            localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.TOKEN_EXPIRY);
             return null;
         }
     });
@@ -62,6 +64,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [csrfToken, setCsrfToken] = useState<string | null>(null);
+    const [refreshInProgress, setRefreshInProgress] = useState<boolean>(false);
 
     // Helper function to securely store sensitive data
     const secureStore = (key: string, value: string): void => {
@@ -97,6 +100,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (error) {
             console.error("Error checking token expiration:", error);
             return true;
+        }
+    };
+
+    // Store token expiry in localStorage for better token management
+    const storeTokenExpiry = (token: string | null): void => {
+        if (!token) {
+            localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.TOKEN_EXPIRY);
+            return;
+        }
+
+        try {
+            const decoded = parseJwt(token);
+            if (decoded && decoded.exp) {
+                // Convert to milliseconds and subtract refresh threshold
+                const expiryTime = (decoded.exp * 1000) - AUTH_CONFIG.TOKEN_REFRESH_THRESHOLD_MS;
+                localStorage.setItem(AUTH_CONFIG.STORAGE_KEYS.TOKEN_EXPIRY, expiryTime.toString());
+            }
+        } catch (error) {
+            console.error("Error storing token expiry:", error);
         }
     };
 
@@ -164,6 +186,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 secureStore(AUTH_CONFIG.STORAGE_KEYS.REFRESH_TOKEN, sessionData.refreshToken);
             }
 
+            // Store token expiry time
+            storeTokenExpiry(sessionData.accessToken);
+
             // Create user object with roles
             const userData = {
                 id: sessionData.userId,
@@ -176,13 +201,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             secureStore(AUTH_CONFIG.STORAGE_KEYS.USER, JSON.stringify(userData));
             setUser(userData);
 
+            // Update API authorization header
+            api.setAuthToken(sessionData.accessToken);
+
             // Fetch CSRF token for subsequent requests
             await fetchCsrfToken();
         } catch (error: any) {
             console.error("Login error:", error);
             setError(error.message || "Authentication failed");
             // Clear any partial data
-            logout();
+            await logout();
         } finally {
             setIsLoading(false);
         }
@@ -212,6 +240,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.USER);
             localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN);
             localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.REFRESH_TOKEN);
+            localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.TOKEN_EXPIRY);
 
             // Reset state
             setUser(null);
@@ -220,18 +249,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setIsLoading(false);
 
             // Update authorization header in API service
-            api.instance.defaults.headers.common['Authorization'] = '';
+            api.setAuthToken(null);
         }
     }, [user, csrfToken, fetchCsrfToken]);
 
-    // Refresh token function
+    // Refresh token function with concurrency control
     const refreshToken = async (): Promise<boolean> => {
+        // Return true if refresh is already in progress to prevent duplicate requests
+        if (refreshInProgress) {
+            // Wait for the current refresh to finish
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            return !!user;
+        }
+
         const currentToken = localStorage.getItem(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN);
 
-        // If no token or token not expired yet, no need to refresh
-        if (!currentToken || !isTokenExpired(currentToken)) {
+        // If no token, no need to refresh
+        if (!currentToken) {
+            return false;
+        }
+
+        // If token is not expired yet, no need to refresh
+        if (!isTokenExpired(currentToken)) {
             return true;
         }
+
+        setRefreshInProgress(true);
 
         try {
             const token = csrfToken || await fetchCsrfToken();
@@ -247,6 +290,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (data.success && data.accessToken) {
                 // Save new tokens
                 secureStore(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN, data.accessToken);
+                storeTokenExpiry(data.accessToken);
+
+                // Update API authorization header
+                api.setAuthToken(data.accessToken);
 
                 // Update user roles from new token
                 const roles = extractRolesFromToken(data.accessToken);
@@ -273,6 +320,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             await logout();
 
             return false;
+        } finally {
+            setRefreshInProgress(false);
         }
     };
 

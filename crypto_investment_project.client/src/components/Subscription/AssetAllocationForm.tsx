@@ -1,5 +1,6 @@
-// src/components/Subscription/AssetAllocationForm.tsx
-import React, { useState } from 'react';
+// src/components/Subscription/AssetAllocationForm.tsx (updated)
+
+import React, { useState, useEffect } from 'react';
 import IAsset from '../../interfaces/IAsset';
 import IAllocation from '../../interfaces/IAllocation';
 
@@ -7,16 +8,29 @@ interface AssetAllocationFormProps {
     availableAssets: IAsset[];
     allocations: Omit<IAllocation, 'id'>[];
     onChange: (allocations: Omit<IAllocation, 'id'>[]) => void;
+    isLoading?: boolean;
+    error?: string | null;
 }
 
 const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
     availableAssets,
     allocations,
-    onChange
+    onChange,
+    isLoading = false,
+    error = null
 }) => {
     const [selectedAssetId, setSelectedAssetId] = useState<string>('');
     const [percentAmount, setPercentAmount] = useState<number>(100);
-    const [error, setError] = useState<string | null>(null);
+    const [localError, setLocalError] = useState<string | null>(null);
+
+    // Reset percent amount when allocations change
+    useEffect(() => {
+        const usedPercentage = allocations.reduce((sum, allocation) => sum + allocation.percentAmount, 0);
+        const remaining = 100 - usedPercentage;
+        if (remaining > 0) {
+            setPercentAmount(remaining);
+        }
+    }, [allocations]);
 
     // Calculate remaining percentage
     const usedPercentage = allocations.reduce((sum, allocation) => sum + allocation.percentAmount, 0);
@@ -51,19 +65,19 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
     // Handle adding a new asset allocation
     const handleAddAllocation = () => {
         if (!selectedAssetId) {
-            setError('Please select an asset');
+            setLocalError('Please select an asset');
             return;
         }
 
         if (percentAmount <= 0 || percentAmount > remainingPercentage) {
-            setError(`Please enter a valid percentage between 1 and ${remainingPercentage}%`);
+            setLocalError(`Please enter a valid percentage between 1 and ${remainingPercentage}%`);
             return;
         }
 
         // Check if asset already allocated
         const existingAllocation = allocations.find(a => a.assetId === selectedAssetId);
         if (existingAllocation) {
-            setError('This asset is already in your allocation. Edit or remove it first.');
+            setLocalError('This asset is already in your allocation. Edit or remove it first.');
             return;
         }
 
@@ -81,7 +95,7 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
             // Reset form
             setSelectedAssetId('');
             setPercentAmount(remainingPercentage - percentAmount);
-            setError(null);
+            setLocalError(null);
         }
     };
 
@@ -105,7 +119,7 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
 
         // Check if this would exceed 100%
         if (usedPercentage + percentageDiff > 100) {
-            setError('Total allocation cannot exceed 100%');
+            setLocalError('Total allocation cannot exceed 100%');
             return;
         }
 
@@ -116,17 +130,20 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
         );
 
         onChange(updatedAllocations);
-        setError(null);
+        setLocalError(null);
     };
 
     // Handle distributing remaining percentage evenly
     const handleDistributeEvenly = () => {
         if (allocations.length === 0) return;
 
-        const percentPerAsset = 100 / allocations.length;
-        const updatedAllocations = allocations.map(allocation => ({
+        const percentPerAsset = Math.floor((100 / allocations.length) * 100) / 100; // Round to 2 decimal places
+        const updatedAllocations = allocations.map((allocation, index) => ({
             ...allocation,
-            percentAmount: percentPerAsset
+            // Add the rounding remainder to the last allocation to ensure total is exactly 100%
+            percentAmount: index === allocations.length - 1
+                ? 100 - (percentPerAsset * (allocations.length - 1))
+                : percentPerAsset
         }));
 
         onChange(updatedAllocations);
@@ -137,14 +154,47 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
         asset => !allocations.some(allocation => allocation.assetId === asset.id)
     );
 
+    // If loading, show spinner
+    if (isLoading) {
+        return (
+            <div className="flex justify-center items-center h-40">
+                <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full"></div>
+                <p className="ml-3 text-gray-600">Loading available assets...</p>
+            </div>
+        );
+    }
+
+    // If error from parent, show error message
+    if (error) {
+        return (
+            <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
+                <div className="flex">
+                    <div className="flex-shrink-0">
+                        <svg className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                        </svg>
+                    </div>
+                    <div className="ml-3">
+                        <p className="text-sm leading-5 text-red-700">
+                            {error}
+                        </p>
+                        <p className="mt-2 text-sm leading-5 text-red-700">
+                            Using fallback asset data. Your selections may not be reflected in the final subscription.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-6">
             <h2 className="text-xl font-semibold">Choose Your Asset Allocation</h2>
 
             {/* Error message */}
-            {error && (
+            {localError && (
                 <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-                    <p>{error}</p>
+                    <p>{localError}</p>
                 </div>
             )}
 
@@ -267,8 +317,8 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                     onClick={handleAddAllocation}
                     disabled={remainingPercentage <= 0 || !selectedAssetId}
                     className={`mt-3 ${remainingPercentage <= 0 || !selectedAssetId
-                            ? 'bg-gray-300 cursor-not-allowed'
-                            : 'bg-blue-600 hover:bg-blue-700'
+                        ? 'bg-gray-300 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700'
                         } text-white py-2 px-4 rounded-lg transition-colors`}
                 >
                     Add Asset
@@ -278,7 +328,7 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
             {/* No assets warning */}
             {availableAssets.length === 0 && (
                 <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded">
-                    <p>No assets are currently available for allocation.</p>
+                    <p>No assets are currently available for allocation. Please try refreshing the page or contact support.</p>
                 </div>
             )}
 

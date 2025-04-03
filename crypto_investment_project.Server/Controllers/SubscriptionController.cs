@@ -2,7 +2,6 @@ using Application.Contracts.Requests.Subscription;
 using Application.Interfaces;
 using Domain.Exceptions;
 using FluentValidation;
-using Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -147,8 +146,8 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="422">If the request validation fails</response>
         [HttpPost]
         [Route("new")]
-        [Authorize]
         [ValidateAntiForgeryToken]
+        [Authorize(Roles = "USER")]
         [EnableRateLimiting("heavyOperations")]
         [ProducesResponseType(StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]

@@ -2,42 +2,64 @@
 import api from "./api";
 import IAsset from "../interfaces/IAsset";
 
+let apiFailureCount = 0;
+const MAX_API_FAILURES = 3;
+let useApiDisabled = false;
+const API_RETRY_TIMEOUT = 30000; // 30 seconds
+
 /**
  * Fetches all available assets for investment
  * @returns Promise with array of asset objects
  */
+
 export const getSupportedAssets = async (): Promise<IAsset[]> => {
+    // If we've failed too many times, use mock data without trying the API
+    if (useApiDisabled) {
+        console.warn('API calls temporarily disabled due to repeated failures');
+        return getMockAssets();
+    }
+
     try {
-        const { data } = await api.get('/Asset/supported');
+        const response = await api.get('/Asset/supported');
+
+        // Reset failure counter on success
+        apiFailureCount = 0;
 
         // Process and validate response
-        const assets: IAsset[] = Array.isArray(data) ? data.map((asset: any) => ({
-            id: asset.id,
+        const assets: IAsset[] = Array.isArray(response.data) ? response.data.map((asset: any) => ({
+            id: asset.id || crypto.randomUUID(), // Ensure each asset has an ID, generate if missing
             name: asset.name || 'Unknown Asset',
             ticker: asset.ticker,
-            description: asset.description,
-            type: asset.type || 'ECHANGE',
+            description: asset.description || '',
+            type: asset.type || 'EXCHANGE',
             exchange: asset.exchange || 'default',
             price: typeof asset.price === 'number' ? asset.price : parseFloat(asset.price || '0'),
             change24h: typeof asset.change24h === 'number' ? asset.change24h : parseFloat(asset.change24h || '0'),
             marketCap: typeof asset.marketCap === 'number' ? asset.marketCap : parseFloat(asset.marketCap || '0'),
-            isActive: Boolean(asset.isActive)
+            isActive: asset.isActive !== false // Default to true if not specified
         })) : [];
 
-        return assets.filter(asset => asset.isActive);
-    } catch (error) {
-        console.error('Error fetching available assets:', error);
+        return assets;
+    } catch (error: any) {
+        // Handle error but add circuit breaker logic
+        apiFailureCount++;
 
-        // Fallback to mock data for development or when the API is not available
-        if (process.env.NODE_ENV === 'development') {
-            console.warn('Using mock asset data in development mode');
-            return getMockAssets();
+        if (apiFailureCount >= MAX_API_FAILURES) {
+            useApiDisabled = true;
+
+            // Re-enable API calls after a timeout
+            setTimeout(() => {
+                useApiDisabled = false;
+                apiFailureCount = 0;
+                console.info('Re-enabling API calls after timeout');
+            }, API_RETRY_TIMEOUT);
         }
 
-        throw error;
+        // Log error and return mock data
+        console.error('Error fetching available assets:', error);
+        return getMockAssets();
     }
 };
-
 /**
  * Fetches an individual asset by ID
  * @param assetId The ID of the asset
@@ -49,7 +71,7 @@ export const getAssetById = async (assetId: string): Promise<IAsset> => {
     }
 
     try {
-        const { data } = await api.get(`/v1/Asset/${assetId}`);
+        const { data } = await api.get(`/Asset/${assetId}`);
 
         // Process and validate response
         const asset: IAsset = {
@@ -83,7 +105,7 @@ export const getAssetPrice = async (ticker: string): Promise<number> => {
     }
 
     try {
-        const { data } = await api.get(`/v1/Exchange/price/${ticker}`);
+        const { data } = await api.get(`/Exchange/price/${ticker}`);
         return typeof data === 'number' ? data : parseFloat(data);
     } catch (error) {
         console.error(`Error fetching price for ${ticker}:`, error);

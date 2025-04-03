@@ -20,6 +20,7 @@ const apiClient: AxiosInstance = axios.create({
         "Content-Type": "application/json",
         "Accept": "application/json",
     },
+    withCredentials: true, // Important for CSRF tokens and cookies
 });
 
 // Request interceptor
@@ -34,6 +35,12 @@ apiClient.interceptors.request.use(
         const token = localStorage.getItem("access_token");
         if (token) {
             config.headers[API_CONFIG.AUTH_HEADER] = `${API_CONFIG.AUTH_SCHEME} ${token}`;
+        }
+
+        // Get CSRF token if available
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        if (csrfToken && ['post', 'put', 'delete', 'patch'].includes(config.method?.toLowerCase() || '')) {
+            config.headers['X-CSRF-TOKEN'] = csrfToken;
         }
 
         // Add timestamp for performance tracking
@@ -99,6 +106,34 @@ apiClient.interceptors.response.use(
             // Dispatch an event that Auth context can listen for
             const event = new CustomEvent('auth:csrfInvalid');
             window.dispatchEvent(event);
+
+            // Try to fetch a new CSRF token
+            try {
+                const response = await axios.get(`${API_CONFIG.BASE_URL}/v1/csrf`, {
+                    withCredentials: true
+                });
+                if (response.data && response.data.token) {
+                    const metaTag = document.querySelector('meta[name="csrf-token"]');
+                    if (metaTag) {
+                        metaTag.setAttribute('content', response.data.token);
+                    } else {
+                        // Create meta tag if it doesn't exist
+                        const newMetaTag = document.createElement('meta');
+                        newMetaTag.name = 'csrf-token';
+                        newMetaTag.content = response.data.token;
+                        document.head.appendChild(newMetaTag);
+                    }
+
+                    // Retry the original request with the new token
+                    if (originalRequest) {
+                        originalRequest.headers = originalRequest.headers || {};
+                        originalRequest.headers['X-CSRF-TOKEN'] = response.data.token;
+                        return apiClient(originalRequest);
+                    }
+                }
+            } catch (csrfError) {
+                console.error("Failed to refresh CSRF token:", csrfError);
+            }
         }
 
         // Enhanced error logging
@@ -150,6 +185,7 @@ const api = {
             delete apiClient.defaults.headers.common[API_CONFIG.AUTH_HEADER];
         }
     },
+
     // HTTP method implementations
     async get<T = any>(url: string, config?: any): Promise<AxiosResponse<T>> {
         return apiClient.get<T>(url, config);
@@ -225,6 +261,54 @@ const api = {
             return apiResponse;
         }
     },
+
+    // Helper to check if user is authenticated
+    isAuthenticated: (): boolean => {
+        const token = localStorage.getItem("access_token");
+        return !!token;
+    },
+
+    // Helper to add CSRF token to a request
+    getCsrfToken: (): string | null => {
+        return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || null;
+    },
+
+    // Refresh CSRF token
+    refreshCsrfToken: async (): Promise<string | null> => {
+        try {
+            const response = await apiClient.get("/v1/csrf", { withCredentials: true });
+            const token = response.data?.token;
+
+            if (token) {
+                // Update or create meta tag
+                let metaTag = document.querySelector('meta[name="csrf-token"]');
+                if (metaTag) {
+                    metaTag.setAttribute('content', token);
+                } else {
+                    metaTag = document.createElement('meta');
+                    metaTag.setAttribute('name', 'csrf-token');
+                    metaTag.setAttribute('content', token);
+                    document.head.appendChild(metaTag);
+                }
+                return token;
+            }
+            return null;
+        } catch (error) {
+            console.error("Failed to refresh CSRF token:", error);
+            return null;
+        }
+    }
 };
+
+// Add event listener for auth events
+window.addEventListener('auth:tokenExpired', async () => {
+    // Dispatch event to inform app about expired token
+    const refreshEvent = new CustomEvent('auth:refreshNeeded');
+    window.dispatchEvent(refreshEvent);
+});
+
+window.addEventListener('auth:csrfInvalid', async () => {
+    await api.refreshCsrfToken();
+});
 
 export default api;

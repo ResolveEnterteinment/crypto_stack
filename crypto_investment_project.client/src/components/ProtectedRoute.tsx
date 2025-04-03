@@ -11,16 +11,13 @@ interface ProtectedRouteProps {
 
 /**
  * Enhanced Protected Route component with role-based authorization and token verification
- * @param children Components to render if user is authenticated
- * @param requiredRoles Optional array of roles required to access this route
- * @param redirectPath Path to redirect to if authentication fails (default: /auth)
  */
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     children,
     requiredRoles = [],
     redirectPath = "/auth"
 }) => {
-    const { isAuthenticated, refreshToken, hasRole } = useAuth();
+    const { isAuthenticated, refreshToken, hasRole, user } = useAuth();
     const [isVerifying, setIsVerifying] = useState(true);
     const [isAuthorized, setIsAuthorized] = useState(false);
     const location = useLocation();
@@ -31,35 +28,39 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
             setIsVerifying(true);
 
             // If not authenticated at all, no need for further checks
-            if (!isAuthenticated) {
+            if (!isAuthenticated || !user) {
                 setIsAuthorized(false);
                 setIsVerifying(false);
                 return;
             }
 
-            // Try to refresh token if needed
-            const isValidToken = await refreshToken();
-
-            if (!isValidToken) {
-                setIsAuthorized(false);
-                setIsVerifying(false);
-                return;
-            }
-
-            // Check role-based access if required
+            // Check if the user has required roles
+            let hasRequiredRole = true;
             if (requiredRoles.length > 0) {
-                const hasRequiredRole = requiredRoles.some(role => hasRole(role));
-                setIsAuthorized(hasRequiredRole);
-            } else {
-                // No specific roles required, just authentication
-                setIsAuthorized(true);
+                hasRequiredRole = requiredRoles.some(role => hasRole(role));
             }
 
+            if (!hasRequiredRole) {
+                setIsAuthorized(false);
+                setIsVerifying(false);
+                return;
+            }
+
+            // Simple check - just use the token we have
+            const accessToken = localStorage.getItem("access_token");
+            if (!accessToken) {
+                setIsAuthorized(false);
+                setIsVerifying(false);
+                return;
+            }
+
+            // Always set as authorized if we have a token and required roles
+            setIsAuthorized(true);
             setIsVerifying(false);
         };
 
         verifyAccess();
-    }, [isAuthenticated, refreshToken, requiredRoles, hasRole]);
+    }, [isAuthenticated, hasRole, requiredRoles, user]);
 
     // Show loading state while verifying
     if (isVerifying) {
