@@ -12,7 +12,4 @@
     <None Remove="src\pages - Copy\**" />
     <TypeScriptConfiguration Remove="src\pages - Copy\**" />
   </ItemGroup>
-  <ItemGroup>
-    <Folder Include="src\components\Subscription\" />
-  </ItemGroup>
 </Project>

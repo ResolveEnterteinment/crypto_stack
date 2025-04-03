@@ -19,7 +19,8 @@ namespace Infrastructure.Services
         BaseService<SubscriptionData>,
         ISubscriptionService,
         INotificationHandler<SubscriptionCreatedEvent>,
-        INotificationHandler<PaymentReceivedEvent>
+        INotificationHandler<PaymentReceivedEvent>,
+        INotificationHandler<PaymentCancelledEvent>
     {
         private readonly IPaymentService _paymentService;
         private readonly IAssetService _assetService;
@@ -57,7 +58,7 @@ namespace Infrastructure.Services
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(_notificationService));
         }
 
-        public async Task<ResultWrapper<Guid>> Create(SubscriptionCreateRequest request)
+        public async Task<ResultWrapper<Guid>> CreateAsync(SubscriptionCreateRequest request)
         {
             try
             {
@@ -162,7 +163,7 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<ResultWrapper<long>> Update(Guid id, SubscriptionUpdateRequest request)
+        public async Task<ResultWrapper<long>> UpdateAsync(Guid id, SubscriptionUpdateRequest request)
         {
             // Validate request
             #region Validate
@@ -276,6 +277,104 @@ namespace Infrastructure.Services
             }
         }
 
+        public async Task<UpdateResult> UpdateSubscriptionStatusAsync(Guid subscriptionId, SubscriptionStatus status)
+        {
+            try
+            {
+                // Get subscription first to invalidate cache
+                var subscription = await GetByIdAsync(subscriptionId);
+                if (subscription == null)
+                {
+                    throw new KeyNotFoundException($"Subscription with ID {subscriptionId} not found");
+                }
+
+                var updatedFields = new Dictionary<string, object>
+                {
+                    ["Status"] = status
+                };
+
+                // If subscription is cancelled, also set the IsCancelled flag
+                if (status == SubscriptionStatus.Cancelled)
+                {
+                    updatedFields["IsCancelled"] = true;
+                }
+
+                var result = await UpdateOneAsync(subscriptionId, updatedFields);
+
+                if (result.ModifiedCount > 0)
+                {
+                    // Invalidate cache
+                    _cache.Remove(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subscription.UserId));
+
+                    // Notify user
+                    string statusMessage = status switch
+                    {
+                        SubscriptionStatus.Active => "activated",
+                        SubscriptionStatus.Cancelled => "cancelled",
+                        SubscriptionStatus.Pending => "pending approval",
+                        _ => "updated"
+                    };
+
+                    await _notificationService.CreateNotificationAsync(new()
+                    {
+                        UserId = subscription.UserId.ToString(),
+                        Message = $"Your subscription has been {statusMessage}."
+                    });
+
+                    _logger.LogInformation("Subscription {SubscriptionId} status updated to {Status} for user {UserId}",
+                        subscriptionId, status, subscription.UserId);
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to update status for subscription {SubscriptionId}: {Message}",
+                    subscriptionId, ex.Message);
+                throw;
+            }
+        }
+
+        public async Task<UpdateResult> CancelAsync(Guid subscriptionId)
+        {
+            try
+            {
+                // Get subscription first to invalidate cache
+                var subscription = await GetByIdAsync(subscriptionId);
+                if (subscription == null)
+                {
+                    throw new KeyNotFoundException($"Subscription with ID {subscriptionId} not found");
+                }
+
+                var updatedFields = new { IsCancelled = true, Status = SubscriptionStatus.Cancelled };
+                var result = await UpdateOneAsync(subscriptionId, updatedFields);
+
+                if (result.ModifiedCount > 0)
+                {
+                    // Invalidate caches
+                    _cache.Remove(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subscription.UserId));
+
+                    // Notify user
+                    await _notificationService.CreateNotificationAsync(new()
+                    {
+                        UserId = subscription.UserId.ToString(),
+                        Message = $"Your subscription has been cancelled."
+                    });
+
+                    _logger.LogInformation("Subscription {SubscriptionId} cancelled successfully for user {UserId}",
+                        subscriptionId, subscription.UserId);
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to cancel subscription {SubscriptionId}: {Message}",
+                    subscriptionId, ex.Message);
+                throw;
+            }
+        }
+
         public async Task<ResultWrapper<IEnumerable<AllocationDto>>> GetAllocationsAsync(Guid subscriptionId)
         {
             try
@@ -380,46 +479,6 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<UpdateResult> CancelAsync(Guid subscriptionId)
-        {
-            try
-            {
-                // Get subscription first to invalidate cache
-                var subscription = await GetByIdAsync(subscriptionId);
-                if (subscription == null)
-                {
-                    throw new KeyNotFoundException($"Subscription with ID {subscriptionId} not found");
-                }
-
-                var updatedFields = new { IsCancelled = true, Status = SubscriptionStatus.Cancelled };
-                var result = await UpdateOneAsync(subscriptionId, updatedFields);
-
-                if (result.ModifiedCount > 0)
-                {
-                    // Invalidate caches
-                    _cache.Remove(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subscription.UserId));
-
-                    // Notify user
-                    await _notificationService.CreateNotificationAsync(new()
-                    {
-                        UserId = subscription.UserId.ToString(),
-                        Message = $"Your subscription has been cancelled."
-                    });
-
-                    _logger.LogInformation("Subscription {SubscriptionId} cancelled successfully for user {UserId}",
-                        subscriptionId, subscription.UserId);
-                }
-
-                return result;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to cancel subscription {SubscriptionId}: {Message}",
-                    subscriptionId, ex.Message);
-                throw;
-            }
-        }
-
         public async Task Handle(SubscriptionCreatedEvent notification, CancellationToken cancellationToken)
         {
             try
@@ -508,12 +567,11 @@ namespace Infrastructure.Services
                 var newQuantity = totalInvestments + investmentQuantity;
 
                 // Get next due date from payment provider
-                DateTime nextDueDate;
+                DateTime? nextDueDate;
                 if (!string.IsNullOrEmpty(subscription.ProviderSubscriptionId))
                 {
-                    var providerSubscription = await _paymentService.Providers[payment.Provider]
-                        .GetSubscriptionAsync(subscription.ProviderSubscriptionId);
-                    nextDueDate = providerSubscription?.NextDueDate ?? DateTime.UtcNow.AddMonths(1);
+                    nextDueDate = await _paymentService.Providers[payment.Provider]
+                        .GetNextDueDate(payment.InvoiceId);
                 }
                 else
                 {
@@ -559,5 +617,54 @@ namespace Infrastructure.Services
                 // We don't rethrow here to avoid disrupting the event pipeline
             }
         }
+
+        public async Task Handle(PaymentCancelledEvent notification, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var payment = notification.Payment;
+                var subscriptionId = payment.SubscriptionId;
+
+                _logger.LogInformation("Processing payment for subscription {SubscriptionId}: {Amount} {Currency}",
+                    subscriptionId, payment.NetAmount, payment.Currency);
+
+                // Get current subscription details
+                var subscription = await GetByIdAsync(subscriptionId);
+                if (subscription == null)
+                {
+                    throw new KeyNotFoundException($"Subscription {subscriptionId} not found");
+                }
+
+                var updateResult = await UpdateSubscriptionStatusAsync(payment.SubscriptionId, SubscriptionStatus.Cancelled);
+
+                if (updateResult.ModifiedCount > 0)
+                {
+                    // Invalidate cache
+                    _cache.Remove(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subscription.UserId));
+
+                    // Notify user
+                    await _notificationService.CreateNotificationAsync(new()
+                    {
+                        UserId = subscription.UserId.ToString(),
+                        Message = $"Subscription #{payment.Id} of {payment.NetAmount} {payment.Currency} is cancelled."
+                    });
+
+                    _logger.LogInformation("Successfully cancelled subscription {SubscriptionId}.",
+                        subscriptionId);
+                }
+                else
+                {
+                    _logger.LogWarning("Failed to cancel subscription {SubscriptionId}.",
+                        subscriptionId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling payment received event for payment {PaymentId}: {Message}",
+                    notification.Payment.Id, ex.Message);
+                // We don't rethrow here to avoid disrupting the event pipeline
+            }
+        }
+
     }
 }

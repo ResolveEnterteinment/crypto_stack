@@ -1,4 +1,7 @@
 ﻿using Application.Interfaces;
+using Domain.Constants;
+using Domain.DTOs;
+using Domain.DTOs.Payment;
 using Domain.DTOs.Settings;
 using Domain.Exceptions;
 using Microsoft.Extensions.Caching.Memory;
@@ -303,7 +306,7 @@ namespace StripeLibrary
         /// <param name="invoiceId">The ID of the invoice to retrieve.</param>
         /// <returns>The invoice.</returns>
         /// <exception cref="PaymentApiException">Thrown when an error occurs during invoice retrieval.</exception>
-        public async Task<Domain.DTOs.Payment.Invoice> GetInvoiceAsync(string invoiceId)
+        public async Task<PaymentDto> GetInvoiceAsync(string invoiceId)
         {
             if (string.IsNullOrEmpty(invoiceId))
             {
@@ -313,7 +316,7 @@ namespace StripeLibrary
             string cacheKey = $"{InvoiceCacheKeyPrefix}{invoiceId}";
 
             // Try to get from cache first if caching is available
-            if (_cache != null && _cache.TryGetValue(cacheKey, out Domain.DTOs.Payment.Invoice cachedInvoice))
+            if (_cache != null && _cache.TryGetValue(cacheKey, out Domain.DTOs.Payment.PaymentDto cachedInvoice))
             {
                 return cachedInvoice;
             }
@@ -335,7 +338,7 @@ namespace StripeLibrary
                             $"Failed to retrieve invoice {invoiceId}", "Stripe", invoiceId);
                     }
 
-                    var result = new Domain.DTOs.Payment.Invoice()
+                    var result = new Domain.DTOs.Payment.PaymentDto()
                     {
                         Id = stripeInvoice.Id,
                         CreatedAt = stripeInvoice.Created,
@@ -444,12 +447,12 @@ namespace StripeLibrary
         /// </summary>
         /// <param name="subscriptionId">The ID of the subscription to retrieve.</param>
         /// <returns>The subscription.</returns>
-        public async Task<Domain.DTOs.Payment.Subscription> GetSubscriptionAsync(string subscriptionId)
+        public async Task<PaymentSubscriptionDto> GetSubscriptionAsync(string subscriptionId)
         {
             if (string.IsNullOrEmpty(subscriptionId))
             {
                 _logger.LogInformation("No subscription ID provided");
-                return new Domain.DTOs.Payment.Subscription()
+                return new Domain.DTOs.Payment.PaymentSubscriptionDto()
                 {
                     NextDueDate = DateTime.UtcNow
                 };
@@ -458,7 +461,7 @@ namespace StripeLibrary
             string cacheKey = $"{SubscriptionCacheKeyPrefix}{subscriptionId}";
 
             // Try to get from cache first if caching is available
-            if (_cache != null && _cache.TryGetValue(cacheKey, out Domain.DTOs.Payment.Subscription cachedSubscription))
+            if (_cache != null && _cache.TryGetValue(cacheKey, out Domain.DTOs.Payment.PaymentSubscriptionDto cachedSubscription))
             {
                 return cachedSubscription;
             }
@@ -471,7 +474,7 @@ namespace StripeLibrary
                 {
                     var subscription = await _subscriptionService.GetAsync(subscriptionId);
 
-                    var result = new Domain.DTOs.Payment.Subscription()
+                    var result = new Domain.DTOs.Payment.PaymentSubscriptionDto()
                     {
                         // Use the subscription's CurrentPeriodEnd if available, otherwise use current time
                         NextDueDate = subscription != null ? subscription.CurrentPeriodEnd : DateTime.UtcNow
@@ -495,7 +498,7 @@ namespace StripeLibrary
                 _logger.LogError(ex, "Stripe error retrieving subscription {SubscriptionId}: {Message}",
                     subscriptionId, ex.Message);
                 // Return default subscription instead of throwing to avoid breaking payment flow
-                return new Domain.DTOs.Payment.Subscription()
+                return new Domain.DTOs.Payment.PaymentSubscriptionDto()
                 {
                     NextDueDate = DateTime.UtcNow
                 };
@@ -505,7 +508,7 @@ namespace StripeLibrary
                 _logger.LogError(ex, "Unexpected error retrieving subscription {SubscriptionId}",
                     subscriptionId);
                 // Return default subscription instead of throwing to avoid breaking payment flow
-                return new Domain.DTOs.Payment.Subscription()
+                return new Domain.DTOs.Payment.PaymentSubscriptionDto()
                 {
                     NextDueDate = DateTime.UtcNow
                 };
@@ -517,7 +520,7 @@ namespace StripeLibrary
         /// </summary>
         /// <param name="paymentProviderId">The ID of the payment.</param>
         /// <returns>The subscription.</returns>
-        public async Task<Domain.DTOs.Payment.Subscription> GetSubscriptionByPaymentAsync(string paymentProviderId)
+        public async Task<PaymentSubscriptionDto> GetSubscriptionByPaymentAsync(string paymentProviderId)
         {
             if (string.IsNullOrEmpty(paymentProviderId))
             {
@@ -535,7 +538,7 @@ namespace StripeLibrary
                     if (payment?.Invoice == null)
                     {
                         _logger.LogWarning("No invoice associated with payment {PaymentId}", paymentProviderId);
-                        return new Domain.DTOs.Payment.Subscription()
+                        return new Domain.DTOs.Payment.PaymentSubscriptionDto()
                         {
                             NextDueDate = DateTime.UtcNow
                         };
@@ -547,7 +550,7 @@ namespace StripeLibrary
                     {
                         _logger.LogWarning("No subscription associated with invoice {InvoiceId} for payment {PaymentId}",
                             payment.Invoice.Id, paymentProviderId);
-                        return new Domain.DTOs.Payment.Subscription()
+                        return new Domain.DTOs.Payment.PaymentSubscriptionDto()
                         {
                             NextDueDate = DateTime.UtcNow
                         };
@@ -555,7 +558,7 @@ namespace StripeLibrary
 
                     var subscription = await _subscriptionService.GetAsync(invoice.Subscription.Id);
 
-                    return new Domain.DTOs.Payment.Subscription()
+                    return new Domain.DTOs.Payment.PaymentSubscriptionDto()
                     {
                         NextDueDate = subscription != null ? subscription.CurrentPeriodEnd : DateTime.UtcNow
                     };
@@ -579,12 +582,14 @@ namespace StripeLibrary
             }
         }
 
-        public async Task<string> CreateCheckoutSession(Guid userId, Guid subscriptionId, decimal amount, string interval)
+        public async Task<ResultWrapper<SessionDto>> CreateCheckoutSession(Guid userId, Guid subscriptionId, decimal amount, string interval)
         {
-            var options = new SessionCreateOptions
+            try
             {
-                PaymentMethodTypes = new List<string> { "card" },
-                LineItems = new List<SessionLineItemOptions>
+                var options = new SessionCreateOptions
+                {
+                    PaymentMethodTypes = new List<string> { "card" },
+                    LineItems = new List<SessionLineItemOptions>
             {
                 new SessionLineItemOptions
                 {
@@ -604,14 +609,101 @@ namespace StripeLibrary
                     Quantity = 1
                 }
             },
-                Mode = interval == "one-time" ? "payment" : "subscription",
-                SuccessUrl = "https://localhost:5173/success?session_id={CHECKOUT_SESSION_ID}",
-                CancelUrl = "https://localhost:5173/cancel",
-                Metadata = new Dictionary<string, string> { { "subscriptionId", subscriptionId.ToString() } }
-            };
+                    Mode = interval == "one-time" ? "payment" : "subscription",
+                    SuccessUrl = "https://localhost:5173/success?session_id={CHECKOUT_SESSION_ID}",
+                    CancelUrl = "https://localhost:5173/cancel",
+                    Metadata = new Dictionary<string, string> { { "subscriptionId", subscriptionId.ToString() } }
+                };
 
-            var session = await _sessionService.CreateAsync(options);
-            return session.Url;
+                var session = await _sessionService.CreateAsync(options);
+
+                return ResultWrapper<SessionDto>.Success(new SessionDto
+                {
+                    ClientSecret = session.ClientSecret,
+                    Url = session.Url,
+                    Status = session.Status
+                });
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<SessionDto>.FromException(ex);
+            }
+
+        }
+        public async Task<ResultWrapper<SessionDto>> CreateCheckoutSessionWithOptions(CheckoutSessionOptions options)
+        {
+            try
+            {
+                // Convert line items to Stripe format
+                var stripeLineItems = new List<SessionLineItemOptions>();
+                foreach (var item in options.LineItems)
+                {
+                    stripeLineItems.Add(new SessionLineItemOptions
+                    {
+                        PriceData = new SessionLineItemPriceDataOptions
+                        {
+                            Currency = item.Currency,
+                            UnitAmount = item.UnitAmount,
+                            ProductData = new SessionLineItemPriceDataProductDataOptions
+                            {
+                                Name = item.Name,
+                                Description = item.Description
+                            }
+                        },
+                        Quantity = item.Quantity
+                    });
+                }
+
+                var sessionOptions = new SessionCreateOptions
+                {
+                    PaymentMethodTypes = new List<string> { options.PaymentMethodType },
+                    LineItems = stripeLineItems,
+                    Mode = options.Mode,
+                    SuccessUrl = options.SuccessUrl,
+                    CancelUrl = options.CancelUrl,
+                    Metadata = options.Metadata
+                };
+
+                if (!string.IsNullOrEmpty(options.CustomerId))
+                {
+                    sessionOptions.Customer = options.CustomerId;
+                }
+
+                var session = await _sessionService.CreateAsync(sessionOptions);
+
+                return ResultWrapper<SessionDto>.Success(new SessionDto
+                {
+                    Id = session.Id,
+                    Url = session.Url,
+                    ClientSecret = session.ClientSecret,
+                    Status = session.Status
+                });
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<SessionDto>.FromException(ex);
+            }
+
+        }
+
+        public async Task<ResultWrapper> CancelPaymentAsync(string paymentId, string? reason = "requested_by_customer")
+        {
+            try
+            {
+                var cancelOptions = new Stripe.PaymentIntentCancelOptions
+                {
+                    CancellationReason = "requested_by_customer"
+                };
+
+                var cancelledIntent = await _paymentIntentService.CancelAsync(paymentId, cancelOptions);
+
+                return ResultWrapper.Success("PAyment cacelled successfully.");
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error cancelling payment {PaymentId}: {Message}", paymentId, ex.Message);
+                return ResultWrapper.Failure(FailureReason.PaymentProcessingError, $"Failed to cancel payment: {ex.Message}");
+            }
         }
     }
 }

@@ -2,6 +2,7 @@ using Application.Interfaces;
 using Application.Interfaces.Payment;
 using Domain.Constants;
 using Domain.DTOs.Error;
+using Domain.DTOs.Payment;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -10,8 +11,7 @@ using System.Diagnostics;
 namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
-    [ApiVersion("1.0")]
-    [Route("api/v{version:apiVersion}/[controller]")]
+    [Route("api/[controller]")]
     [Produces("application/json")]
     public class PaymentController : ControllerBase
     {
@@ -118,7 +118,7 @@ namespace crypto_investment_project.Server.Controllers
                         });
                     }
 
-                    if (subscription.UserId != request.UserId)
+                    if (subscription.UserId.ToString() != request.UserId)
                     {
                         return BadRequest(new ErrorResponse
                         {
@@ -132,12 +132,9 @@ namespace crypto_investment_project.Server.Controllers
                     string idempotencyKey = request.IdempotencyKey ?? Guid.NewGuid().ToString();
                     if (await _idempotencyService.HasKeyAsync(idempotencyKey))
                     {
-                        var cachedResponse = await _idempotencyService.GetCachedResponseAsync(idempotencyKey);
-                        if (cachedResponse != null)
-                        {
-                            _logger.LogInformation("Returning cached response for idempotency key: {IdempotencyKey}", idempotencyKey);
-                            return Ok(cachedResponse);
-                        }
+                        _logger.LogInformation("Duplicate checkout session request {IdempotencyKey} received and skipped",
+                        request.IdempotencyKey);
+                        return Ok(new { status = "Already processed" });
                     }
 
                     // Update subscription status to pending
@@ -161,6 +158,7 @@ namespace crypto_investment_project.Server.Controllers
                         Metadata = new Dictionary<string, string>
                         {
                             ["subscription_id"] = subscriptionId.ToString(),
+                            ["interval"] = subscription.Interval,
                             ["user_id"] = request.UserId,
                             ["correlation_id"] = correlationId
                         }
@@ -171,12 +169,12 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         Success = true,
                         Message = "Checkout session created successfully",
-                        CheckoutUrl = checkoutSession.Url,
+                        CheckoutUrl = checkoutSession.CheckoutUrl,
                         ClientSecret = checkoutSession.ClientSecret
                     };
 
                     // Store response for idempotency
-                    await _idempotencyService.StoreResponseAsync(idempotencyKey, response, TimeSpan.FromHours(1));
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, response, TimeSpan.FromHours(1));
 
                     return Ok(response);
                 }
@@ -189,65 +187,6 @@ namespace crypto_investment_project.Server.Controllers
                         Code = "SERVER_ERROR",
                         TraceId = correlationId
                     });
-                }
-            }
-        }
-
-        /// <summary>
-        /// Handles Stripe webhook events for subscription status updates
-        /// </summary>
-        /// <returns>OK response</returns>
-        [HttpPost("webhook")]
-        [AllowAnonymous]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<IActionResult> HandleWebhook()
-        {
-            var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-
-            using (_logger.BeginScope(new Dictionary<string, object>
-            {
-                ["CorrelationId"] = correlationId,
-                ["Operation"] = "HandleWebhook"
-            }))
-            {
-                try
-                {
-                    // Read the request body
-                    using var reader = new StreamReader(HttpContext.Request.Body);
-                    var body = await reader.ReadToEndAsync();
-
-                    // Verify the signature (for security)
-                    var signatureHeader = HttpContext.Request.Headers["Stripe-Signature"];
-                    if (string.IsNullOrEmpty(signatureHeader))
-                    {
-                        _logger.LogWarning("Missing Stripe signature header");
-                        return BadRequest();
-                    }
-
-                    // Get webhook secret from configuration
-                    var webhookSecret = _configuration["Stripe:WebhookSecret"];
-                    if (string.IsNullOrEmpty(webhookSecret))
-                    {
-                        _logger.LogError("Stripe webhook secret is not configured");
-                        return StatusCode(StatusCodes.Status500InternalServerError);
-                    }
-
-                    // Process the webhook event
-                    var result = await _paymentService.HandleWebhookEventAsync(body, signatureHeader, webhookSecret);
-
-                    if (!result.Success)
-                    {
-                        _logger.LogWarning("Failed to process webhook: {Message}", result.Message);
-                        return BadRequest();
-                    }
-
-                    return Ok();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error handling webhook");
-                    return StatusCode(StatusCodes.Status500InternalServerError);
                 }
             }
         }
@@ -381,11 +320,11 @@ namespace crypto_investment_project.Server.Controllers
 
                     // Cancel the payment
                     var result = await _paymentService.CancelPaymentAsync(paymentId);
-                    if (!result.Success)
+                    if (!result.IsSuccess)
                     {
                         return BadRequest(new ErrorResponse
                         {
-                            Message = result.Message,
+                            Message = result.ErrorMessage,
                             Code = "CANCELLATION_FAILED",
                             TraceId = correlationId
                         });

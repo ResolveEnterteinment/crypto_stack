@@ -6,9 +6,9 @@ import IAsset from "../interfaces/IAsset";
  * Fetches all available assets for investment
  * @returns Promise with array of asset objects
  */
-export const getAvailableAssets = async (): Promise<IAsset[]> => {
+export const getSupportedAssets = async (): Promise<IAsset[]> => {
     try {
-        const { data } = await api.get('/v1/Asset/available');
+        const { data } = await api.get('/Asset/supported');
 
         // Process and validate response
         const assets: IAsset[] = Array.isArray(data) ? data.map((asset: any) => ({
@@ -16,7 +16,7 @@ export const getAvailableAssets = async (): Promise<IAsset[]> => {
             name: asset.name || 'Unknown Asset',
             ticker: asset.ticker,
             description: asset.description,
-            type: asset.type || 'CRYPTO',
+            type: asset.type || 'ECHANGE',
             exchange: asset.exchange || 'default',
             price: typeof asset.price === 'number' ? asset.price : parseFloat(asset.price || '0'),
             change24h: typeof asset.change24h === 'number' ? asset.change24h : parseFloat(asset.change24h || '0'),

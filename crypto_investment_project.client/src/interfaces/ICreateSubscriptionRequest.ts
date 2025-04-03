@@ -6,5 +6,5 @@ export default interface ICreateSubscriptionRequest {
     interval: string;
     amount: number;
     currency: string;
-    endDate?: Date;
+    endDate?: Date | null;
 }

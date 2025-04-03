@@ -135,11 +135,11 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         /// <summary>
-        /// Retrieves all transactions for a specific user
+        /// Retrieves all transactions for a specific subcription
         /// </summary>
-        /// <param name="subscription">User GUID</param>
-        /// <returns>Collection of transactions belonging to the user</returns>
-        /// <response code="200">Returns the user's transactions</response>
+        /// <param name="subscription">Subcription GUID</param>
+        /// <returns>Collection of transactions belonging to the subcription</returns>
+        /// <response code="200">Returns the subcription transactions</response>
         /// <response code="400">If the user ID is invalid</response>
         /// <response code="401">If the user is not authenticated</response>
         /// <response code="403">If the user is not authorized to view these subscriptions</response>

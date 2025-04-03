@@ -1,6 +1,6 @@
 ﻿namespace Domain.DTOs.Payment
 {
-    public class Invoice
+    public class PaymentDto
     {
         public required string Id { get; set; }
         public required DateTime CreatedAt { get; set; }

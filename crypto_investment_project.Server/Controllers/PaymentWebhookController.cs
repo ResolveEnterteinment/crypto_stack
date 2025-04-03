@@ -1,14 +1,16 @@
 using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
 using Application.Interfaces.Payment;
+using Domain.Constants;
 using Domain.DTOs.Event;
 using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Exceptions;
-using Infrastructure.Services;
+using Domain.Models.Subscription;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
+using MongoDB.Driver;
 using Polly;
 using Stripe;
 using System.Diagnostics;
@@ -97,7 +99,7 @@ namespace crypto_investment_project.Server.Controllers
                         return Ok(new { status = "Already processed" });
                     }
 
-                    IActionResult result;
+                    IActionResult result = Empty;
 
                     // Handle different event types
                     switch (stripeEvent.Type)
@@ -108,8 +110,14 @@ namespace crypto_investment_project.Server.Controllers
                         case "customer.subscription.created":
                             result = await HandleSubscriptionCreated(stripeEvent, correlationId);
                             break;
-                        case "invoice.paid":
-                            result = await HandleInvoicePaid(stripeEvent, correlationId);
+                        /*case "checkout.session.completed":
+                            result = await HandleCheckoutSessionCompletedAsync(stripeEvent);
+                            break;*/
+                        case "customer.subscription.updated":
+                            result = await HandleSubscriptionUpdatedAsync(stripeEvent);
+                            break;
+                        case "customer.subscription.deleted":
+                            result = await HandleSubscriptionDeletedAsync(stripeEvent);
                             break;
                         default:
                             result = HandleUnprocessedEventType(stripeEvent.Type);
@@ -224,6 +232,7 @@ namespace crypto_investment_project.Server.Controllers
 
                 // Cast event data to Subscription object
                 var subscription = stripeEvent.Data.Object as Subscription;
+
                 if (subscription == null)
                 {
                     throw new ValidationException("Invalid event data", new Dictionary<string, string[]>
@@ -327,6 +336,145 @@ namespace crypto_investment_project.Server.Controllers
                     "Stripe",
                     stripeEvent.Id);
             }
+        }
+        private async Task<IActionResult> HandleCheckoutSessionCompletedAsync(Event stripeEvent)
+        {
+            var session = stripeEvent.Data.Object as Stripe.Checkout.Session;
+
+            #region Validate
+
+            if (session == null)
+            {
+                return BadRequest(new { message = "Invalid event data: Expected Checkout.Session object" });
+            }
+
+            // Extract subscription ID from metadata
+            if (session.Metadata == null ||
+                !session.Metadata.TryGetValue("subscriptionId", out var subscriptionId) ||
+                string.IsNullOrEmpty(subscriptionId) ||
+                !Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
+            {
+                _logger.LogWarning("Missing or invalid subscriptionId in checkout session metadata");
+                return BadRequest(new { message = "Invalid metadata: Missing subscriptionId" });
+            }
+
+            #endregion
+
+            // Update subscription status to active
+            var updateResult = await _subscriptionService.UpdateSubscriptionStatusAsync(parsedSubscriptionId, SubscriptionStatus.Active);
+
+            if (updateResult == null || !updateResult.IsAcknowledged)
+            {
+                //TODO: retry with poly back-off or integrate poly back-off retry logic to base service
+            }
+
+            // If this was a one-time payment (not a subscription), we need to create a payment record
+            if (session.Mode == "payment" && !string.IsNullOrEmpty(session.PaymentIntentId))
+            {
+                // Extract user ID from metadata
+                if (!session.Metadata.TryGetValue("userId", out var userId) || string.IsNullOrEmpty(userId))
+                {
+                    _logger.LogWarning("Missing userId in checkout session metadata");
+                    return BadRequest(new { message = "Invalid metadata: Missing userId" });
+                }
+
+                // Create payment request
+                var paymentRequest = new PaymentIntentRequest
+                {
+                    UserId = userId,
+                    SubscriptionId = subscriptionId,
+                    Provider = "Stripe",
+                    PaymentId = session.PaymentIntentId,
+                    InvoiceId = session.InvoiceId,
+                    TotalAmount = session.AmountTotal.GetValueOrDefault() / 100m, // Convert from cents
+                    PaymentProviderFee = 0, // Will be updated when processing the charge
+                    PlatformFee = session.AmountTotal.GetValueOrDefault() / 100m * 0.01m, // 1% platform fee
+                    NetAmount = session.AmountTotal.GetValueOrDefault() / 100m * 0.99m, // Net after platform fee
+                    Currency = session.Currency?.ToUpperInvariant() ?? "USD",
+                    Status = "succeeded"
+                };
+
+                await _paymentService.ProcessPaymentIntentSucceededEvent(paymentRequest);
+            }
+
+            return Ok("Checkout session completed successfully");
+        }
+
+        private async Task<IActionResult> HandleSubscriptionUpdatedAsync(Event stripeEvent)
+        {
+            var stripeSubscription = stripeEvent.Data.Object as Stripe.Subscription;
+            if (stripeSubscription == null)
+            {
+                throw new ArgumentException("Invalid event data: Expected Subscription object");
+            }
+
+            // Find our subscription with this Stripe subscription ID
+            var filter = Builders<SubscriptionData>.Filter.Eq(s => s.ProviderSubscriptionId, stripeSubscription.Id);
+            var subscriptionData = await _subscriptionService.GetOneAsync(filter);
+
+            if (subscriptionData == null)
+            {
+                _logger.LogWarning("No subscription found with provider subscription ID: {ProviderSubscriptionId}", stripeSubscription.Id);
+                return BadRequest(new { error = "No matching subscription found" });
+            }
+
+            // Update based on subscription status
+            var updatedFields = new Dictionary<string, object>
+            {
+                ["NextDueDate"] = stripeSubscription.CurrentPeriodEnd
+            };
+
+            switch (stripeSubscription.Status)
+            {
+                case "active":
+                    updatedFields["Status"] = SubscriptionStatus.Active;
+                    break;
+                case "canceled":
+                case "unpaid":
+                case "past_due":
+                    updatedFields["Status"] = SubscriptionStatus.Cancelled;
+                    updatedFields["IsCancelled"] = true;
+                    break;
+                case "trialing":
+                case "incomplete":
+                case "incomplete_expired":
+                    updatedFields["Status"] = SubscriptionStatus.Pending;
+                    break;
+            }
+
+            await _subscriptionService.UpdateOneAsync(subscriptionData.Id, updatedFields);
+
+            return Ok("Subscription updated successfully");
+        }
+
+        private async Task<IActionResult> HandleSubscriptionDeletedAsync(Event stripeEvent)
+        {
+            var subscription = stripeEvent.Data.Object as Stripe.Subscription;
+            if (subscription == null)
+            {
+                throw new ArgumentException("Invalid event data: Expected Subscription object");
+            }
+
+            // Find our subscription with this Stripe subscription ID
+            var filter = Builders<Domain.Models.Subscription.SubscriptionData>.Filter.Eq(s => s.ProviderSubscriptionId, subscription.Id);
+            var subscriptionData = await _subscriptionService.GetOneAsync(filter);
+
+            if (subscriptionData == null)
+            {
+                _logger.LogWarning("No subscription found with provider subscription ID: {ProviderSubscriptionId}", subscription.Id);
+                return BadRequest(new { error = "No matching subscription found" });
+            }
+
+            // Mark subscription as cancelled
+            var updatedFields = new Dictionary<string, object>
+            {
+                ["Status"] = SubscriptionStatus.Cancelled,
+                ["IsCancelled"] = true
+            };
+
+            await _subscriptionService.UpdateOneAsync(subscriptionData.Id, updatedFields);
+
+            return Ok("Subscription cancelled successfully");
         }
 
         private IActionResult HandleUnprocessedEventType(string eventType)

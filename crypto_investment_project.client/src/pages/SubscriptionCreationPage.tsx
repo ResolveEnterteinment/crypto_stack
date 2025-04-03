@@ -1,117 +1,106 @@
-// src/pages/SubscriptionCreationPage.tsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Navbar from '../components/Navbar';
-import AssetAllocationForm from '../components/Subscription/AssetAllocationForm';
-import SubscriptionSummary from '../components/Subscription/SubscriptionSummary';
+import PlanDetailsStep from '../components/Subscription/PlanDetailsStep';
+import AssetAllocationStep from '../components/Subscription/AssetAllocationStep';
+import ReviewStep from '../components/Subscription/ReviewStep';
+import { getSupportedAssets } from '../services/asset';
 import { createSubscription } from '../services/subscription';
-import { getAvailableAssets } from '../services/asset';
+import { initiatePayment } from '../services/payment';
 import IAsset from '../interfaces/IAsset';
 import IAllocation from '../interfaces/IAllocation';
-import { initiatePayment } from '../services/payment';
-
-interface FormData {
-    interval: string;
-    amount: number;
-    currency: string;
-    endDate: Date | null;
-    allocations: Omit<IAllocation, 'id'>[];
-}
-
-const intervals = [
-    { value: 'ONCE', label: 'One-time payment' },
-    { value: 'DAILY', label: 'Daily' },
-    { value: 'WEEKLY', label: 'Weekly' },
-    { value: 'MONTHLY', label: 'Monthly' }
-];
+import ICreateSubscriptionRequest from '../interfaces/ICreateSubscriptionRequest';
 
 const SubscriptionCreationPage: React.FC = () => {
     const navigate = useNavigate();
     const { user } = useAuth();
 
     // Form state
-    const [formData, setFormData] = useState<FormData>({
+    const [formData, setFormData] = useState({
         interval: 'MONTHLY',
         amount: 100,
         currency: 'USD',
         endDate: null,
-        allocations: []
+        allocations: new Array <IAllocation>()
     });
 
     // UI state
-    const [availableAssets, setAvailableAssets] = useState<IAsset[]>([]);
+    const [step, setStep] = useState(1);
+    const [availableAssets, setAvailableAssets] = useState<IAsset[] | null>(null);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
-    const [currentStep, setCurrentStep] = useState(1);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState < String | null> (null);
 
     // Fetch available assets when component mounts
     useEffect(() => {
         if (!user || !user.id) {
-            navigate('/auth');
+            //navigate('/auth');
             return;
         }
 
         const fetchAssets = async () => {
             try {
-                const assets = await getAvailableAssets();
+                const assets = await getSupportedAssets();
                 setAvailableAssets(assets);
                 setLoading(false);
             } catch (err) {
                 console.error('Error fetching available assets:', err);
-                setError('Failed to load available cryptocurrencies. Please try again.');
+                setError('Failed to load available assets. Please try again.');
                 setLoading(false);
             }
         };
 
         fetchAssets();
-    }, [user, navigate]);
+    }, [user]);
 
-    // Form change handlers
-    const handleIntervalChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        setFormData({ ...formData, interval: e.target.value });
+    // Form update handler
+    const updateFormData = (fieldName:string, value: object) => {
+        setFormData(prev => ({
+            ...prev,
+            [fieldName]: value
+        }));
     };
 
-    const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = parseFloat(e.target.value);
-        if (!isNaN(value) && value > 0) {
-            setFormData({ ...formData, amount: value });
+    // Step navigation
+    const nextStep = () => {
+        // Validate current step before proceeding
+        if (step === 1) {
+            if (!formData.interval || formData.amount <= 0) {
+                setError('Please fill in all required fields with valid values.');
+                return;
+            }
+            setError(null);
+        } else if (step === 2) {
+            // Validate allocations
+            if (!formData.allocations.length) {
+                setError('Please select at least one asset for your portfolio.');
+                return;
+            }
+
+            const totalPercentage = formData.allocations.reduce(
+                (sum, allocation) => sum + allocation.percentAmount, 0
+            );
+
+            if (Math.abs(totalPercentage - 100) > 0.01) {
+                setError('Asset allocations must total exactly 100%.');
+                return;
+            }
+            setError(null);
         }
+
+        setStep(curr => Math.min(curr + 1, 3));
     };
 
-    const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const date = e.target.value ? new Date(e.target.value) : null;
-        setFormData({ ...formData, endDate: date });
-    };
-
-    const handleAllocationsChange = (allocations: Omit<IAllocation, 'id'>[]) => {
-        setFormData({ ...formData, allocations });
+    const prevStep = () => {
+        setStep(curr => Math.max(curr - 1, 1));
+        setError(null);
     };
 
     // Form submission
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-
+    const handleSubmit = async () => {
         if (!user?.id) {
             setError('You must be logged in to create a subscription');
-            return;
-        }
-
-        // Validate allocations total to 100%
-        const totalPercentage = formData.allocations.reduce(
-            (sum, allocation) => sum + allocation.percentAmount,
-            0
-        );
-
-        if (Math.abs(totalPercentage - 100) > 0.01) {
-            setError('Asset allocations must total exactly 100%');
-            return;
-        }
-
-        // Validate we have at least one allocation
-        if (formData.allocations.length === 0) {
-            setError('You must select at least one asset');
             return;
         }
 
@@ -120,7 +109,7 @@ const SubscriptionCreationPage: React.FC = () => {
             setError(null);
 
             // Create subscription in the backend
-            const subscriptionData = {
+            const subscriptionData: ICreateSubscriptionRequest = {
                 userId: user.id,
                 interval: formData.interval,
                 amount: formData.amount,
@@ -142,7 +131,7 @@ const SubscriptionCreationPage: React.FC = () => {
 
             // Redirect to Stripe checkout
             window.location.href = paymentUrl;
-        } catch (err: any) {
+        } catch (err:Error|any) {
             console.error('Error creating subscription:', err);
             setError(err.message || 'Failed to create subscription. Please try again.');
             setSubmitting(false);
@@ -153,183 +142,202 @@ const SubscriptionCreationPage: React.FC = () => {
     if (loading) {
         return (
             <>
-            <Navbar 
-          showProfile= {() => navigate('/profile')}
-showSettings = {() => navigate('/settings')}
-logout = {() => { }} 
-        />
-    < div className = "min-h-screen bg-gray-50 flex justify-center items-center p-4" >
-        <div className="text-center" >
-            <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" > </div>
-                < p className = "text-gray-500" > Loading...</p>
+                <Navbar
+                    showProfile={() => navigate('/profile')}
+                    showSettings={() => navigate('/settings')}
+                    logout={() => { }}
+                />
+                <div className="min-h-screen bg-gray-50 flex justify-center items-center p-4">
+                    <div className="text-center">
+                        <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <p className="text-gray-500">Loading available assets...</p>
                     </div>
-                    </div>
-                    </>
-    );
-  }
-
-return (
-    <>
-    <Navbar 
-        showProfile= {() => navigate('/profile')}
-showSettings = {() => navigate('/settings')}
-logout = {() => { }} 
-      />
-    < div className = "min-h-screen bg-gray-50 py-8 px-4 lg:px-10" >
-        <div className="max-w-4xl mx-auto bg-white rounded-lg shadow-md p-6" >
-            <h1 className="text-2xl font-bold mb-6" > Create Investment Plan </h1>
-
-{/* Progress indicator */ }
-<div className="mb-8" >
-    <div className="flex items-center justify-between" >
-        <div className={ `flex-1 h-2 ${currentStep >= 1 ? 'bg-blue-500' : 'bg-gray-200'}` }> </div>
-            < div className = {`flex-1 h-2 ${currentStep >= 2 ? 'bg-blue-500' : 'bg-gray-200'}`}> </div>
                 </div>
-                < div className = "flex justify-between mt-2 text-sm" >
-                    <div className={ currentStep >= 1 ? 'text-blue-500 font-medium' : 'text-gray-500' }> Plan Details </div>
-                        < div className = { currentStep >= 2 ? 'text-blue-500 font-medium' : 'text-gray-500'}> Asset Allocation </div>
-                            </div>
-                            </div>
-
-{/* Error message */ }
-{
-    error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" >
-            <p>{ error } </p>
-            </div>
-          )
-}
-
-<form onSubmit={ handleSubmit }>
-    {/* Step 1: Basic Plan Details */ }
-{
-    currentStep === 1 && (
-        <div className="space-y-6" >
-            <div>
-            <label className="block text-gray-700 font-medium mb-2" > Investment Frequency </label>
-                < select
-    value = { formData.interval }
-    onChange = { handleIntervalChange }
-    className = "w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-    required
-        >
-    {
-        intervals.map(option => (
-            <option key= { option.value } value = { option.value } >
-            { option.label }
-            </option>
-        ))
+            </>
+        );
     }
-        </select>
-        </div>
 
-        < div >
-        <label className="block text-gray-700 font-medium mb-2" > Investment Amount(USD) </label>
-            < div className = "relative" >
-                <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500" > $ </span>
-                    < input
-    type = "number"
-    min = "10"
-    step = "0.01"
-    value = { formData.amount }
-    onChange = { handleAmountChange }
-    className = "w-full p-3 pl-8 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-    required
-        />
-        </div>
-        < p className = "text-sm text-gray-500 mt-1" > Minimum investment: $10 </p>
-            </div>
-
-    {
-        formData.interval !== 'ONCE' && (
-            <div>
-            <label className="block text-gray-700 font-medium mb-2" > End Date(Optional) </label>
-                < input
-        type = "date"
-        value = { formData.endDate ? formData.endDate.toISOString().split('T')[0] : '' }
-        onChange = { handleEndDateChange }
-        min = { new Date().toISOString().split('T')[0] }
-        className = "w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+    return (
+        <>
+            <Navbar
+                showProfile={() => navigate('/profile')}
+                showSettings={() => navigate('/settings')}
+                logout={() => { }}
             />
-            <p className="text-sm text-gray-500 mt-1" > Leave empty for ongoing subscription </p>
+            <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+                <div className="max-w-3xl mx-auto">
+                    <div className="text-center mb-8">
+                        <h1 className="text-3xl font-bold text-gray-900">Create Your Investment Plan</h1>
+                        <p className="mt-2 text-lg text-gray-600">
+                            Customize your crypto portfolio with regular or one-time investments
+                        </p>
+                    </div>
+
+                    {/* Step progress indicator */}
+                    <div className="mb-10">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className={`flex-1 h-1 ${step >= 1 ? 'bg-blue-500' : 'bg-gray-200'}`}></div>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 1 ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-500'
+                                }`}>
+                                1
+                            </div>
+                            <div className={`flex-1 h-1 ${step >= 2 ? 'bg-blue-500' : 'bg-gray-200'}`}></div>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 2 ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-500'
+                                }`}>
+                                2
+                            </div>
+                            <div className={`flex-1 h-1 ${step >= 3 ? 'bg-blue-500' : 'bg-gray-200'}`}></div>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step >= 3 ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-500'
+                                }`}>
+                                3
+                            </div>
+                            <div className={`flex-1 h-1 ${step >= 3 ? 'bg-blue-500' : 'bg-gray-200'}`}></div>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                            <div className={step >= 1 ? 'text-blue-600 font-medium' : 'text-gray-500'}>
+                                Plan Details
+                            </div>
+                            <div className={step >= 2 ? 'text-blue-600 font-medium' : 'text-gray-500'}>
+                                Asset Allocation
+                            </div>
+                            <div className={step >= 3 ? 'text-blue-600 font-medium' : 'text-gray-500'}>
+                                Review & Confirm
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Error message */}
+                    {error && (
+                        <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6">
+                            <div className="flex">
+                                <div className="flex-shrink-0">
+                                    <svg className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                    </svg>
+                                </div>
+                                <div className="ml-3">
+                                    <p className="text-sm text-red-700">{error}</p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Content card */}
+                    <div className="bg-white shadow-lg rounded-lg overflow-hidden">
+                        <div className="p-6 sm:p-8">
+                            {/* Step 1: Plan Details */}
+                            {step === 1 && (
+                                <PlanDetailsStep
+                                    formData={formData}
+                                    updateFormData={updateFormData}
+                                />
+                            )}
+
+                            {/* Step 2: Asset Allocation */}
+                            {step === 2 && (
+                                <AssetAllocationStep
+                                    formData={formData}
+                                    updateFormData={updateFormData}
+                                    availableAssets={availableAssets}
+                                />
+                            )}
+
+                            {/* Step 3: Review & Confirm */}
+                            {step === 3 && (
+                                <ReviewStep
+                                    formData={formData}
+                                />
+                            )}
+
+                            {/* Navigation buttons */}
+                            <div className="flex justify-between mt-8 pt-6 border-t border-gray-200">
+                                {step > 1 ? (
+                                    <button
+                                        type="button"
+                                        onClick={prevStep}
+                                        className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-base font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                    >
+                                        <svg className="mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fillRule="evenodd" d="M9.707 14.707a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 1.414L7.414 9H15a1 1 0 110 2H7.414l2.293 2.293a1 1 0 010 1.414z" clipRule="evenodd" />
+                                        </svg>
+                                        Back
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={() => navigate(-1)}
+                                        className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-base font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                    >
+                                        Cancel
+                                    </button>
+                                )}
+
+                                {step < 3 ? (
+                                    <button
+                                        type="button"
+                                        onClick={nextStep}
+                                        className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                    >
+                                        Next
+                                        <svg className="ml-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fillRule="evenodd" d="M10.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L12.586 11H5a1 1 0 110-2h7.586l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                                        </svg>
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={handleSubmit}
+                                        disabled={submitting}
+                                        className={`inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white ${submitting ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500`}
+                                    >
+                                        {submitting ? (
+                                            <>
+                                                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                                Processing...
+                                            </>
+                                        ) : (
+                                            <>
+                                                Create Plan & Proceed to Payment
+                                                <svg className="ml-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                                </svg>
+                                            </>
+                                        )}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Help information */}
+                    <div className="mt-6 bg-blue-50 rounded-lg p-4">
+                        <h3 className="text-sm font-medium text-blue-800">How it works</h3>
+                        <ul className="mt-2 text-sm text-blue-700 space-y-1">
+                            <li className="flex items-start">
+                                <span className="mr-2">•</span>
+                                <span>Choose your investment frequency and amount</span>
+                            </li>
+                            <li className="flex items-start">
+                                <span className="mr-2">•</span>
+                                <span>Select which cryptocurrencies to include in your portfolio</span>
+                            </li>
+                            <li className="flex items-start">
+                                <span className="mr-2">•</span>
+                                <span>Review your plan and proceed to secure payment</span>
+                            </li>
+                            <li className="flex items-start">
+                                <span className="mr-2">•</span>
+                                <span>Your investment plan will start immediately after payment</span>
+                            </li>
+                        </ul>
+                    </div>
                 </div>
-                )}
-
-    <div className="flex justify-end mt-8" >
-        <button
-                    type="button"
-    onClick = {() => setCurrentStep(2)
-}
-className = "bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors"
-    >
-    Next: Choose Assets
-        </button>
-        </div>
-        </div>
-            )}
-
-{/* Step 2: Asset Allocation */ }
-{
-    currentStep === 2 && (
-        <div>
-        <AssetAllocationForm 
-                  availableAssets={ availableAssets }
-    allocations = { formData.allocations }
-    onChange = { handleAllocationsChange }
-        />
-
-        {
-            formData.allocations.length > 0 && (
-                <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-                    <h3 className="text-lg font-medium mb-4"> Your Plan Summary</ h3 >
-        <SubscriptionSummary
-                      interval={ formData.interval }
-    amount = { formData.amount }
-    currency = { formData.currency }
-    endDate = { formData.endDate }
-    allocations = { formData.allocations }
-        />
-        </div>
-                )
-}
-
-<div className="flex justify-between mt-8" >
-    <button
-                    type="button"
-onClick = {() => setCurrentStep(1)}
-className = "bg-gray-200 text-gray-700 py-3 px-6 rounded-lg hover:bg-gray-300 transition-colors"
-    >
-    Back
-    </button>
-    < button
-type = "submit"
-disabled = { submitting || formData.allocations.length === 0}
-className = {`${submitting || formData.allocations.length === 0
-        ? 'bg-blue-400 cursor-not-allowed'
-        : 'bg-blue-600 hover:bg-blue-700'
-    } text-white py-3 px-6 rounded-lg transition-colors`}
-                  >
-    {
-        submitting?(
-                      <div className = "flex items-center" >
-                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns = "http://www.w3.org/2000/svg" fill = "none" viewBox = "0 0 24 24" >
-                    <circle className="opacity-25" cx = "12" cy = "12" r = "10" stroke = "currentColor" strokeWidth = "4" > </circle>
-                        < path className = "opacity-75" fill = "currentColor" d = "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" > </path>
-                            </svg>
-                        Processing...
-                      </ div >
-                    ) : (
-    'Create Investment Plan'
-)}
-</button>
-    </div>
-    </div>
-            )}
-</form>
-    </div>
-    </div>
-    </>
-  );
+            </div>
+        </>
+    );
 };
 
 export default SubscriptionCreationPage;

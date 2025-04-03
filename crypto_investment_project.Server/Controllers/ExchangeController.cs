@@ -110,6 +110,7 @@ namespace crypto_investment_project.Server.Controllers
                         SubscriptionId = subscriptionId,
                         Provider = paymentRequest.Provider,
                         PaymentProviderId = paymentRequest.PaymentId,
+                        InvoiceId = paymentRequest.InvoiceId,
                         PaymentProviderFee = paymentRequest.PaymentProviderFee,
                         TotalAmount = paymentRequest.TotalAmount,
                         PlatformFee = paymentRequest.PlatformFee,

@@ -1,6 +1,6 @@
 ﻿namespace Domain.DTOs.Payment
 {
-    public class Subscription
+    public class PaymentSubscriptionDto
     {
         public DateTime NextDueDate { get; set; }
     }

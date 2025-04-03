@@ -6,6 +6,7 @@
         public required Guid SubscriptionId { get; set; }
         public required string Provider { get; set; }
         public required string PaymentProviderId { get; set; }
+        public required string InvoiceId { get; set; }
         public required decimal TotalAmount { get; set; }
         public required decimal PaymentProviderFee { get; set; }
         public required decimal PlatformFee { get; set; }

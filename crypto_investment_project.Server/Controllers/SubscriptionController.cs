@@ -216,7 +216,7 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // Process the request
-                    var subscriptionCreateResult = await _subscriptionService.Create(subscriptionRequest);
+                    var subscriptionCreateResult = await _subscriptionService.CreateAsync(subscriptionRequest);
 
                     if (!subscriptionCreateResult.IsSuccess)
                     {
@@ -347,7 +347,7 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // Process the request
-                    var subscriptionUpdateResult = await _subscriptionService.Update(subscriptionId, updateRequest);
+                    var subscriptionUpdateResult = await _subscriptionService.UpdateAsync(subscriptionId, updateRequest);
 
                     if (!subscriptionUpdateResult.IsSuccess)
                     {

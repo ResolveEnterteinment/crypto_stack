@@ -34,6 +34,7 @@ namespace crypto_investment_project.Server.Controllers
                 SubscriptionId = Guid.Parse(paymentRequest.SubscriptionId),
                 Provider = "Stripe",
                 PaymentProviderId = paymentRequest.PaymentId,
+                InvoiceId = paymentRequest.InvoiceId,
                 PaymentProviderFee = paymentRequest.PaymentProviderFee,
                 TotalAmount = paymentRequest.TotalAmount,
                 PlatformFee = paymentRequest.PlatformFee,
@@ -55,7 +56,7 @@ namespace crypto_investment_project.Server.Controllers
         [HttpPost]
         [Route("newAsset")]
         [IgnoreAntiforgeryToken]
-        public async Task<IActionResult> NewAsset([FromBody] AssetData assetData)
+        public async Task<IActionResult> NewAsset([FromBody] Domain.Models.Asset.AssetData assetData)
         {
             if (assetData is null)
             {
@@ -75,7 +76,7 @@ namespace crypto_investment_project.Server.Controllers
         [HttpPost]
         [Route("newSubscription")]
         [IgnoreAntiforgeryToken]
-        public async Task<IActionResult> NewSubscription([FromBody] SubscriptionData subscriptionData)
+        public async Task<IActionResult> NewSubscription([FromBody] Domain.Models.Subscription.SubscriptionData subscriptionData)
         {
             if (subscriptionData is null)
             {

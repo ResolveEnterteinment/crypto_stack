@@ -1,4 +1,5 @@
-﻿using Application.Contracts.Requests.Payment;
+﻿using Application.Contracts.Requests.Asset;
+using Application.Contracts.Requests.Payment;
 using Application.Contracts.Requests.Subscription;
 using Domain.Constants;
 using FluentValidation;
@@ -79,6 +80,7 @@ namespace Application.Validation
             }
         }
     }
+
     /// <summary>
     /// Validator for SubscriptionCreateRequest
     /// </summary>
@@ -158,23 +160,6 @@ namespace Application.Validation
     }
 
     /// <summary>
-    /// Validator for AllocationRequest
-    /// </summary>
-    public class AllocationValidator : AbstractValidator<AllocationRequest>
-    {
-        public AllocationValidator()
-        {
-            RuleFor(x => x.AssetId)
-                .NotEmpty().WithMessage("AssetId is required")
-                .Must(id => Guid.TryParse(id, out _)).WithMessage("AssetId must be a valid Guid");
-
-            RuleFor(x => x.PercentAmount)
-                .GreaterThan(0).WithMessage("PercentAmount must be greater than zero")
-                .LessThanOrEqualTo(100).WithMessage("PercentAmount cannot exceed 100");
-        }
-    }
-
-    /// <summary>
     /// Validator for SubscriptionUpdateRequest
     /// </summary>
     public class SubscriptionUpdateRequestValidator : AbstractValidator<SubscriptionUpdateRequest>
@@ -219,6 +204,44 @@ namespace Application.Validation
 
             var total = allocations.Sum(a => a.PercentAmount);
             return total == 100; // Exact match required
+        }
+    }
+
+    /// <summary>
+    /// Validator for AssetCreateRequest
+    /// </summary>
+    public class AssetCreateRequestValidator : AbstractValidator<AssetCreateRequest>
+    {
+        public AssetCreateRequestValidator()
+        {
+
+        }
+    }
+
+    /// <summary>
+    /// Validator for AssetUpdateRequest
+    /// </summary>
+    public class AssetUpdateRequestValidator : AbstractValidator<AssetUpdateRequest>
+    {
+        public AssetUpdateRequestValidator()
+        {
+        }
+    }
+
+    /// <summary>
+    /// Validator for AllocationRequest
+    /// </summary>
+    public class AllocationValidator : AbstractValidator<AllocationRequest>
+    {
+        public AllocationValidator()
+        {
+            RuleFor(x => x.AssetId)
+                .NotEmpty().WithMessage("AssetId is required")
+                .Must(id => Guid.TryParse(id, out _)).WithMessage("AssetId must be a valid Guid");
+
+            RuleFor(x => x.PercentAmount)
+                .GreaterThan(0).WithMessage("PercentAmount must be greater than zero")
+                .LessThanOrEqualTo(100).WithMessage("PercentAmount cannot exceed 100");
         }
     }
 
