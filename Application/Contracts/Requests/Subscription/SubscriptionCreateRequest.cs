@@ -4,23 +4,16 @@ namespace Application.Contracts.Requests.Subscription
 {
     public class SubscriptionCreateRequest
     {
-        [Required(ErrorMessage = "Provider is required.")]
-        public required string Provider { get; set; }
         [Required(ErrorMessage = "UserId is required.")]
         public required string UserId { get; set; }
-
         [Required(ErrorMessage = "Allocations are required."), MinLength(1)]
         public required IEnumerable<AllocationRequest> Allocations { get; set; }
-
         [Required(ErrorMessage = "Interval is required.")]
         public required string Interval { get; set; }
-
         [Range(1, int.MaxValue, ErrorMessage = "Amount must be greater than zero.")]
         public required int Amount { get; set; } = 0;
         public required string Currency { get; set; }
-
         public DateTime? EndDate { get; set; } = null;
-        public bool IsCancelled { get; set; } = false;
     }
 
     public class AllocationRequest

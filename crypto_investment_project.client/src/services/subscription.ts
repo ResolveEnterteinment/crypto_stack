@@ -1,9 +1,10 @@
-﻿// src/services/subscription.ts
+﻿// src/services/subscription.ts - Fixed version
 import api from "./api";
 import ISubscription from "../interfaces/ISubscription";
 import ITransaction from "../interfaces/ITransaction";
 import ICreateSubscriptionRequest from "../interfaces/ICreateSubscriptionRequest";
 import IUpdateSubscriptionRequest from "../interfaces/IUpdateSubscriptionRequest";
+import { logApiError } from "../utils/apiErrorHandler";
 
 /**
  * Fetches all subscriptions for a user
@@ -17,7 +18,7 @@ export const getSubscriptions = async (userId: string): Promise<ISubscription[]>
     }
 
     try {
-        const { data } = await api.post(`/Subscription/user/${userId}`);
+        const { data } = await api.get(`/Subscription/user/${userId}`);
 
         // Process dates and ensure proper typing
         const processedData = Array.isArray(data) ? data.map((subscription: any) => ({
@@ -36,113 +37,7 @@ export const getSubscriptions = async (userId: string): Promise<ISubscription[]>
 
         return processedData;
     } catch (error) {
-        console.error("Error fetching subscriptions:", error);
-        throw error;
-    }
-};
-
-/**
- * Gets a single subscription by ID
- * @param subscriptionId The ID of the subscription
- * @returns Promise with the subscription object
- */
-export const getSubscription = async (subscriptionId: string): Promise<ISubscription> => {
-    if (!subscriptionId) {
-        console.error("getSubscription called with undefined subscriptionId");
-        return Promise.reject(new Error("Subscription ID is required"));
-    }
-
-    try {
-        const response = await api.get(`/Subscription/${subscriptionId}`);
-
-        // Process dates and ensure proper typing
-        const subscription = response.data;
-        return {
-            ...subscription,
-            nextDueDate: subscription.nextDueDate ? new Date(subscription.nextDueDate) : null,
-            endDate: subscription.endDate ? new Date(subscription.endDate) : null,
-            amount: typeof subscription.amount === 'number' ? subscription.amount : parseFloat(subscription.amount),
-            totalInvestments: typeof subscription.totalInvestments === 'number'
-                ? subscription.totalInvestments
-                : parseFloat(subscription.totalInvestments || '0'),
-            isCancelled: Boolean(subscription.isCancelled)
-        };
-    } catch (error) {
-        console.error(`Error fetching subscription ${subscriptionId}:`, error);
-        throw error;
-    }
-};
-
-/**
- * Fetches all transaction of a subscription
- * @param subscriptionId The ID of the subscription
- * @returns Promise with array of transaction objects
- */
-export const getTransactions = async (subscriptionId: string): Promise<ITransaction[]> => {
-    if (!subscriptionId) {
-        console.error("getTransactions called with undefined subscriptionId");
-        return Promise.reject(new Error("Subscription ID is required"));
-    }
-
-    try {
-        const { data } = await api.post(`/Transaction/subscription/${subscriptionId}`);
-
-        // Process dates and ensure proper typing
-        const processedData = Array.isArray(data) ? data.map((transaction: ITransaction) => ({
-            ...transaction,
-            createdAt: new Date(transaction.createdAt),
-            // Ensure quantity is a number
-            quantity: typeof transaction.quantity === 'number'
-                ? transaction.quantity
-                : parseFloat(transaction.quantity),
-            // Ensure quoteQuantity is a number
-            quoteQuantity: typeof transaction.quoteQuantity === 'number'
-                ? transaction.quoteQuantity
-                : parseFloat(transaction.quoteQuantity)
-        })) : [];
-
-        return processedData;
-    } catch (error) {
-        console.error("Error fetching transactions:", error);
-        throw error;
-    }
-};
-
-/**
- * Updates a subscription
- * @param subscriptionId The ID of the subscription to update
- * @param updateFields An object containing the fields to update
- * @returns Promise
- */
-export const updateSubscription = async (
-    subscriptionId: string,
-    updateFields: IUpdateSubscriptionRequest
-): Promise<void> => {
-    if (!subscriptionId) {
-        console.error("updateSubscription called with undefined subscriptionId");
-        return Promise.reject(new Error("Subscription ID is required"));
-    }
-
-    try {
-        // Generate a unique idempotency key
-        const idempotencyKey = `update-subscription-${subscriptionId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-
-        // Get CSRF token if available
-        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-
-        const headers: Record<string, string> = {
-            'X-Idempotency-Key': idempotencyKey
-        };
-
-        if (csrfToken) {
-            headers['X-CSRF-TOKEN'] = csrfToken;
-        }
-
-        const response = await api.put(`/Subscription/update/${subscriptionId}`, updateFields, { headers });
-
-        return response.data;
-    } catch (error) {
-        console.error(`Error updating subscription ${subscriptionId}:`, error);
+        logApiError(error, "Fetch Subscriptions Error");
         throw error;
     }
 };
@@ -199,16 +94,101 @@ export const createSubscription = async (subscriptionData: ICreateSubscriptionRe
             headers['X-CSRF-TOKEN'] = csrfToken;
         }
 
-        const response = await api.post('/Subscription/new', subscriptionData, { headers });
+        // Fix: Format request payload to match the server's expected format
+        const requestPayload = {
+            userId: subscriptionData.userId,
+            // Fix: Ensure allocations follow the expected format
+            allocations: subscriptionData.allocations.map(allocation => ({
+                assetId: allocation.assetId,
+                percentAmount: Math.round(allocation.percentAmount) // Convert to integer if needed
+            })),
+            interval: subscriptionData.interval.toUpperCase(), // Ensure uppercase for constants
+            amount: subscriptionData.amount, // Send as decimal
+            currency: subscriptionData.currency,
+            endDate: subscriptionData.endDate ? subscriptionData.endDate.toISOString() : null
+        };
 
-        if (!response.data || !response.data.id) {
-            throw new Error("Failed to create subscription - no ID returned from server");
+        // Log the request for debugging
+        console.log("Creating subscription with payload:", JSON.stringify(requestPayload, null, 2));
+
+        const response = await api.post('/Subscription/new', requestPayload, { headers });
+
+        if (!response.data) {
+            throw new Error("Server returned empty response");
         }
 
-        return response.data.id;
-    } catch (error: any) {
-        console.error('Error creating subscription:', error);
-        throw new Error(error.response?.data?.message || error.message || "Failed to create subscription");
+        // Handle different response formats
+        let subscriptionId;
+        if (response.data.id) {
+            subscriptionId = response.data.id;
+        } else if (response.data.data && response.data.data.id) {
+            subscriptionId = response.data.data.id;
+        } else if (typeof response.data === 'string') {
+            // Some APIs return the ID directly as a string
+            subscriptionId = response.data;
+        } else {
+            console.error("Unexpected response format:", response.data);
+            throw new Error("Failed to extract subscription ID from response");
+        }
+
+        return subscriptionId;
+    } catch (error) {
+        logApiError(error, "Create Subscription Error");
+        throw error;
+    }
+};
+
+/**
+ * Updates a subscription
+ * @param subscriptionId The ID of the subscription to update
+ * @param updateFields An object containing the fields to update
+ * @returns Promise
+ */
+export const updateSubscription = async (subscriptionId: string, updateFields: IUpdateSubscriptionRequest): Promise<void> => {
+    if (!subscriptionId) {
+        console.error("updateSubscription called with undefined subscriptionId");
+        return Promise.reject(new Error("Subscription ID is required"));
+    }
+
+    try {
+        // Generate a unique idempotency key
+        const idempotencyKey = `update-subscription-${subscriptionId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+
+        // Get CSRF token if available
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+        const headers: Record<string, string> = {
+            'X-Idempotency-Key': idempotencyKey
+        };
+
+        if (csrfToken) {
+            headers['X-CSRF-TOKEN'] = csrfToken;
+        }
+
+        // Fix: Format update fields properly
+        const requestPayload = { ...updateFields };
+
+        if (updateFields.allocations) {
+            requestPayload.allocations = updateFields.allocations.map(allocation => ({
+                assetId: allocation.assetId,
+                percentAmount: Math.round(allocation.percentAmount)
+            }));
+        }
+
+        if (updateFields.interval) {
+            requestPayload.interval = updateFields.interval.toUpperCase();
+        }
+
+        if (updateFields.endDate) {
+            requestPayload.endDate = updateFields.endDate.toISOString();
+        }
+
+        const response = await api.put(`/Subscription/update/${subscriptionId}`, requestPayload, { headers });
+
+        return response.data;
+    } catch (error) {
+        logApiError(error, "Update Subscription Error");
+        throw error;
     }
 };
 
@@ -242,7 +222,7 @@ export const cancelSubscription = async (subscriptionId: string): Promise<void> 
 
         return response.data;
     } catch (error) {
-        console.error(`Error cancelling subscription ${subscriptionId}:`, error);
+        logApiError(error, "Cancel Subscription Error");
         throw error;
     }
 };
@@ -252,7 +232,7 @@ export const cancelSubscription = async (subscriptionId: string): Promise<void> 
  * @param subscriptionId The ID of the subscription
  * @returns Promise with transaction history
  */
-export const getSubscriptionTransactions = async (subscriptionId: string): Promise<any[]> => {
+export const getTransactions = async (subscriptionId: string): Promise<ITransaction[]> => {
     if (!subscriptionId) {
         console.error("getSubscriptionTransactions called with undefined subscriptionId");
         return Promise.reject(new Error("Subscription ID is required"));

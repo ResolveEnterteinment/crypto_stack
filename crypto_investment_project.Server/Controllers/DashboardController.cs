@@ -5,6 +5,7 @@ using Domain.DTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using System.Security.Claims;
 
 namespace crypto_investment_project.Server.Controllers
 {
@@ -32,6 +33,17 @@ namespace crypto_investment_project.Server.Controllers
             {
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid user id.").ToActionResult(this);
             }
+            // Authorization check - verify current user can create this subscription
+            var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var isAdmin = User.IsInRole("ADMIN");
+
+            if (!isAdmin && user != currentUserId)
+            {
+                _logger.LogWarning("Unauthorized attempt to get dashboard data for user {TargetUserId} by user {CurrentUserId}",
+                    user, currentUserId);
+                return Forbid();
+            }
+
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var dashboardResult = await _dashboardService.GetDashboardDataAsync(userId);
             if (!dashboardResult.IsSuccess)

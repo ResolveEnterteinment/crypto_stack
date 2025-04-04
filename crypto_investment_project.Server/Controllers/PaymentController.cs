@@ -41,7 +41,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <param name="request">Checkout session request</param>
         /// <returns>Checkout session URL</returns>
         [HttpPost("create-checkout-session")]
-        [Authorize]
+        [Authorize(Roles = "USER")]
         [ValidateAntiForgeryToken]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(typeof(CheckoutSessionResponse), StatusCodes.Status200OK)]

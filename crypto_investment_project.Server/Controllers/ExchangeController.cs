@@ -14,7 +14,7 @@ namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
     [ApiVersion("1.0")]
-    [Route("api/v{version:apiVersion}/[controller]")]
+    [Route("api/[controller]")]
     [Produces("application/json")]
     public class ExchangeController : ControllerBase
     {

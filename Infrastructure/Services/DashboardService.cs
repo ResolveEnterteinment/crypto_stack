@@ -57,7 +57,7 @@ namespace Infrastructure.Services
             {
                 string cacheKey = string.Format(CACHE_KEY_DASHBOARD, userId);
 
-                return await GetOrCreateCachedItemAsync<ResultWrapper<DashboardDto>>(
+                return await GetOrCreateCachedItemAsync(
                     cacheKey,
                     async () =>
                     {

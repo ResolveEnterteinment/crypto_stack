@@ -1,4 +1,5 @@
-﻿using Application.Contracts.Requests.Payment;
+﻿using Application.Contracts.Requests.Asset;
+using Application.Contracts.Requests.Payment;
 using Application.Contracts.Requests.Subscription;
 using Application.Validation;
 using FluentValidation;
@@ -16,6 +17,8 @@ namespace Application.Extensions
             // Register all validators
             services.AddScoped<IValidator<SubscriptionCreateRequest>, SubscriptionCreateRequestValidator>();
             services.AddScoped<IValidator<SubscriptionUpdateRequest>, SubscriptionUpdateRequestValidator>();
+            services.AddScoped<IValidator<AssetCreateRequest>, AssetCreateRequestValidator>();
+            services.AddScoped<IValidator<AssetUpdateRequest>, AssetUpdateRequestValidator>();
             services.AddScoped<IValidator<PaymentIntentRequest>, PaymentIntentRequestValidator>();
             services.AddScoped<IValidator<ChargeRequest>, ChargeRequestValidator>();
             services.AddScoped<IValidator<Contracts.Requests.Auth.LoginRequest>, LoginRequestValidator>();

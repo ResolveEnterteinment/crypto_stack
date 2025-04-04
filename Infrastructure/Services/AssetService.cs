@@ -351,6 +351,7 @@ namespace Infrastructure.Services
                         }
                         var result = assets.Select(a => new AssetDto
                         {
+                            Id = a.Id,
                             Name = a.Name,
                             Ticker = a.Ticker,
                             Symbol = a.Symbol,

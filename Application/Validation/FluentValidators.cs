@@ -92,10 +92,6 @@ namespace Application.Validation
                 .NotEmpty().WithMessage("UserId is required")
                 .Must(id => Guid.TryParse(id, out _)).WithMessage("UserId must be a valid Guid");
 
-            RuleFor(x => x.Provider)
-                .NotEmpty().WithMessage("Provider is required")
-                .MaximumLength(50).WithMessage("Provider name cannot exceed 50 characters");
-
             RuleFor(x => x.Allocations)
                 .NotEmpty().WithMessage("At least one allocation is required")
                 .Must(allocations => allocations.Any()).WithMessage("At least one allocation is required");

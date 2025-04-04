@@ -49,7 +49,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="401">If the user is not authenticated</response>
         /// <response code="403">If the user is not authorized to view these subscriptions</response>
         /// <response code="404">If the user is not found</response>
-        [HttpPost]
+        [HttpGet]
         [Route("user/{user}")]
         [IgnoreAntiforgeryToken]
         [Authorize(Roles = "USER")]
@@ -146,7 +146,8 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="422">If the request validation fails</response>
         [HttpPost]
         [Route("new")]
-        [ValidateAntiForgeryToken]
+        //[ValidateAntiForgeryToken]
+        [IgnoreAntiforgeryToken]
         [Authorize(Roles = "USER")]
         [EnableRateLimiting("heavyOperations")]
         [ProducesResponseType(StatusCodes.Status201Created)]

@@ -83,7 +83,7 @@ export const initiatePayment = async (paymentData: PaymentRequestData): Promise<
         const cancelUrl = paymentData.cancelUrl ||
             `${baseUrl}/payment/cancel?subscription_id=${paymentData.subscriptionId}`;
 
-        const response = await api.post('/v1/Payment/create-checkout-session', {
+        const response = await api.post('/Payment/create-checkout-session', {
             subscriptionId: paymentData.subscriptionId,
             userId: paymentData.userId,
             amount: paymentData.amount,
@@ -118,7 +118,7 @@ export const getPaymentStatus = async (paymentId: string): Promise<PaymentStatus
     }
 
     try {
-        const { data } = await api.get(`/v1/Payment/status/${paymentId}`);
+        const { data } = await api.get(`/Payment/status/${paymentId}`);
         return data;
     } catch (error) {
         console.error(`Error fetching payment status for ${paymentId}:`, error);
@@ -137,7 +137,7 @@ export const getSubscriptionPaymentStatus = async (subscriptionId: string): Prom
     }
 
     try {
-        const { data } = await api.get(`/v1/Payment/subscription/${subscriptionId}/status`);
+        const { data } = await api.get(`/Payment/subscription/${subscriptionId}/status`);
         return data;
     } catch (error: any) {
         // If 404, the subscription might not have a payment yet
@@ -168,7 +168,7 @@ export const cancelPayment = async (paymentId: string): Promise<PaymentCancelRes
             headers['X-CSRF-TOKEN'] = csrfToken;
         }
 
-        const { data } = await api.post(`/v1/Payment/cancel/${paymentId}`, null, { headers });
+        const { data } = await api.post(`/Payment/cancel/${paymentId}`, null, { headers });
         return data;
     } catch (error) {
         console.error(`Error cancelling payment ${paymentId}:`, error);

@@ -10,6 +10,7 @@ import { getDashboardData, IDashboardData } from "../services/dashboard";
 import { getSubscriptions, getTransactions, updateSubscription } from "../services/subscription";
 import ISubscription from "../interfaces/ISubscription";
 import ITransaction from "../interfaces/ITransaction";
+import ApiTestPanel from '../components/DevTools/ApiTestPanel';
 
 const DashboardPage: React.FC = () => {
     // Get authenticated user and navigation
@@ -400,6 +401,7 @@ const DashboardPage: React.FC = () => {
                     </div>
                 )}
             </div>
+            <ApiTestPanel />
         </>
     );
 };

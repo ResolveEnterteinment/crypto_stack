@@ -1,4 +1,4 @@
-// src/pages/SubscriptionCreationPage.tsx
+// src/pages/SubscriptionCreationPage.tsx - Enhanced Version
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -9,8 +9,38 @@ import ReviewStep from '../components/Subscription/ReviewStep';
 import { getSupportedAssets } from '../services/asset';
 import { createSubscription } from '../services/subscription';
 import { initiatePayment } from '../services/payment';
+import { formatApiError } from '../utils/apiErrorHandler';
 import IAsset from '../interfaces/IAsset';
 import IAllocation from '../interfaces/IAllocation';
+
+// Error feedback component with improved UX
+const ErrorFeedback: React.FC<{ error: string | null; onDismiss: () => void }> = ({ error, onDismiss }) => {
+    if (!error) return null;
+
+    return (
+        <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 relative">
+            <button
+                onClick={onDismiss}
+                className="absolute top-2 right-2 text-red-500 hover:text-red-700"
+                aria-label="Dismiss error"
+            >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+            <div className="flex">
+                <div className="flex-shrink-0">
+                    <svg className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                </div>
+                <div className="ml-3">
+                    <p className="text-sm text-red-700">{error}</p>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const SubscriptionCreationPage: React.FC = () => {
     const navigate = useNavigate();
@@ -20,6 +50,7 @@ const SubscriptionCreationPage: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [availableAssets, setAvailableAssets] = useState<IAsset[]>([]);
     const [paymentProcessing, setPaymentProcessing] = useState<boolean>(false);
+    const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
     // Form data state with default values
     const [formData, setFormData] = useState({
@@ -31,14 +62,27 @@ const SubscriptionCreationPage: React.FC = () => {
         allocations: [] as Omit<IAllocation, 'id'>[]
     });
 
+    // Reset error when changing steps
+    useEffect(() => {
+        setError(null);
+        setValidationErrors([]);
+    }, [currentStep]);
+
     // Load available assets on component mount
     useEffect(() => {
         const loadAssets = async () => {
             try {
                 setIsLoading(true);
                 const assets = await getSupportedAssets();
-                setAvailableAssets(assets);
-                setIsLoading(false);
+
+                if (assets && assets.length > 0) {
+                    setAvailableAssets(assets);
+                    setIsLoading(false);
+                } else {
+                    // If no assets, show an error
+                    setError("No investment assets are currently available. Please try again later.");
+                    setIsLoading(false);
+                }
             } catch (error) {
                 console.error('Error loading assets:', error);
                 setError('Failed to load available assets. Please try again later.');
@@ -70,8 +114,10 @@ const SubscriptionCreationPage: React.FC = () => {
     // Move to the next step
     const goToNextStep = () => {
         if (currentStep < 3) {
-            setCurrentStep(currentStep + 1);
-            window.scrollTo(0, 0);
+            if (validateCurrentStep()) {
+                setCurrentStep(currentStep + 1);
+                window.scrollTo(0, 0);
+            }
         }
     };
 
@@ -86,22 +132,30 @@ const SubscriptionCreationPage: React.FC = () => {
     // Validate current step
     const validateCurrentStep = (): boolean => {
         setError(null);
+        setValidationErrors([]);
+        const errors: string[] = [];
 
         switch (currentStep) {
             case 1: // Plan details
                 if (!formData.interval) {
-                    setError('Please select an investment frequency');
-                    return false;
+                    errors.push('Please select an investment frequency');
                 }
                 if (!formData.amount || formData.amount <= 0) {
-                    setError('Please enter a valid amount');
-                    return false;
+                    errors.push('Please enter a valid amount');
+                }
+                if (formData.amount < 10) {
+                    errors.push('Minimum investment amount is $10');
+                }
+                if (formData.interval !== 'ONCE' && formData.endDate) {
+                    const today = new Date();
+                    if (formData.endDate <= today) {
+                        errors.push('End date must be in the future');
+                    }
                 }
                 break;
             case 2: // Asset allocation
                 if (formData.allocations.length === 0) {
-                    setError('Please add at least one asset allocation');
-                    return false;
+                    errors.push('Please add at least one asset allocation');
                 }
 
                 // Check if allocations sum to 100%
@@ -110,15 +164,39 @@ const SubscriptionCreationPage: React.FC = () => {
                 );
 
                 if (Math.abs(totalPercent - 100) > 0.01) {
-                    setError('Asset allocations must sum to 100%');
-                    return false;
+                    errors.push(`Asset allocations total ${totalPercent.toFixed(1)}%, but must sum to 100%`);
                 }
+
+                // Validate that each allocation has required properties
+                formData.allocations.forEach((allocation, index) => {
+                    if (!allocation.assetId) {
+                        errors.push(`Allocation #${index + 1} is missing asset information`);
+                    }
+                    if (!allocation.percentAmount || allocation.percentAmount <= 0) {
+                        errors.push(`Allocation #${index + 1} has invalid percentage amount`);
+                    }
+                });
                 break;
             case 3: // Review
-                // Nothing to validate here, handled in submit
+                // Final validation check before submission
+                if (!formData.userId) {
+                    errors.push('User information is missing. Please try logging in again.');
+                }
+                if (formData.allocations.length === 0) {
+                    errors.push('Your investment plan requires at least one asset allocation');
+                }
+                if (!formData.amount || formData.amount < 10) {
+                    errors.push('Invalid investment amount');
+                }
                 break;
             default:
                 break;
+        }
+
+        if (errors.length > 0) {
+            setValidationErrors(errors);
+            setError(errors.join('. '));
+            return false;
         }
 
         return true;
@@ -139,35 +217,79 @@ const SubscriptionCreationPage: React.FC = () => {
 
         try {
             setPaymentProcessing(true);
+            setError(null);
 
-            // Create subscription
-            const subscriptionId = await createSubscription({
+            // Format request payload
+            const subscriptionRequest = {
                 userId: formData.userId,
                 allocations: formData.allocations,
                 interval: formData.interval,
                 amount: formData.amount,
                 currency: formData.currency,
                 endDate: formData.endDate
-            });
+            };
 
-            if (!subscriptionId) {
-                throw new Error('Failed to create subscription');
+            // Create subscription with improved error handling
+            let subscriptionId;
+            try {
+                subscriptionId = await createSubscription(subscriptionRequest);
+
+                if (!subscriptionId) {
+                    throw new Error('Server returned empty subscription ID');
+                }
+
+                console.log("Subscription created successfully with ID:", subscriptionId);
+            } catch (subscriptionError: any) {
+                console.error('Subscription creation error:', subscriptionError);
+                // Format user-friendly error message
+                const errorMessage = formatApiError(subscriptionError);
+                throw new Error(`Subscription creation failed: ${errorMessage}`);
             }
 
-            // Initialize payment
-            const checkoutUrl = await initiatePayment({
-                subscriptionId,
-                userId: formData.userId,
-                amount: formData.amount,
-                currency: formData.currency,
-                isRecurring: formData.interval !== 'ONCE'
-            });
+            // Initialize payment with the subscription ID
+            try {
+                const paymentRequest = {
+                    subscriptionId,
+                    userId: formData.userId,
+                    amount: formData.amount,
+                    currency: formData.currency,
+                    isRecurring: formData.interval !== 'ONCE',
+                    // Add return URLs with better error handling
+                    returnUrl: window.location.origin + `/payment/success?subscription_id=${subscriptionId}&amount=${formData.amount}&currency=${formData.currency}`,
+                    cancelUrl: window.location.origin + `/payment/cancel?subscription_id=${subscriptionId}`
+                };
 
-            // Redirect to checkout
-            window.location.href = checkoutUrl;
+                const checkoutUrl = await initiatePayment(paymentRequest);
+
+                if (!checkoutUrl) {
+                    throw new Error('Payment initialization returned empty checkout URL');
+                }
+
+                // Save current transaction state to session storage for recovery
+                sessionStorage.setItem('pendingSubscription', JSON.stringify({
+                    subscriptionId,
+                    timestamp: Date.now(),
+                    amount: formData.amount,
+                    currency: formData.currency
+                }));
+
+                // Redirect to checkout
+                window.location.href = checkoutUrl;
+            } catch (paymentError: any) {
+                console.error('Payment initialization error:', paymentError);
+                // Format user-friendly error message
+                const errorMessage = formatApiError(paymentError);
+                throw new Error(`Payment initialization failed: ${errorMessage}`);
+            }
         } catch (error: any) {
-            console.error('Error creating subscription:', error);
+            console.error('Error in subscription creation flow:', error);
+
+            // Show detailed error to user
             setError(error.message || 'Failed to create subscription. Please try again.');
+
+            // Scroll to error message for visibility
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+
             setPaymentProcessing(false);
         }
     };
@@ -211,7 +333,7 @@ const SubscriptionCreationPage: React.FC = () => {
                 <div className="min-h-screen bg-gray-50 flex justify-center items-center">
                     <div className="text-center">
                         <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                        <p className="text-gray-500">Loading...</p>
+                        <p className="text-gray-500">Loading investment options...</p>
                     </div>
                 </div>
             </>
@@ -273,17 +395,30 @@ const SubscriptionCreationPage: React.FC = () => {
 
                     {/* Main content area */}
                     <div className="bg-white shadow rounded-lg p-6 md:p-8">
-                        {/* Error display */}
-                        {error && (
-                            <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6">
+                        {/* Enhanced Error display */}
+                        <ErrorFeedback
+                            error={error}
+                            onDismiss={() => setError(null)}
+                        />
+
+                        {/* Validation errors */}
+                        {validationErrors.length > 0 && (
+                            <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
                                 <div className="flex">
                                     <div className="flex-shrink-0">
-                                        <svg className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
-                                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                        <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                                         </svg>
                                     </div>
                                     <div className="ml-3">
-                                        <p className="text-sm text-red-700">{error}</p>
+                                        <h3 className="text-sm font-medium text-yellow-800">
+                                            Please fix the following issues:
+                                        </h3>
+                                        <ul className="mt-1 text-sm text-yellow-700 list-disc list-inside">
+                                            {validationErrors.map((err, index) => (
+                                                <li key={index}>{err}</li>
+                                            ))}
+                                        </ul>
                                     </div>
                                 </div>
                             </div>
@@ -304,6 +439,8 @@ const SubscriptionCreationPage: React.FC = () => {
                                     formData={formData}
                                     updateFormData={updateFormData}
                                     availableAssets={availableAssets}
+                                    isLoading={isLoading}
+                                    error={error}
                                 />
                             )}
 
@@ -338,8 +475,8 @@ const SubscriptionCreationPage: React.FC = () => {
 
                                 <button
                                     type="submit"
-                                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-blue-300"
-                                    disabled={paymentProcessing}
+                                    className={`px-6 py-3 ${currentStep === 3 ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'} text-white rounded-lg transition-colors disabled:bg-opacity-70 disabled:cursor-not-allowed`}
+                                    disabled={paymentProcessing || (currentStep === 2 && formData.allocations.length === 0)}
                                 >
                                     {paymentProcessing ? (
                                         <div className="flex items-center">
@@ -354,6 +491,13 @@ const SubscriptionCreationPage: React.FC = () => {
                                 </button>
                             </div>
                         </form>
+                    </div>
+
+                    {/* Help section */}
+                    <div className="mt-8 text-center">
+                        <div className="text-sm text-gray-500">
+                            <p>Having trouble? <button type="button" onClick={() => window.open('/help/subscription-creation', '_blank')} className="text-blue-600 hover:underline">View Help Guide</button> or <button type="button" onClick={() => window.open('/contact', '_blank')} className="text-blue-600 hover:underline">Contact Support</button></p>
+                        </div>
                     </div>
                 </div>
             </div>

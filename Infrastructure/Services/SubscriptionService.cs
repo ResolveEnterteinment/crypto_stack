@@ -106,6 +106,10 @@ namespace Infrastructure.Services
                 foreach (var alloc in request.Allocations)
                 {
                     var asset = await _assetService.GetByIdAsync(Guid.Parse(alloc.AssetId));
+                    if (asset == null)
+                    {
+                        throw new Domain.Exceptions.AssetFetchException($"Failed to fetch asset ID {alloc.AssetId}");
+                    }
                     allocations.Add(new()
                     {
                         AssetId = Guid.Parse(alloc.AssetId),
@@ -116,7 +120,6 @@ namespace Infrastructure.Services
 
                 var subscriptionData = new SubscriptionData
                 {
-                    Provider = request.Provider,
                     UserId = userId,
                     Allocations = allocations,
                     Interval = request.Interval,
@@ -459,8 +462,8 @@ namespace Infrastructure.Services
                                 Interval = subscription.Interval,
                                 Amount = subscription.Amount,
                                 Currency = subscription.Currency,
-                                NextDueDate = subscription.NextDueDate,
-                                TotalInvestments = subscription.TotalInvestments,
+                                NextDueDate = (DateTime)subscription.NextDueDate!,
+                                TotalInvestments = (decimal)subscription.TotalInvestments!,
                                 EndDate = subscription.EndDate,
                                 Status = subscription.Status,
                                 IsCancelled = subscription.IsCancelled
