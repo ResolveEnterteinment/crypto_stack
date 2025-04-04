@@ -217,8 +217,6 @@ namespace Infrastructure.Services
                 // Create user profile data
                 var userData = await _userService.CreateAsync(new UserData()
                 {
-                    Id = user.Id,
-                    CreatedAt = DateTime.UtcNow,
                     FullName = request.FullName,
                     Email = request.Email,
                 });

@@ -7,6 +7,7 @@ using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Exceptions;
 using Domain.Models.Subscription;
+using Domain.Models.User;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
@@ -26,6 +27,7 @@ namespace crypto_investment_project.Server.Controllers
     {
         private readonly IPaymentService _paymentService;
         private readonly ISubscriptionService _subscriptionService;
+        private readonly IUserService _userService;
         private readonly IEventService _eventService;
         private readonly IIdempotencyService _idempotencyService;
         private readonly ILogger<PaymentWebhookController> _logger;
@@ -34,6 +36,7 @@ namespace crypto_investment_project.Server.Controllers
         public PaymentWebhookController(
             IPaymentService paymentService,
             ISubscriptionService subscriptionService,
+            IUserService userService,
             IEventService eventService,
             IIdempotencyService idempotencyService,
             IOptions<StripeSettings> stripeSettings,
@@ -41,6 +44,7 @@ namespace crypto_investment_project.Server.Controllers
         {
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
+            _userService = userService ?? throw new ArgumentNullException(nameof(userService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -110,14 +114,17 @@ namespace crypto_investment_project.Server.Controllers
                         case "customer.subscription.created":
                             result = await HandleSubscriptionCreated(stripeEvent, correlationId);
                             break;
-                        /*case "checkout.session.completed":
+                        case "checkout.session.completed":
                             result = await HandleCheckoutSessionCompletedAsync(stripeEvent);
-                            break;*/
+                            break;
                         case "customer.subscription.updated":
                             result = await HandleSubscriptionUpdatedAsync(stripeEvent);
                             break;
                         case "customer.subscription.deleted":
                             result = await HandleSubscriptionDeletedAsync(stripeEvent);
+                            break;
+                        case "customer.created":
+                            result = await HandleCustomerCreatedAsync(stripeEvent);
                             break;
                         default:
                             result = HandleUnprocessedEventType(stripeEvent.Type);
@@ -475,6 +482,35 @@ namespace crypto_investment_project.Server.Controllers
             await _subscriptionService.UpdateOneAsync(subscriptionData.Id, updatedFields);
 
             return Ok("Subscription cancelled successfully");
+        }
+
+        private async Task<IActionResult> HandleCustomerCreatedAsync(Event stripeEvent)
+        {
+            var customer = stripeEvent.Data.Object as Stripe.Customer;
+            if (customer == null)
+            {
+                throw new ArgumentException("Invalid event data: Expected Customer object");
+            }
+
+            // Find our subscription with this Stripe subscription ID
+            var filter = Builders<UserData>.Filter.Eq(s => s.Email, customer.Email);
+            var userData = await _userService.GetOneAsync(filter);
+
+            if (userData == null)
+            {
+                _logger.LogWarning("No user found with e-mail: {Customeremail}", customer.Email);
+                return BadRequest(new { error = "No matching user found" });
+            }
+
+            // Mark subscription as cancelled
+            var updatedFields = new Dictionary<string, object>
+            {
+                ["PaymentProviderCustomerId"] = customer.Id
+            };
+
+            await _userService.UpdateOneAsync(userData.Id, updatedFields);
+
+            return Ok("User customer ID updated successfully");
         }
 
         private IActionResult HandleUnprocessedEventType(string eventType)

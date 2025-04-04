@@ -16,6 +16,7 @@ export interface PaymentRequestData {
     amount: number;
     currency?: string;
     isRecurring: boolean;
+    interval: string;
     returnUrl?: string;
     cancelUrl?: string;
     idempotencyKey?: string;
@@ -89,6 +90,7 @@ export const initiatePayment = async (paymentData: PaymentRequestData): Promise<
             amount: paymentData.amount,
             currency: paymentData.currency || 'USD',
             isRecurring: paymentData.isRecurring,
+            interval: paymentData.interval,
             returnUrl,
             cancelUrl,
             idempotencyKey

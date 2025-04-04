@@ -7,6 +7,7 @@ using Domain.DTOs.Payment;
 using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Exceptions;
+using Domain.Models.Event;
 using Domain.Models.Payment;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -417,7 +418,7 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<CheckoutSessionResponse> CreateCheckoutSessionAsync(CreateCheckoutSessionDto request)
+        public async Task<CheckoutSessionResponse> CreateCheckoutSessionAsync(CreateCheckoutSessionDto request, string? correlationId = null)
         {
             try
             {
@@ -449,38 +450,31 @@ namespace Infrastructure.Services
                     request.SubscriptionId, provider.Name);
 
                 // Parse interval from subscription
-                var interval = request.Metadata["interval"];
+                var interval = request.Interval;
 
-                // Create checkout session options
                 var options = new CheckoutSessionOptions
                 {
-                    SuccessUrl = request.ReturnUrl ?? $"https://yourdomain.com/payment/success?session_id={{CHECKOUT_SESSION_ID}}&subscription_id={request.SubscriptionId}",
-                    CancelUrl = request.CancelUrl ?? $"https://yourdomain.com/payment/cancel?subscription_id={request.SubscriptionId}",
+                    PaymentMethodType = "card",
                     Mode = request.IsRecurring ? "subscription" : "payment",
+                    SuccessUrl = request.ReturnUrl,
+                    CancelUrl = request.CancelUrl,
+                    Metadata = new Dictionary<string, string>(),
                     LineItems = new List<SessionLineItem>
                     {
                         new SessionLineItem
                         {
-                            Name = request.IsRecurring ? "Crypto Investment Subscription" : "One-time Crypto Investment",
-                            Description = $"{(request.IsRecurring ? interval : "one-time")} investment plan",
-                            UnitAmount = (long)(request.Amount * 100), // Convert to cents
-                            Currency = request.Currency.ToLowerInvariant(),
-                            Quantity = 1
+                            Currency = request.Currency,
+                            UnitAmount = Convert.ToInt64(request.Amount * 100), // Convert to cents
+                            Name = "Investment Subscription",
+                            Description = $"Investment plan for {request.Interval.ToLower()} payments",
+                            Quantity = 1,
+                            Interval = request.Interval // Use the subscription interval from your database
                         }
-                    },
-                    Metadata = request.Metadata ?? new Dictionary<string, string>()
+                    }
                 };
-
-                // Ensure required metadata is included
-                if (!options.Metadata.ContainsKey("userId"))
-                {
-                    options.Metadata["userId"] = request.UserId;
-                }
-
-                if (!options.Metadata.ContainsKey("subscriptionId"))
-                {
-                    options.Metadata["subscriptionId"] = request.SubscriptionId;
-                }
+                options.Metadata["userId"] = request.UserId;
+                options.Metadata["subscriptionId"] = request.SubscriptionId;
+                if (!string.IsNullOrEmpty(correlationId)) options.Metadata["correlationId"] = correlationId;
 
                 // Create the checkout session
                 var sessionResult = await provider.CreateCheckoutSessionWithOptions(options);
@@ -491,6 +485,32 @@ namespace Infrastructure.Services
                 }
 
                 var session = sessionResult.Data;
+
+                var storedEvent = new EventData
+                {
+                    EventType = typeof(CheckoutSessionCreatedEvent).Name,
+                    Payload = request.SubscriptionId
+                };
+
+                // Apply retry pattern for storing event data
+                var retryPolicy = Polly.Policy
+                    .Handle<Exception>()
+                    .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                        (ex, time, retryCount, ctx) =>
+                        {
+                            _logger.LogWarning(ex, "Attempt {RetryCount} to store checkout session created event failed. Retrying in {RetryTime}ms",
+                                retryCount, time.TotalMilliseconds);
+                        });
+
+                var storedEventResult = await retryPolicy.ExecuteAsync(async () =>
+                    await _eventService.InsertOneAsync(storedEvent));
+
+                if (!storedEventResult.IsAcknowledged || storedEventResult.InsertedId is null)
+                {
+                    throw new DatabaseException($"Failed to store subscription created event: {storedEventResult.ErrorMessage}");
+                }
+
+                await _eventService.Publish(new CheckoutSessionCreatedEvent(session, storedEventResult.InsertedId.Value));
 
                 return new CheckoutSessionResponse
                 {

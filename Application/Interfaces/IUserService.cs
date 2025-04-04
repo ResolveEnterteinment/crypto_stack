@@ -2,7 +2,7 @@
 
 namespace Application.Interfaces
 {
-    public interface IUserService
+    public interface IUserService : IRepository<UserData>
     {
         public Task<bool> CheckUserExists(Guid userId);
         Task<UserData?> GetAsync(Guid id);

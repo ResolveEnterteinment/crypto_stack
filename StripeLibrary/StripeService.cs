@@ -22,7 +22,6 @@ namespace StripeLibrary
     public class StripeService : IPaymentProvider, IStripeService
     {
         private readonly ChargeService _chargeService;
-        private readonly BalanceTransactionService _balanceTransactionService;
         private readonly PaymentIntentService _paymentIntentService;
         private readonly InvoiceService _invoiceService;
         private readonly SubscriptionService _subscriptionService;
@@ -34,7 +33,7 @@ namespace StripeLibrary
         private const string FeesCacheKeyPrefix = "stripe_fee_";
         private const string InvoiceCacheKeyPrefix = "stripe_invoice_";
         private const string SubscriptionCacheKeyPrefix = "stripe_subscription_";
-        public string Name => this.Name;
+        public string Name => "Stripe";
 
         /// <summary>
         /// Initializes a new instance of the <see cref="StripeService"/> class.
@@ -56,7 +55,6 @@ namespace StripeLibrary
             StripeConfiguration.ApiKey = stripeSettings.Value.ApiSecret;
 
             _chargeService = new ChargeService();
-            _balanceTransactionService = new BalanceTransactionService();
             _paymentIntentService = new PaymentIntentService();
             _invoiceService = new InvoiceService();
             _subscriptionService = new SubscriptionService();
@@ -630,6 +628,7 @@ namespace StripeLibrary
             }
 
         }
+        // In StripeService.cs
         public async Task<ResultWrapper<SessionDto>> CreateCheckoutSessionWithOptions(CheckoutSessionOptions options)
         {
             try
@@ -638,18 +637,36 @@ namespace StripeLibrary
                 var stripeLineItems = new List<SessionLineItemOptions>();
                 foreach (var item in options.LineItems)
                 {
+                    // Create price data with proper recurring configuration for subscription mode
+                    var priceDataOptions = new SessionLineItemPriceDataOptions
+                    {
+                        Currency = item.Currency,
+                        UnitAmount = item.UnitAmount,
+                        ProductData = new SessionLineItemPriceDataProductDataOptions
+                        {
+                            Name = item.Name,
+                            Description = item.Description
+                        }
+                    };
+
+                    // Add recurring configuration if in subscription mode
+                    if (options.Mode == "subscription")
+                    {
+                        // Set up the recurring component
+                        priceDataOptions.Recurring = new SessionLineItemPriceDataRecurringOptions
+                        {
+                            // Convert your interval to Stripe's format
+                            // Stripe only accepts: day, week, month, or year
+                            Interval = ConvertIntervalToStripeFormat(item.Interval),
+
+                            // You can also set interval count if needed
+                            // IntervalCount = 1 
+                        };
+                    }
+
                     stripeLineItems.Add(new SessionLineItemOptions
                     {
-                        PriceData = new SessionLineItemPriceDataOptions
-                        {
-                            Currency = item.Currency,
-                            UnitAmount = item.UnitAmount,
-                            ProductData = new SessionLineItemPriceDataProductDataOptions
-                            {
-                                Name = item.Name,
-                                Description = item.Description
-                            }
-                        },
+                        PriceData = priceDataOptions,
                         Quantity = item.Quantity
                     });
                 }
@@ -673,17 +690,33 @@ namespace StripeLibrary
 
                 return ResultWrapper<SessionDto>.Success(new SessionDto
                 {
+                    Provider = Name,
                     Id = session.Id,
                     Url = session.Url,
                     ClientSecret = session.ClientSecret,
-                    Status = session.Status
+                    Status = session.Status,
+                    Metadata = options.Metadata,
+                    SubscriptionId = session.SubscriptionId,
                 });
             }
             catch (Exception ex)
             {
                 return ResultWrapper<SessionDto>.FromException(ex);
             }
+        }
 
+        // Helper method to convert your interval format to Stripe's format
+        private string ConvertIntervalToStripeFormat(string interval)
+        {
+            // Map your interval constants to Stripe's expected values
+            return interval switch
+            {
+                "DAILY" => "day",
+                "WEEKLY" => "week",
+                "MONTHLY" => "month",
+                "YEARLY" => "year",
+                _ => "month" // Default to month
+            };
         }
 
         public async Task<ResultWrapper> CancelPaymentAsync(string paymentId, string? reason = "requested_by_customer")

@@ -254,6 +254,7 @@ const SubscriptionCreationPage: React.FC = () => {
                     amount: formData.amount,
                     currency: formData.currency,
                     isRecurring: formData.interval !== 'ONCE',
+                    interval: formData.interval,
                     // Add return URLs with better error handling
                     returnUrl: window.location.origin + `/payment/success?subscription_id=${subscriptionId}&amount=${formData.amount}&currency=${formData.currency}`,
                     cancelUrl: window.location.origin + `/payment/cancel?subscription_id=${subscriptionId}`

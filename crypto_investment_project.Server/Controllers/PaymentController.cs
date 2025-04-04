@@ -41,13 +41,9 @@ namespace crypto_investment_project.Server.Controllers
         /// <param name="request">Checkout session request</param>
         /// <returns>Checkout session URL</returns>
         [HttpPost("create-checkout-session")]
-        [Authorize(Roles = "USER")]
-        [ValidateAntiForgeryToken]
+        [Authorize]
+        [IgnoreAntiforgeryToken]
         [EnableRateLimiting("standard")]
-        [ProducesResponseType(typeof(CheckoutSessionResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> CreateCheckoutSession([FromBody] CheckoutSessionRequest request)
         {
             var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
@@ -62,70 +58,53 @@ namespace crypto_investment_project.Server.Controllers
             {
                 try
                 {
+                    // Log the full request for debugging
+                    _logger.LogInformation("Payment request received: {@Request}", request);
+
                     // Validate request
                     if (request is null)
                     {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Invalid request",
-                            Code = "INVALID_REQUEST",
-                            TraceId = correlationId
-                        });
+                        _logger.LogWarning("Request is null");
+                        return BadRequest(new { message = "Request body is required", code = "INVALID_REQUEST" });
                     }
 
-                    // Validate subscription ID
-                    if (string.IsNullOrEmpty(request.SubscriptionId) || !Guid.TryParse(request.SubscriptionId, out var subscriptionId))
+                    // Log all validation checks
+                    if (string.IsNullOrEmpty(request.SubscriptionId))
                     {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Invalid subscription ID",
-                            Code = "INVALID_SUBSCRIPTION_ID",
-                            TraceId = correlationId
-                        });
+                        _logger.LogWarning("SubscriptionId is missing");
+                        return BadRequest(new { message = "SubscriptionId is required", code = "MISSING_SUBSCRIPTION_ID" });
                     }
 
-                    // Validate user ID
+                    if (!Guid.TryParse(request.SubscriptionId, out var subscriptionId))
+                    {
+                        _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", request.SubscriptionId);
+                        return BadRequest(new { message = "Invalid subscription ID format", code = "INVALID_SUBSCRIPTION_ID" });
+                    }
+
                     if (string.IsNullOrEmpty(request.UserId))
                     {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Invalid user ID",
-                            Code = "INVALID_USER_ID",
-                            TraceId = correlationId
-                        });
+                        _logger.LogWarning("UserId is missing");
+                        return BadRequest(new { message = "UserId is required", code = "MISSING_USER_ID" });
                     }
 
-                    // Validate amount
                     if (request.Amount <= 0)
                     {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Amount must be greater than zero",
-                            Code = "INVALID_AMOUNT",
-                            TraceId = correlationId
-                        });
+                        _logger.LogWarning("Amount is invalid: {Amount}", request.Amount);
+                        return BadRequest(new { message = "Amount must be greater than zero", code = "INVALID_AMOUNT" });
                     }
 
                     // Check if subscription exists and belongs to the user
                     var subscription = await _subscriptionService.GetByIdAsync(subscriptionId);
                     if (subscription == null)
                     {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Subscription not found",
-                            Code = "SUBSCRIPTION_NOT_FOUND",
-                            TraceId = correlationId
-                        });
+                        _logger.LogWarning("Subscription not found: {SubscriptionId}", subscriptionId);
+                        return BadRequest(new { message = "Subscription not found", code = "SUBSCRIPTION_NOT_FOUND" });
                     }
 
                     if (subscription.UserId.ToString() != request.UserId)
                     {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Subscription does not belong to the user",
-                            Code = "UNAUTHORIZED_ACCESS",
-                            TraceId = correlationId
-                        });
+                        _logger.LogWarning("Subscription {SubscriptionId} does not belong to user {UserId}", subscriptionId, request.UserId);
+                        return BadRequest(new { message = "Subscription does not belong to the user", code = "UNAUTHORIZED_ACCESS" });
                     }
 
                     // Check for idempotency
@@ -136,9 +115,6 @@ namespace crypto_investment_project.Server.Controllers
                         request.IdempotencyKey);
                         return Ok(new { status = "Already processed" });
                     }
-
-                    // Update subscription status to pending
-                    await _subscriptionService.UpdateSubscriptionStatusAsync(subscriptionId, SubscriptionStatus.Pending);
 
                     // Set default return and cancel URLs if not provided
                     var appBaseUrl = _configuration["AppSettings:BaseUrl"] ?? "https://example.com";
@@ -153,13 +129,11 @@ namespace crypto_investment_project.Server.Controllers
                         Amount = request.Amount,
                         Currency = request.Currency ?? "USD",
                         IsRecurring = request.IsRecurring,
+                        Interval = request.Interval,
                         ReturnUrl = returnUrl,
                         CancelUrl = cancelUrl,
                         Metadata = new Dictionary<string, string>
                         {
-                            ["subscription_id"] = subscriptionId.ToString(),
-                            ["interval"] = subscription.Interval,
-                            ["user_id"] = request.UserId,
                             ["correlation_id"] = correlationId
                         }
                     });
@@ -180,12 +154,13 @@ namespace crypto_investment_project.Server.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error creating checkout session");
-                    return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
+                    _logger.LogError(ex, "Error creating checkout session: {ErrorMessage}", ex.Message);
+                    return StatusCode(StatusCodes.Status500InternalServerError, new
                     {
-                        Message = "An error occurred while processing your request",
-                        Code = "SERVER_ERROR",
-                        TraceId = correlationId
+                        message = "An error occurred while processing your request",
+                        error = ex.Message,
+                        code = "SERVER_ERROR",
+                        traceId = correlationId
                     });
                 }
             }
@@ -198,6 +173,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <returns>Payment status</returns>
         [HttpGet("status/{paymentId}")]
         [Authorize]
+        [IgnoreAntiforgeryToken]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(typeof(PaymentStatusResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]

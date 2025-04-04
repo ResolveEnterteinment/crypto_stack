@@ -15,7 +15,7 @@ namespace Application.Interfaces.Payment
         /// </summary>
         /// <param name="request">The checkout session request details</param>
         /// <returns>The checkout session response with URL</returns>
-        Task<CheckoutSessionResponse> CreateCheckoutSessionAsync(CreateCheckoutSessionDto request);
+        Task<CheckoutSessionResponse> CreateCheckoutSessionAsync(CreateCheckoutSessionDto request, string? correlationId = null);
 
         /// <summary>
         /// Gets the status of a payment

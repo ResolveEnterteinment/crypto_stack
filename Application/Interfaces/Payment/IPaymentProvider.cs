@@ -77,6 +77,7 @@ namespace Application.Interfaces
         public long Quantity { get; set; } = 1;
         public long UnitAmount { get; set; }
         public string Currency { get; set; } = "usd";
+        public string Interval { get; set; }
     }
 
     /// <summary>

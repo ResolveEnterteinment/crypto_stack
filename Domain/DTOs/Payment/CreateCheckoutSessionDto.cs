@@ -35,6 +35,8 @@ namespace Domain.DTOs.Payment
         /// </summary>
         public bool IsRecurring { get; set; }
 
+        public string Interval { get; set; }
+
         /// <summary>
         /// URL to return to after successful payment
         /// </summary>

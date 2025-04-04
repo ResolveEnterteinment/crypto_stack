@@ -482,6 +482,62 @@ namespace Infrastructure.Services
             }
         }
 
+        public async Task Handle(CheckoutSessionCreatedEvent notification, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var subscriptionIdString = notification.Session.Metadata["subscriptionId"];
+                if (!Guid.TryParse(subscriptionIdString, out var subscriptionId))
+                {
+                    throw new ArgumentException($"Invalid subscription ID format: {subscriptionIdString}");
+                }
+
+                _logger.LogInformation("Processing checkout session created event for internal subscription {SubscriptionId} update...",
+                    subscriptionId);
+
+                // Update our subscription with the active status
+                var updatedFields = new Dictionary<string, object>
+                {
+                    ["Provider"] = notification.Session.Provider,
+                    ["ProviderSubscriptionId"] = notification.Session.SubscriptionId,
+                    ["Status"] = SubscriptionStatus.Active
+                };
+
+                var updateResult = await UpdateOneAsync(subscriptionId, updatedFields);
+
+                if (updateResult.IsAcknowledged && updateResult.ModifiedCount > 0)
+                {
+                    // Get the subscription to invalidate cache
+                    var subscription = await GetByIdAsync(subscriptionId);
+                    if (subscription != null)
+                    {
+                        _cache.Remove(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subscription.UserId));
+
+                        // Notify user
+                        await _notificationService.CreateNotificationAsync(new()
+                        {
+                            UserId = subscription.UserId.ToString(),
+                            Message = "Your subscription has been activated."
+                        });
+                    }
+
+                    _logger.LogInformation("Successfully updated subscription {SubscriptionId} with provider details",
+                        subscriptionId);
+                }
+                else
+                {
+                    _logger.LogWarning("Failed to update subscription {SubscriptionId} with provider details",
+                        subscriptionId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling subscription created event for event {EventId}: {Message}",
+                    notification.EventId, ex.Message);
+                // We don't rethrow here because we don't want to fail the event handling pipeline
+            }
+        }
+
         public async Task Handle(SubscriptionCreatedEvent notification, CancellationToken cancellationToken)
         {
             try
