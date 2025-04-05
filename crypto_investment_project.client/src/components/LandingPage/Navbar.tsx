@@ -1,5 +1,5 @@
 // src/components/LandingPage/Navbar.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import Button from './Button';
@@ -13,6 +13,8 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
     const { isAuthenticated } = useAuth();
     const [isScrolled, setIsScrolled] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+    const mobileMenuRef = useRef<HTMLDivElement>(null);
+    const mobileButtonRef = useRef<HTMLButtonElement>(null);
 
     // Track scroll position to change navbar style
     useEffect(() => {
@@ -20,14 +22,60 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
             setIsScrolled(window.scrollY > 20);
         };
 
+        // Set initial scroll state
+        handleScroll();
+
         window.addEventListener('scroll', handleScroll);
         return () => window.removeEventListener('scroll', handleScroll);
     }, []);
+
+    // Close mobile menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (
+                isMobileMenuOpen &&
+                mobileMenuRef.current &&
+                mobileButtonRef.current &&
+                !mobileMenuRef.current.contains(event.target as Node) &&
+                !mobileButtonRef.current.contains(event.target as Node)
+            ) {
+                setIsMobileMenuOpen(false);
+            }
+        };
+
+        // Close mobile menu on ESC key
+        const handleEscKey = (event: KeyboardEvent) => {
+            if (event.key === 'Escape' && isMobileMenuOpen) {
+                setIsMobileMenuOpen(false);
+            }
+        };
+
+        if (isMobileMenuOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+            document.addEventListener('keydown', handleEscKey);
+            // Prevent scrolling when mobile menu is open
+            document.body.style.overflow = 'hidden';
+        } else {
+            // Restore scrolling when mobile menu is closed
+            document.body.style.overflow = '';
+        }
+
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+            document.removeEventListener('keydown', handleEscKey);
+            document.body.style.overflow = '';
+        };
+    }, [isMobileMenuOpen]);
 
     // Handle navigation
     const navigateTo = (path: string) => {
         setIsMobileMenuOpen(false);
         navigate(path);
+    };
+
+    // Toggle mobile menu
+    const toggleMobileMenu = () => {
+        setIsMobileMenuOpen(prev => !prev);
     };
 
     // Base navbar styles
@@ -140,21 +188,51 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
 
                     {/* Mobile menu button */}
                     <button
-                        className="md:hidden flex items-center"
-                        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                        aria-label="Toggle menu"
+                        ref={mobileButtonRef}
+                        className="md:hidden flex items-center z-50"
+                        onClick={toggleMobileMenu}
+                        aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
+                        aria-expanded={isMobileMenuOpen}
+                        aria-controls="mobile-menu"
                     >
                         <div className={`hamburger-btn ${isMobileMenuOpen ? 'open' : ''}`}>
-                            <span className={`${isScrolled ? 'bg-gray-900' : transparent ? 'bg-white' : 'bg-gray-900'}`}></span>
-                            <span className={`${isScrolled ? 'bg-gray-900' : transparent ? 'bg-white' : 'bg-gray-900'}`}></span>
-                            <span className={`${isScrolled ? 'bg-gray-900' : transparent ? 'bg-white' : 'bg-gray-900'}`}></span>
+                            <span className={`${isMobileMenuOpen
+                                    ? 'bg-white'
+                                    : isScrolled
+                                        ? 'bg-gray-900'
+                                        : transparent
+                                            ? 'bg-white'
+                                            : 'bg-gray-900'
+                                }`}></span>
+                            <span className={`${isMobileMenuOpen
+                                    ? 'bg-white'
+                                    : isScrolled
+                                        ? 'bg-gray-900'
+                                        : transparent
+                                            ? 'bg-white'
+                                            : 'bg-gray-900'
+                                }`}></span>
+                            <span className={`${isMobileMenuOpen
+                                    ? 'bg-white'
+                                    : isScrolled
+                                        ? 'bg-gray-900'
+                                        : transparent
+                                            ? 'bg-white'
+                                            : 'bg-gray-900'
+                                }`}></span>
                         </div>
                     </button>
                 </div>
             </nav>
 
             {/* Mobile menu */}
-            <div className={`mobile-menu ${isMobileMenuOpen ? 'open' : ''}`}>
+            <div
+                id="mobile-menu"
+                ref={mobileMenuRef}
+                className={`fixed inset-y-0 right-0 transform ${isMobileMenuOpen ? 'translate-x-0' : 'translate-x-full'
+                    } w-4/5 max-w-xs bg-gray-900 overflow-y-auto transition duration-300 ease-in-out z-40`}
+                aria-hidden={!isMobileMenuOpen}
+            >
                 <div className="py-6 px-4">
                     <div className="flex justify-between items-center mb-6">
                         <div className="text-2xl font-bold text-white flex items-center">
@@ -197,7 +275,7 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
                         </div>
                         <button
                             onClick={() => setIsMobileMenuOpen(false)}
-                            className="text-white"
+                            className="text-white p-2"
                             aria-label="Close menu"
                         >
                             <svg
@@ -222,11 +300,13 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
                             { label: 'Pricing', path: '/pricing' },
                             { label: 'Learn', path: '/learn' },
                             { label: 'Blog', path: '/blog' }
-                        ].map((item) => (
+                        ].map((item, index) => (
                             <button
                                 key={item.path}
                                 onClick={() => navigateTo(item.path)}
                                 className="text-white text-lg py-2 hover:bg-gray-800 px-3 rounded-lg transition-colors text-left"
+                                // Add keyboard navigation support
+                                tabIndex={isMobileMenuOpen ? 0 : -1}
                             >
                                 {item.label}
                             </button>
@@ -270,8 +350,10 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
 
             {/* Mobile menu overlay */}
             <div
-                className={`mobile-menu-overlay ${isMobileMenuOpen ? 'open' : ''}`}
+                className={`fixed inset-0 bg-black transition-opacity duration-300 ${isMobileMenuOpen ? 'opacity-50' : 'opacity-0 pointer-events-none'
+                    } z-30`}
                 onClick={() => setIsMobileMenuOpen(false)}
+                aria-hidden="true"
             ></div>
         </>
     );
