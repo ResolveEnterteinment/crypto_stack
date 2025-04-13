@@ -1,9 +1,7 @@
 using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
 using Application.Interfaces.Exchange;
-using Domain.Models.Asset;
 using Domain.Models.Payment;
-using Domain.Models.Subscription;
 using Microsoft.AspNetCore.Mvc;
 
 namespace crypto_investment_project.Server.Controllers
@@ -28,6 +26,9 @@ namespace crypto_investment_project.Server.Controllers
             {
                 return BadRequest("A valid transaction is required.");
             }
+
+            var providerFee = paymentRequest.Amount * 0.03m + 0.3m;
+            var platformFee = paymentRequest.Amount * 0.01m;
             PaymentData paymentData = new()
             {
                 UserId = Guid.Parse(paymentRequest.UserId),
@@ -35,10 +36,10 @@ namespace crypto_investment_project.Server.Controllers
                 Provider = "Stripe",
                 PaymentProviderId = paymentRequest.PaymentId,
                 InvoiceId = paymentRequest.InvoiceId,
-                PaymentProviderFee = paymentRequest.PaymentProviderFee,
-                TotalAmount = paymentRequest.TotalAmount,
-                PlatformFee = paymentRequest.PlatformFee,
-                NetAmount = paymentRequest.NetAmount,
+                PaymentProviderFee = providerFee,
+                TotalAmount = paymentRequest.Amount,
+                PlatformFee = platformFee,
+                NetAmount = paymentRequest.Amount - providerFee - platformFee,
                 Currency = paymentRequest.Currency,
                 Status = paymentRequest.Status,
             };

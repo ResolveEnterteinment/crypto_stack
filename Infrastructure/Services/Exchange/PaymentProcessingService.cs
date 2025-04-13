@@ -1,5 +1,6 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Exchange;
+using Application.Interfaces.Payment;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Exchange;
@@ -26,6 +27,7 @@ namespace Infrastructure.Services.Exchange
         private readonly IAssetService _assetService;
         private readonly IBalanceService _balanceService;
         private readonly IExchangeService _exchangeService;
+        private readonly IPaymentService _paymentService;
         private readonly IBalanceManagementService _balanceManagementService;
         private readonly ITransactionService _transactionService;
         private readonly IOrderManagementService _orderManagementService;
@@ -39,6 +41,7 @@ namespace Infrastructure.Services.Exchange
             IBalanceService balanceService,
             ITransactionService transactionService,
             IExchangeService exchangeService,
+            IPaymentService paymentService,
             IBalanceManagementService balanceManagementService,
             IOrderManagementService orderManagementService,
             IEventService eventService,
@@ -50,6 +53,7 @@ namespace Infrastructure.Services.Exchange
             _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
             _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
             _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
+            _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _balanceManagementService = balanceManagementService ?? throw new ArgumentNullException(nameof(balanceManagementService));
             _orderManagementService = orderManagementService ?? throw new ArgumentNullException(nameof(orderManagementService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
@@ -122,7 +126,7 @@ namespace Infrastructure.Services.Exchange
                 {
                     Processed = true,
                     ProcessedAt = DateTime.UtcNow
-                });
+                }, cancellationToken: cancellationToken);
 
                 // Store record for idempotency
                 await _idempotencyService.StoreResultAsync(idempotencyKey, true);
@@ -450,6 +454,92 @@ namespace Infrastructure.Services.Exchange
                     null,
                     null,
                     ex.StackTrace);
+            }
+        }
+
+        // Add to PaymentProcessingService
+        private async Task<ResultWrapper<bool>> ProcessPaymentWithTransactionAsync(PaymentData payment)
+        {
+            using (_logger.BeginScope(new Dictionary<string, object>
+            {
+                ["PaymentId"] = payment.Id,
+                ["SubscriptionId"] = payment.SubscriptionId
+            }))
+            {
+                try
+                {
+                    using var session = await _exchangeService.StartDBSession();
+                    session.StartTransaction();
+
+                    try
+                    {
+                        // Get subscription
+                        var subscription = await _subscriptionService.GetByIdAsync(payment.SubscriptionId);
+                        if (subscription == null)
+                        {
+                            throw new ResourceNotFoundException("Subscription", payment.SubscriptionId.ToString());
+                        }
+
+                        // Update subscription with payment info
+                        var nextDueDate = await _paymentService.Providers[payment.Provider]
+                            .GetNextDueDate(payment.InvoiceId);
+
+                        var newTotalInvestments = (subscription.TotalInvestments ?? 0) + payment.NetAmount;
+
+                        await _subscriptionService.UpdateOneAsync(
+                            payment.SubscriptionId,
+                            new
+                            {
+                                Status = SubscriptionStatus.Active,
+                                NextDueDate = nextDueDate,
+                                TotalInvestments = newTotalInvestments,
+                                LastPaymentDate = DateTime.UtcNow,
+                                LastPaymentAmount = payment.NetAmount
+                            },
+                            session);
+
+                        // Update user balance
+                        var balanceResult = await _balanceService.UpsertBalanceAsync(
+                            payment.UserId,
+                            new BalanceData
+                            {
+                                UserId = payment.UserId,
+                                AssetId = Guid.Parse(payment.Currency), // Assuming currency matches asset ID
+                                Available = payment.NetAmount,
+                                Locked = 0
+                            },
+                            session);
+
+                        // Create transaction record
+                        await _transactionService.InsertOneAsync(
+                            new TransactionData
+                            {
+                                UserId = payment.UserId,
+                                PaymentProviderId = payment.PaymentProviderId,
+                                SubscriptionId = payment.SubscriptionId,
+                                BalanceId = balanceResult.Data.Id,
+                                SourceName = payment.Provider,
+                                SourceId = payment.Id.ToString(),
+                                Action = "Deposit",
+                                Quantity = payment.NetAmount
+                            },
+                            session);
+
+                        await session.CommitTransactionAsync();
+                        return ResultWrapper<bool>.Success(true);
+                    }
+                    catch (Exception ex)
+                    {
+                        await session.AbortTransactionAsync();
+                        _logger.LogError(ex, "Transaction failed for payment {PaymentId}", payment.Id);
+                        throw;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to process payment {PaymentId}", payment.Id);
+                    return ResultWrapper<bool>.FromException(ex);
+                }
             }
         }
     }

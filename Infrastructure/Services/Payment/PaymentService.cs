@@ -2,12 +2,12 @@
 using Application.Interfaces;
 using Application.Interfaces.Payment;
 using Domain.Constants;
+using Domain.Constants.Payment;
 using Domain.DTOs;
 using Domain.DTOs.Payment;
 using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Exceptions;
-using Domain.Models.Event;
 using Domain.Models.Payment;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -20,13 +20,14 @@ using System.Diagnostics;
 
 namespace Infrastructure.Services
 {
-    public class PaymentService : BaseService<Domain.Models.Payment.PaymentData>, IPaymentService
+    public class PaymentService : BaseService<PaymentData>, IPaymentService
     {
         private readonly Dictionary<string, IPaymentProvider> _providers = new Dictionary<string, IPaymentProvider>(StringComparer.OrdinalIgnoreCase);
         private readonly IPaymentProvider _defaultProvider;
 
         private readonly IStripeService _stripeService;
         private readonly IAssetService _assetService;
+        private readonly IUserService _userService;
         private readonly IEventService _eventService;
         private readonly INotificationService _notificationService;
         private readonly IIdempotencyService _idempotencyService;
@@ -38,6 +39,7 @@ namespace Infrastructure.Services
             IOptions<PaymentServiceSettings> paymentServiceSettings,
             IOptions<StripeSettings> stripeSettings,
             IAssetService assetService,
+            IUserService userService,
             IOptions<MongoDbSettings> mongoDbSettings,
             IMongoClient mongoClient,
             ILogger<PaymentService> logger,
@@ -55,6 +57,7 @@ namespace Infrastructure.Services
                   )
         {
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
+            _userService = userService ?? throw new ArgumentNullException(nameof(userService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
@@ -72,7 +75,7 @@ namespace Infrastructure.Services
         /// </summary>
         /// <param name="charge">The Stripe Charge object from the webhook event.</param>
         /// <returns>A ResultWrapper containing the Guid of the processed payment event or an error.</returns>
-        public async Task<ResultWrapper<Guid>> ProcessChargeUpdatedEventAsync(ChargeRequest charge)
+        public async Task<ResultWrapper> ProcessChargeUpdatedEventAsync(ChargeRequest charge)
         {
             using (_logger.BeginScope(new Dictionary<string, object>
             {
@@ -92,7 +95,7 @@ namespace Infrastructure.Services
                     if (resultExists)
                     {
                         _logger.LogInformation("Charge {ChargeId} already processed with result {Result}", charge?.Id, existingResult);
-                        return ResultWrapper<Guid>.Success(existingResult);
+                        return ResultWrapper.Success($"Charge {charge?.Id} already processed with result {existingResult}");
                     }
 
                     #region Validate Charge
@@ -125,10 +128,10 @@ namespace Infrastructure.Services
                                     retryCount, time.TotalMilliseconds);
                             });
 
-                    var paymentIntent = await apiRetryPolicy.ExecuteAsync(
-                        () => _stripeService.GetPaymentIntentAsync(charge.PaymentIntentId));
+                    var invoice = await apiRetryPolicy.ExecuteAsync(
+                        () => _stripeService.GetInvoiceAsync(charge.InvoiceId));
 
-                    if (paymentIntent == null)
+                    if (invoice == null)
                     {
                         _logger.LogWarning("Failed to retrieve PaymentIntent {PaymentIntentId} for Charge {ChargeId}",
                             charge.PaymentIntentId, charge.Id);
@@ -141,12 +144,12 @@ namespace Infrastructure.Services
                     // Validate required metadata
                     var metadataValidationErrors = new List<string>();
 
-                    if (!paymentIntent.Metadata.TryGetValue("userId", out var userId) ||
+                    if (!invoice.Metadata.TryGetValue("userId", out var userId) ||
                         string.IsNullOrWhiteSpace(userId))
                     {
                         metadataValidationErrors.Add("PaymentIntent metadata must include valid userId.");
                     }
-                    if (!paymentIntent.Metadata.TryGetValue("subscriptionId", out var subscriptionId) ||
+                    if (!invoice.Metadata.TryGetValue("subscriptionId", out var subscriptionId) ||
                         string.IsNullOrWhiteSpace(userId))
                     {
                         metadataValidationErrors.Add("PaymentIntent metadata must include valid subscriptionId.");
@@ -154,7 +157,7 @@ namespace Infrastructure.Services
                     if (metadataValidationErrors.Count > 0)
                     {
                         _logger.LogWarning("Missing or invalid metadata in PaymentIntent {PaymentId}: UserId={UserId}, SubscriptionId={SubscriptionId}",
-                            paymentIntent.Id, userId, subscriptionId); //debug error
+                            invoice.Id, userId, subscriptionId); //debug error
                         throw new ValidationException("Invalid metadata", new Dictionary<string, string[]>
                         {
                             ["Metadata"] = metadataValidationErrors.ToArray()
@@ -164,7 +167,7 @@ namespace Infrastructure.Services
                     if (!Guid.TryParse(userId, out Guid parsedUserId) || !Guid.TryParse(subscriptionId, out Guid parsedSubscriptionId))
                     {
                         _logger.LogWarning("Invalid metadata format in PaymentIntent {PaymentId}: UserId={UserId}, SubscriptionId={SubscriptionId}",
-                            paymentIntent.Id, userId, subscriptionId);
+                            invoice.Id, userId, subscriptionId);
                         throw new ValidationException("Invalid metadata format", new Dictionary<string, string[]>
                         {
                             ["UserId"] = new[] { "UserId must be a valid Guid" },
@@ -174,45 +177,25 @@ namespace Infrastructure.Services
                     #endregion Fetch and Validate PaymentIntent
 
                     // Get next due date (could throw, will be caught by our catch block)
-                    var nextDueDate = await Providers["Stripe"].GetNextDueDate(paymentIntent.InvoiceId);
-
-                    #region Calculate Amounts
-                    var totalAmount = charge.Amount / 100m; // Convert cents to decimal
-                    var paymentFee = await Providers["Stripe"].GetFeeAsync(paymentIntent.Id);
-                    var netAmountAfterStripe = totalAmount - paymentFee;
-                    var platformFee = totalAmount * 0.01m; // 1% platform fee
-                    var netAmount = netAmountAfterStripe - platformFee;
-
-                    if (netAmount <= 0)
-                    {
-                        _logger.LogWarning("Net amount for PaymentIntent {PaymentId} is invalid: {NetAmount}",
-                            paymentIntent.Id, netAmount);
-                        throw new ValidationException("Invalid net amount", new Dictionary<string, string[]>
-                        {
-                            ["NetAmount"] = new[] { "Net amount must be greater than zero" }
-                        });
-                    }
-                    #endregion Calculate Amounts
+                    var nextDueDate = await Providers["Stripe"].GetNextDueDate(invoice.Id);
 
                     #region Construct PaymentRequest
-                    var paymentRequest = new PaymentIntentRequest
+                    var paymentRequest = new InvoiceRequest
                     {
+                        Id = invoice.Id,
+                        Provider = "Stripe",
+                        ChargeId = invoice.ChargeId,
+                        PaymentIntentId = invoice.PaymentIntentId,
                         UserId = userId,
                         SubscriptionId = subscriptionId,
-                        Provider = "Stripe",
-                        PaymentId = paymentIntent.Id,
-                        InvoiceId = paymentIntent.InvoiceId,
-                        TotalAmount = totalAmount,
-                        PaymentProviderFee = paymentFee,
-                        PlatformFee = platformFee,
-                        NetAmount = netAmount,
+                        Amount = invoice.AmountPaid,
                         Currency = charge.Currency,
-                        Status = paymentIntent.Status,
+                        Status = invoice.Status,
                     };
                     #endregion Construct PaymentRequest
 
                     // Process the payment
-                    var result = await ProcessPaymentIntentSucceededEvent(paymentRequest);
+                    var result = await ProcessInvoicePaidEvent(paymentRequest);
 
                     // Store the result for idempotency
                     await _idempotencyService.StoreResultAsync(idempotencyKey, result.Data);
@@ -222,17 +205,17 @@ namespace Infrastructure.Services
                 catch (ValidationException ex)
                 {
                     _logger.LogWarning(ex, "Validation error processing charge {ChargeId}", charge?.Id);
-                    return ResultWrapper<Guid>.Failure(FailureReason.ValidationError, ex.Message);
+                    return ResultWrapper.Failure(FailureReason.ValidationError, ex.Message);
                 }
                 catch (PaymentApiException ex)
                 {
                     _logger.LogError(ex, "Payment processing error for charge {ChargeId}", charge?.Id);
-                    return ResultWrapper<Guid>.Failure(FailureReason.PaymentProcessingError, ex.Message);
+                    return ResultWrapper.Failure(FailureReason.PaymentProcessingError, ex.Message);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to process charge.updated event for Charge {ChargeId}", charge?.Id);
-                    return ResultWrapper<Guid>.FromException(ex);
+                    return ResultWrapper.FromException(ex);
                 }
             }
         }
@@ -240,185 +223,192 @@ namespace Infrastructure.Services
         /// <summary>
         /// Processes a payment request, storing it atomically with an event and publishing a PaymentReceivedEvent.
         /// </summary>
-        /// <param name="paymentRequest">The payment details to process.</param>
+        /// <param name="invoice">The payment details to process.</param>
         /// <returns>A ResultWrapper containing the Guid of the stored event or an error.</returns>
-        public async Task<ResultWrapper<Guid>> ProcessPaymentIntentSucceededEvent(PaymentIntentRequest paymentRequest)
+        public async Task<ResultWrapper> ProcessInvoicePaidEvent(InvoiceRequest invoice)
         {
             using (_logger.BeginScope(new Dictionary<string, object>
             {
-                ["PaymentId"] = paymentRequest?.PaymentId,
-                ["UserId"] = paymentRequest?.UserId,
-                ["SubscriptionId"] = paymentRequest?.SubscriptionId,
-                ["Operation"] = "ProcessPaymentIntent",
+                ["InvoiceId"] = invoice?.Id,
+                ["UserId"] = invoice?.UserId,
+                ["SubscriptionId"] = invoice?.SubscriptionId,
+                ["Operation"] = "ProcessInvoicePaid",
                 ["CorrelationId"] = Activity.Current?.Id
             }))
             {
                 try
                 {
                     #region Validate PaymentRequest
-                    if (paymentRequest == null)
+                    if (invoice == null)
                     {
-                        throw new ArgumentNullException(nameof(paymentRequest), "Payment request cannot be null.");
+                        throw new ArgumentNullException(nameof(invoice), "Payment request cannot be null.");
                     }
 
-                    if (string.IsNullOrWhiteSpace(paymentRequest.UserId) || !Guid.TryParse(paymentRequest.UserId, out _))
+                    if (string.IsNullOrWhiteSpace(invoice.UserId) || !Guid.TryParse(invoice.UserId, out _))
                     {
                         throw new ValidationException("Invalid UserId", new Dictionary<string, string[]>
                         {
-                            ["UserId"] = new[] { $"Invalid UserId: {paymentRequest.UserId}" }
+                            ["UserId"] = [$"Invalid UserId: {invoice.UserId}"]
                         });
                     }
-
-                    if (string.IsNullOrWhiteSpace(paymentRequest.SubscriptionId) || !Guid.TryParse(paymentRequest.SubscriptionId, out Guid subscriptionId))
+                    if (string.IsNullOrWhiteSpace(invoice.SubscriptionId) || !Guid.TryParse(invoice.SubscriptionId, out Guid subscriptionId))
                     {
                         throw new ValidationException("Invalid SubscriptionId", new Dictionary<string, string[]>
                         {
-                            ["SubscriptionId"] = new[] { $"Invalid SubscriptionId: {paymentRequest.SubscriptionId}" }
+                            ["SubscriptionId"] = [$"Invalid SubscriptionId: {invoice.SubscriptionId}"]
                         });
                     }
 
-                    if (string.IsNullOrWhiteSpace(paymentRequest.PaymentId))
+                    if (string.IsNullOrWhiteSpace(invoice.Id))
                     {
-                        throw new ValidationException("Invalid PaymentId", new Dictionary<string, string[]>
+                        throw new ValidationException("Invalid InvoiceId", new Dictionary<string, string[]>
                         {
-                            ["PaymentId"] = new[] { $"Invalid PaymentId: {paymentRequest.PaymentId}" }
+                            ["InvoiceId"] = [$"Invalid InvoiceId: {invoice.Id}"]
                         });
                     }
 
-                    if (string.IsNullOrWhiteSpace(paymentRequest.Currency))
+                    if (string.IsNullOrWhiteSpace(invoice.Currency))
                     {
                         throw new ValidationException("Invalid Currency", new Dictionary<string, string[]>
                         {
-                            ["Currency"] = new[] { $"Invalid Currency: {paymentRequest.Currency}" }
+                            ["Currency"] = [$"Invalid Currency: {invoice.Currency}"]
                         });
                     }
 
-                    var assetResult = await _assetService.GetByTickerAsync(paymentRequest.Currency);
+                    var assetResult = await _assetService.GetByTickerAsync(invoice.Currency);
                     if (!assetResult.IsSuccess)
                     {
-                        throw new ValidationException("Invalid Currency", new Dictionary<string, string[]>
+                        throw new ValidationException("Invalid asset", new Dictionary<string, string[]>
                         {
-                            ["Currency"] = new[] { $"Unable to fetch asset data from currency: {assetResult.ErrorMessage}" }
+                            ["Currency"] = [$"Unable to fetch asset data from currency: {assetResult.ErrorMessage}"]
                         });
                     }
 
-                    if (paymentRequest.NetAmount <= 0)
+                    if (invoice.Amount <= 0)
                     {
                         throw new ValidationException("Invalid Amount", new Dictionary<string, string[]>
                         {
-                            ["NetAmount"] = new[] { $"Amount must be greater than zero: {paymentRequest.NetAmount}" }
+                            ["Amount"] = [$"Amount must be greater than zero: {invoice.Amount}"]
                         });
                     }
                     #endregion Validate PaymentRequest
 
                     #region Idempotency Check
                     // Use payment ID as idempotency key
-                    string idempotencyKey = $"payment-intent-{paymentRequest.PaymentId}";
+                    string idempotencyKey = $"invoice-paid-{invoice.Id}";
 
                     var (resultExists, existingResult) = await _idempotencyService.GetResultAsync<Guid>(idempotencyKey);
                     if (resultExists)
                     {
                         _logger.LogInformation("Payment {PaymentId} already processed with result {Result}",
-                            paymentRequest.PaymentId, existingResult);
-                        return ResultWrapper<Guid>.Success(existingResult);
+                            invoice.PaymentIntentId, existingResult);
+                        return ResultWrapper.Success($"Payment {invoice.PaymentIntentId} already processed with result {existingResult}");
                     }
 
-                    var existingPayment = await _collection.Find(p => p.PaymentProviderId == paymentRequest.PaymentId).FirstOrDefaultAsync();
+                    var existingPayment = await _collection.Find(p => p.PaymentProviderId == invoice.PaymentIntentId).FirstOrDefaultAsync();
                     if (existingPayment != null)
                     {
-                        _logger.LogInformation("Payment {PaymentId} already stored in database", paymentRequest.PaymentId);
-                        return ResultWrapper<Guid>.Success(existingPayment.Id);
+                        return ResultWrapper.Success($"Payment {invoice.PaymentIntentId} already stored in database");
                     }
                     #endregion Idempotency Check
 
-                    var paymentData = new Domain.Models.Payment.PaymentData
+                    #region Calculate Amounts
+                    var totalAmount = invoice.Amount / 100m; // Convert cents to decimal
+                    var paymentFee = await Providers["Stripe"].GetFeeAsync(invoice.PaymentIntentId);
+                    var netAmountAfterStripe = totalAmount - paymentFee;
+                    var platformFee = totalAmount * 0.01m; // 1% platform fee
+                    var netAmount = netAmountAfterStripe - platformFee;
+
+                    if (netAmount <= 0)
                     {
-                        UserId = Guid.Parse(paymentRequest.UserId),
-                        SubscriptionId = Guid.Parse(paymentRequest.SubscriptionId),
-                        Provider = paymentRequest.Provider,
-                        PaymentProviderId = paymentRequest.PaymentId,
-                        InvoiceId = paymentRequest.InvoiceId,
-                        TotalAmount = paymentRequest.TotalAmount,
-                        PaymentProviderFee = paymentRequest.PaymentProviderFee,
-                        PlatformFee = paymentRequest.PlatformFee,
-                        NetAmount = paymentRequest.NetAmount,
-                        Currency = paymentRequest.Currency,
-                        Status = paymentRequest.Status,
+                        _logger.LogWarning("Net amount for PaymentIntent {PaymentId} is invalid: {NetAmount}",
+                            invoice.PaymentIntentId, netAmount);
+                        throw new ValidationException("Invalid net amount", new Dictionary<string, string[]>
+                        {
+                            ["NetAmount"] = new[] { "Net amount must be greater than zero" }
+                        });
+                    }
+                    #endregion Calculate Amounts
+
+                    var paymentData = new PaymentData
+                    {
+                        UserId = Guid.Parse(invoice.UserId),
+                        SubscriptionId = Guid.Parse(invoice.SubscriptionId),
+                        Provider = invoice.Provider,
+                        PaymentProviderId = invoice.PaymentIntentId,
+                        InvoiceId = invoice.Id,
+                        TotalAmount = totalAmount,
+                        PaymentProviderFee = paymentFee,
+                        PlatformFee = platformFee,
+                        NetAmount = netAmount,
+                        Currency = invoice.Currency,
+                        Status = invoice.Status,
                     };
 
-                    Guid eventId;
+                    var insertPaymentResult = await InsertOneAsync(paymentData);
 
-                    #region Atomic Transaction
-                    eventId = await ExecuteInTransactionAsync(async (session) =>
+                    if (!insertPaymentResult.IsAcknowledged || insertPaymentResult.InsertedId is null)
                     {
-                        // Insert payment record
-                        var insertPaymentResult = await InsertOneAsync(paymentData, session);
-                        if (!insertPaymentResult.IsAcknowledged || insertPaymentResult.InsertedId is null)
-                        {
-                            throw new DatabaseException(insertPaymentResult.ErrorMessage ?? "Failed to insert payment record");
-                        }
+                        throw new DatabaseException(insertPaymentResult.ErrorMessage ?? "Failed to insert payment record");
+                    }
 
-                        // Create and store the event
-                        var storedEvent = new Domain.Models.Event.EventData
-                        {
-                            EventType = typeof(PaymentReceivedEvent).Name,
-                            Payload = insertPaymentResult.InsertedId.ToString()
-                        };
-
-                        var storedEventResult = await _eventService.InsertOneAsync(storedEvent, session);
-                        if (!storedEventResult.IsAcknowledged || storedEventResult.InsertedId is null)
-                        {
-                            throw new DatabaseException(storedEventResult.ErrorMessage ?? "Failed to store payment event");
-                        }
-
-                        return storedEventResult.InsertedId.Value;
-                    });
-
-                    // Store for idempotency outside of transaction
-                    await _idempotencyService.StoreResultAsync(idempotencyKey, eventId);
-                    #endregion Atomic Transaction
-
-                    // Publish the event after successful transaction
-                    await _eventService.Publish(new PaymentReceivedEvent(paymentData, eventId));
-
-                    // Send notification to user
                     try
                     {
+                        // Store for idempotency outside of transaction
+                        await _idempotencyService.StoreResultAsync(idempotencyKey, insertPaymentResult.InsertedId);
+
+                        // Publish the event after successful transaction
+                        await _eventService.Publish(new PaymentReceivedEvent(paymentData));
+
+                        // Send notification to user
                         await _notificationService.CreateNotificationAsync(new NotificationData()
                         {
-                            UserId = paymentRequest.UserId,
-                            Message = $"A payment of {paymentRequest.NetAmount} {paymentRequest.Currency} has been received.",
+                            UserId = invoice.UserId,
+                            Message = $"A payment of {invoice.Amount} {invoice.Currency} has been received.",
                             IsRead = false
                         });
                     }
-                    catch (Exception notificationEx)
+                    catch (Exception ex)
                     {
-                        // Log but don't fail the entire operation if notification fails
-                        _logger.LogWarning(notificationEx, "Failed to send notification for payment {PaymentId}",
-                            paymentRequest.PaymentId);
+                        // Log but don't fail the entire operation 
+                        _logger.LogWarning(ex, $"Failed to to finalize payment request {invoice.Id}: {ex.Message}");
                     }
 
-                    return ResultWrapper<Guid>.Success(eventId);
+                    return ResultWrapper.Success();
                 }
                 catch (ValidationException ex)
                 {
-                    _logger.LogWarning(ex, "Validation error processing payment {PaymentId}", paymentRequest?.PaymentId);
-                    return ResultWrapper<Guid>.Failure(FailureReason.ValidationError, ex.Message);
+                    _logger.LogWarning(ex, "Validation error processing payment {PaymentId}", invoice?.Id);
+                    return ResultWrapper.Failure(FailureReason.ValidationError, ex.Message);
                 }
                 catch (DatabaseException ex)
                 {
-                    _logger.LogError(ex, "Database error processing payment {PaymentId}", paymentRequest?.PaymentId);
-                    return ResultWrapper<Guid>.Failure(FailureReason.DatabaseError, ex.Message);
+                    _logger.LogError(ex, "Database error processing payment {PaymentId}", invoice?.Id);
+                    return ResultWrapper.Failure(FailureReason.DatabaseError, ex.Message);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to process payment request: {Message}", ex.Message);
-                    return ResultWrapper<Guid>.FromException(ex);
+                    return ResultWrapper.FromException(ex);
                 }
             }
         }
 
-        public async Task<CheckoutSessionResponse> CreateCheckoutSessionAsync(CreateCheckoutSessionDto request, string? correlationId = null)
+        public async Task<ResultWrapper> ProcessCheckoutSessionCompletedAsync(SessionDto checkoutSession)
+        {
+            try
+            {
+                await _eventService.Publish(new CheckoutSessionCompletedEvent(checkoutSession));
+
+                return ResultWrapper.Success();
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper.FromException(ex);
+            }
+        }
+
+        public async Task<ResultWrapper<SessionDto>> CreateCheckoutSessionAsync(CreateCheckoutSessionDto request, string? correlationId = null)
         {
             try
             {
@@ -452,17 +442,24 @@ namespace Infrastructure.Services
                 // Parse interval from subscription
                 var interval = request.Interval;
 
+                // Get or create Stripe customer
+                var customerId = await GetOrCreateStripeCustomerAsync(request.UserId, request.UserEmail);
+
                 var options = new CheckoutSessionOptions
                 {
                     PaymentMethodType = "card",
                     Mode = request.IsRecurring ? "subscription" : "payment",
                     SuccessUrl = request.ReturnUrl,
                     CancelUrl = request.CancelUrl,
-                    Metadata = new Dictionary<string, string>(),
+                    CustomerId = customerId,
+                    Metadata = new()
+                    {
+                        ["userId"] = request.UserId,
+                        ["subscriptionId"] = request.SubscriptionId
+                    },
                     LineItems = new List<SessionLineItem>
                     {
-                        new SessionLineItem
-                        {
+                        new() {
                             Currency = request.Currency,
                             UnitAmount = Convert.ToInt64(request.Amount * 100), // Convert to cents
                             Name = "Investment Subscription",
@@ -472,8 +469,7 @@ namespace Infrastructure.Services
                         }
                     }
                 };
-                options.Metadata["userId"] = request.UserId;
-                options.Metadata["subscriptionId"] = request.SubscriptionId;
+
                 if (!string.IsNullOrEmpty(correlationId)) options.Metadata["correlationId"] = correlationId;
 
                 // Create the checkout session
@@ -486,48 +482,14 @@ namespace Infrastructure.Services
 
                 var session = sessionResult.Data;
 
-                var storedEvent = new EventData
-                {
-                    EventType = typeof(CheckoutSessionCreatedEvent).Name,
-                    Payload = request.SubscriptionId
-                };
+                await _eventService.Publish(new CheckoutSessionCreatedEvent(session));
 
-                // Apply retry pattern for storing event data
-                var retryPolicy = Polly.Policy
-                    .Handle<Exception>()
-                    .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
-                        (ex, time, retryCount, ctx) =>
-                        {
-                            _logger.LogWarning(ex, "Attempt {RetryCount} to store checkout session created event failed. Retrying in {RetryTime}ms",
-                                retryCount, time.TotalMilliseconds);
-                        });
-
-                var storedEventResult = await retryPolicy.ExecuteAsync(async () =>
-                    await _eventService.InsertOneAsync(storedEvent));
-
-                if (!storedEventResult.IsAcknowledged || storedEventResult.InsertedId is null)
-                {
-                    throw new DatabaseException($"Failed to store subscription created event: {storedEventResult.ErrorMessage}");
-                }
-
-                await _eventService.Publish(new CheckoutSessionCreatedEvent(session, storedEventResult.InsertedId.Value));
-
-                return new CheckoutSessionResponse
-                {
-                    Success = !string.IsNullOrEmpty(session.Url),
-                    Message = session.Status,
-                    CheckoutUrl = session.Url,
-                    ClientSecret = session.ClientSecret
-                };
+                return ResultWrapper<SessionDto>.Success(session);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating checkout session: {Message}", ex.Message);
-                return new CheckoutSessionResponse
-                {
-                    Success = false,
-                    Message = $"Failed to create checkout session: {ex.Message}"
-                };
+                return ResultWrapper<SessionDto>.FromException(ex);
             }
         }
 
@@ -799,7 +761,7 @@ namespace Infrastructure.Services
 
                         var updatePaymentResult = await UpdateOneAsync(payment.Id, updatedFields, session);
 
-                        if (!updatePaymentResult.IsAcknowledged || updatePaymentResult.ModifiedCount == 0)
+                        if (updatePaymentResult == null || !updatePaymentResult.IsAcknowledged || updatePaymentResult.ModifiedCount == 0)
                         {
                             throw new DatabaseException("Failed to update payment record");
                         }
@@ -807,8 +769,8 @@ namespace Infrastructure.Services
                         // Create and store the event
                         var storedEvent = new Domain.Models.Event.EventData
                         {
-                            EventType = typeof(PaymentCancelledEvent).Name,
-                            Payload = updatePaymentResult.UpsertedId.ToString()
+                            Name = typeof(PaymentCancelledEvent).Name,
+                            Payload = updatePaymentResult.UpsertedId!.ToString()
                         };
 
                         var storedEventResult = await _eventService.InsertOneAsync(storedEvent, session);
@@ -825,7 +787,7 @@ namespace Infrastructure.Services
                     #endregion Atomic Transaction
 
                     // Publish the event after successful transaction
-                    await _eventService.Publish(new PaymentCancelledEvent(payment, eventId));
+                    await _eventService.Publish(new PaymentCancelledEvent(payment));
 
                     return ResultWrapper.Success("Payment is cancelled successfully.");
                 }
@@ -848,5 +810,104 @@ namespace Infrastructure.Services
             if (string.IsNullOrEmpty(provider)) return _defaultProvider;
             return Providers.ContainsKey(provider) ? Providers[provider] : _defaultProvider;
         }
+
+        /// <summary>
+        /// Gets or creates a Stripe customer for the given user
+        /// </summary>
+        private async Task<string> GetOrCreateStripeCustomerAsync(string userId, string email, string name = null)
+        {
+            try
+            {
+                // Validate inputs to avoid null reference issues
+                if (string.IsNullOrEmpty(userId))
+                {
+                    throw new ArgumentException("User ID is required", nameof(userId));
+                }
+
+                if (string.IsNullOrEmpty(email))
+                {
+                    throw new ArgumentException("Email is required", nameof(email));
+                }
+
+                // Name can be null, but let's use a default if it is
+                name = string.IsNullOrEmpty(name) ? "Customer" : name;
+
+                // First, try to find the user in our database to check if they already have a Stripe customer ID
+                var user = await _userService.GetByIdAsync(Guid.Parse(userId));
+
+                // If user has a customer ID, return it
+                if (user != null && !string.IsNullOrEmpty(user.PaymentProviderCustomerId))
+                {
+                    _logger.LogInformation("Found existing Stripe customer ID for user {UserId}: {CustomerId}",
+                        userId, user.PaymentProviderCustomerId);
+                    return user.PaymentProviderCustomerId;
+                }
+
+                // Check if a customer with this email already exists in Stripe
+                var customerSearchOptions = new Dictionary<string, object>
+                {
+                    ["query"] = $"email:'{email}'"
+                };
+
+                var existingCustomers = await _stripeService.SearchCustomersAsync(customerSearchOptions);
+
+                if (existingCustomers != null && existingCustomers.Any())
+                {
+                    var customerId = existingCustomers.First().Id;
+
+                    // Update our user record with the found customer ID
+                    if (user != null)
+                    {
+                        await _userService.UpdateOneAsync(Guid.Parse(userId), new
+                        {
+                            PaymentProviderCustomerId = customerId
+                        });
+
+                        _logger.LogInformation("Updated user {UserId} with existing Stripe customer ID: {CustomerId}",
+                            userId, customerId);
+                    }
+
+                    return customerId;
+                }
+
+                // If we get here, we need to create a new customer in Stripe
+                var customerOptions = new Dictionary<string, object>
+                {
+                    ["email"] = email,
+                    ["name"] = name,
+                    ["metadata"] = new Dictionary<string, string>
+                    {
+                        ["userId"] = userId
+                    }
+                };
+
+                var newCustomer = await _stripeService.CreateCustomerAsync(customerOptions);
+
+                if (newCustomer == null)
+                {
+                    throw new PaymentApiException("Failed to create Stripe customer", "Stripe");
+                }
+
+                // Update our user record with the new customer ID
+                if (user != null)
+                {
+                    await _userService.UpdateOneAsync(Guid.Parse(userId), new
+                    {
+                        PaymentProviderCustomerId = newCustomer.Id
+                    });
+
+                    _logger.LogInformation("Created new Stripe customer and updated user {UserId} with customer ID: {CustomerId}",
+                        userId, newCustomer.Id);
+                }
+
+                return newCustomer.Id;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting or creating Stripe customer for user {UserId}: {Message}", userId, ex.Message);
+                throw; // Re-throw so the caller can handle it
+            }
+        }
+
     }
 }

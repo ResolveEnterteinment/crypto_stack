@@ -1,8 +1,10 @@
 using Application.Interfaces;
 using Application.Interfaces.Payment;
 using Domain.Constants;
+using Domain.Constants.Payment;
 using Domain.DTOs.Error;
 using Domain.DTOs.Payment;
+using Domain.Exceptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -18,6 +20,7 @@ namespace crypto_investment_project.Server.Controllers
         private readonly ISubscriptionService _subscriptionService;
         private readonly IPaymentService _paymentService;
         private readonly IIdempotencyService _idempotencyService;
+        private readonly IEventService _eventService;
         private readonly IConfiguration _configuration;
         private readonly ILogger<PaymentController> _logger;
 
@@ -25,12 +28,14 @@ namespace crypto_investment_project.Server.Controllers
             ISubscriptionService subscriptionService,
             IPaymentService paymentService,
             IIdempotencyService idempotencyService,
+            IEventService eventService,
             IConfiguration configuration,
             ILogger<PaymentController> logger)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
+            _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -52,8 +57,8 @@ namespace crypto_investment_project.Server.Controllers
             {
                 ["CorrelationId"] = correlationId,
                 ["Operation"] = "CreateCheckoutSession",
-                ["UserId"] = request?.UserId,
-                ["SubscriptionId"] = request?.SubscriptionId
+                ["UserId"] = request!.UserId,
+                ["SubscriptionId"] = request!.SubscriptionId
             }))
             {
                 try
@@ -61,6 +66,7 @@ namespace crypto_investment_project.Server.Controllers
                     // Log the full request for debugging
                     _logger.LogInformation("Payment request received: {@Request}", request);
 
+                    #region Validate
                     // Validate request
                     if (request is null)
                     {
@@ -106,6 +112,7 @@ namespace crypto_investment_project.Server.Controllers
                         _logger.LogWarning("Subscription {SubscriptionId} does not belong to user {UserId}", subscriptionId, request.UserId);
                         return BadRequest(new { message = "Subscription does not belong to the user", code = "UNAUTHORIZED_ACCESS" });
                     }
+                    #endregion
 
                     // Check for idempotency
                     string idempotencyKey = request.IdempotencyKey ?? Guid.NewGuid().ToString();
@@ -122,10 +129,11 @@ namespace crypto_investment_project.Server.Controllers
                     string cancelUrl = request.CancelUrl ?? $"{appBaseUrl}/payment/cancel?subscription_id={subscriptionId}";
 
                     // Create Stripe checkout session
-                    var checkoutSession = await _paymentService.CreateCheckoutSessionAsync(new CreateCheckoutSessionDto
+                    var sessionResult = await _paymentService.CreateCheckoutSessionAsync(new CreateCheckoutSessionDto
                     {
                         SubscriptionId = subscriptionId.ToString(),
                         UserId = request.UserId,
+                        UserEmail = User.Identity.Name,
                         Amount = request.Amount,
                         Currency = request.Currency ?? "USD",
                         IsRecurring = request.IsRecurring,
@@ -138,13 +146,20 @@ namespace crypto_investment_project.Server.Controllers
                         }
                     });
 
+                    if (sessionResult is null || !sessionResult.IsSuccess || sessionResult.Data is null)
+                    {
+                        throw new PaymentApiException("Failed to rettieve payment from checkout session.", sessionResult?.Data?.Provider ?? "Session result returned null.");
+                    }
+
+                    var checkoutSession = sessionResult.Data;
+
                     // Create response
                     var response = new CheckoutSessionResponse
                     {
                         Success = true,
                         Message = "Checkout session created successfully",
-                        CheckoutUrl = checkoutSession.CheckoutUrl,
-                        ClientSecret = checkoutSession.ClientSecret
+                        CheckoutUrl = checkoutSession.Url,
+                        ClientSecret = checkoutSession.ClientSecret,
                     };
 
                     // Store response for idempotency
@@ -309,7 +324,7 @@ namespace crypto_investment_project.Server.Controllers
                     // If payment is associated with a subscription, update its status
                     if (!string.IsNullOrEmpty(payment.SubscriptionId))
                     {
-                        await _subscriptionService.UpdateSubscriptionStatusAsync(Guid.Parse(payment.SubscriptionId), SubscriptionStatus.Cancelled);
+                        await _subscriptionService.UpdateSubscriptionStatusAsync(Guid.Parse(payment.SubscriptionId), SubscriptionStatus.Canceled);
                     }
 
                     return Ok(result);

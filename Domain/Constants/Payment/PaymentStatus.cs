@@ -1,4 +1,4 @@
-﻿namespace Domain.Constants
+﻿namespace Domain.Constants.Payment
 {
     public static class PaymentStatus
     {

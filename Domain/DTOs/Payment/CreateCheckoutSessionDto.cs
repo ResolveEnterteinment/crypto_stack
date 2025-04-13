@@ -20,6 +20,8 @@ namespace Domain.DTOs.Payment
         /// </summary>
         public required string UserId { get; set; }
 
+        public required string UserEmail { get; set; }
+
         /// <summary>
         /// The payment amount
         /// </summary>

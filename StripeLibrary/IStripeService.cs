@@ -5,5 +5,8 @@ namespace StripeLibrary
     public interface IStripeService
     {
         public Task<PaymentIntent> GetPaymentIntentAsync(string id, PaymentIntentGetOptions? options = null);
+        public Task<Invoice> GetInvoiceAsync(string id);
+        public Task<IEnumerable<Customer>> SearchCustomersAsync(Dictionary<string, object> searchOptions);
+        public Task<Customer> CreateCustomerAsync(Dictionary<string, object> customerOptions);
     }
 }

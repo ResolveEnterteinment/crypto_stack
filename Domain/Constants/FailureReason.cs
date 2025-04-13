@@ -24,6 +24,7 @@ namespace Domain.Constants
         BalanceFetchError,
         ResourceNotFound,
         ConcurrencyConflict,
+        IdempotencyConflict,
 
         // Technical errors
         DatabaseError,
@@ -54,6 +55,7 @@ namespace Domain.Constants
                 ResourceNotFoundException => FailureReason.ResourceNotFound,
                 ValidationException => FailureReason.ValidationError,
                 ConcurrencyException => FailureReason.ConcurrencyConflict,
+                IdempotencyException => FailureReason.IdempotencyConflict,
                 DatabaseException => FailureReason.DatabaseError,
                 ServiceUnavailableException => FailureReason.ThirdPartyServiceUnavailable,
 
@@ -91,6 +93,7 @@ namespace Domain.Constants
                 FailureReason.ThirdPartyServiceUnavailable => 503, // Service Unavailable
                 FailureReason.TimeoutError => 504, // Gateway Timeout
                 FailureReason.ConcurrencyConflict => 409, // Conflict
+                FailureReason.IdempotencyConflict => 400,
                 FailureReason.ConfigurationError => 500, // Internal Server Error
                 _ => 500, // Internal Server Error
             };

@@ -24,7 +24,6 @@ namespace Application.Interfaces
         /// <returns>The next due date</returns>
         Task<DateTime?> GetNextDueDate(string invoiceId);
 
-        public Task<PaymentDto> GetInvoiceAsync(string invoiceId);
         /// <summary>
         /// Gets a subscription from the payment provider
         /// </summary>

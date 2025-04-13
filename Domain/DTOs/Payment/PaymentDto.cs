@@ -14,6 +14,7 @@
         public long? Tax { get; set; }
         public long? Discount { get; set; }
         public long Total { get; set; }
+        public string PaymentIntentId { get; set; }
         public string Status { get; set; }
     }
 }

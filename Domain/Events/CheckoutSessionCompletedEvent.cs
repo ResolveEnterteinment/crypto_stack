@@ -4,10 +4,10 @@ using MediatR;
 namespace Domain.Events
 {
     // Event for MediatR
-    public class CheckoutSessionCreatedEvent : BaseEvent, INotification
+    public class CheckoutSessionCompletedEvent : BaseEvent, INotification
     {
         public SessionDto Session { get; }
-        public CheckoutSessionCreatedEvent(SessionDto session)
+        public CheckoutSessionCompletedEvent(SessionDto session)
         {
             Session = session;
             if (session.Metadata.TryGetValue("subscriptionId", out var subscriptionIdString))

@@ -16,7 +16,7 @@ namespace Infrastructure.Services
     /// Provides common CRUD operations and transaction support.
     /// </summary>
     /// <typeparam name="T">The entity type this repository manages</typeparam>
-    public abstract class BaseService<T> : IRepository<T> where T : class
+    public abstract class BaseService<T> : IRepository<T> where T : BaseEntity
     {
         private readonly string _collectionName;
         private static readonly IReadOnlySet<string> _validPropertyNames;
@@ -112,8 +112,7 @@ namespace Infrastructure.Services
                         // Skip if index already exists
                         if (!string.IsNullOrEmpty(indexName) && existingIndexNames.Contains(indexName))
                         {
-                            _logger.LogInformation("Index '{IndexName}' already exists for collection {CollectionName}, skipping creation",
-                                indexName, _collectionName);
+                            //_logger.LogInformation("Index '{IndexName}' already exists for collection {CollectionName}, skipping creation", indexName, _collectionName);
                             continue;
                         }
 
@@ -140,14 +139,12 @@ namespace Infrastructure.Services
                     catch (MongoCommandException ex) when (ex.Message.Contains("already exists"))
                     {
                         // Handle case where the index already exists but with a different name
-                        _logger.LogInformation("Index already exists with different name for collection {CollectionName}: {ErrorMessage}",
-                            _collectionName, ex.Message);
+                        //_logger.LogInformation("Index already exists with different name for collection {CollectionName}: {ErrorMessage}", _collectionName, ex.Message);
                     }
                     catch (Exception ex)
                     {
                         // Log but continue with other indexes
-                        _logger.LogError(ex, "Failed to create individual index for collection {CollectionName}",
-                            _collectionName);
+                        _logger.LogError(ex, "Failed to create individual index for collection {CollectionName}", _collectionName);
                     }
                 }
             }
@@ -181,7 +178,7 @@ namespace Infrastructure.Services
             try
             {
                 // Not in cache, get from database
-                var filter = Builders<T>.Filter.Eq("Id", id);
+                var filter = Builders<T>.Filter.Eq(e => e.Id, id);
                 var result = await _collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
 
                 if (result != null)

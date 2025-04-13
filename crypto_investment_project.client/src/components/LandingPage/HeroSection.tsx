@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Button from './Button';
 
@@ -48,7 +48,7 @@ const HeroSection = () => {
     };
 
     // Animate chart bars with delay
-    const getBarHeight = (index, value) => {
+    const getBarHeight = (index:number, value:number) => {
         if (!isVisible) return 0;
         const delay = index * 100; // ms delay per bar
         const animationDuration = 1000; // total animation duration

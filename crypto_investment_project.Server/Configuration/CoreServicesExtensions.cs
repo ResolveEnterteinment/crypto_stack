@@ -8,6 +8,7 @@ using Domain.Interfaces;
 using Infrastructure;
 using Infrastructure.Services;
 using Infrastructure.Services.Exchange;
+using Infrastructure.Services.Payment;
 using MediatR;
 using MongoDB.Driver;
 
@@ -88,6 +89,7 @@ public static class CoreServicesExtensions
         services.AddScoped<IBalanceManagementService, BalanceManagementService>();
         services.AddScoped<IOrderReconciliationService, OrderReconciliationService>();
         services.AddScoped<IPaymentService, PaymentService>();
+        services.AddScoped<IPaymentWebhookHandler, StripeWebhookHandler>();
         services.AddScoped<ISubscriptionService, SubscriptionService>();
         services.AddScoped<IAssetService, AssetService>();
         services.AddScoped<IBalanceService, BalanceService>();

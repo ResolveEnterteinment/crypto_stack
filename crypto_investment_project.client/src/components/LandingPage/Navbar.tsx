@@ -162,6 +162,8 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
                                     variant="primary"
                                     size="md"
                                     onClick={() => navigateTo('/dashboard')}
+                                    href={undefined}  // Add this
+                                    icon={undefined}  // Add this
                                 >
                                     Dashboard
                                 </Button>
@@ -178,6 +180,8 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
                                         variant="primary"
                                         size="md"
                                         onClick={() => navigateTo('/auth/register')}
+                                        href={undefined}  // Add this
+                                        icon={undefined}  // Add this
                                     >
                                         Sign Up
                                     </Button>
@@ -300,7 +304,7 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
                             { label: 'Pricing', path: '/pricing' },
                             { label: 'Learn', path: '/learn' },
                             { label: 'Blog', path: '/blog' }
-                        ].map((item, index) => (
+                        ].map((item) => (
                             <button
                                 key={item.path}
                                 onClick={() => navigateTo(item.path)}
@@ -320,6 +324,8 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
                                 size="lg"
                                 isFullWidth
                                 onClick={() => navigateTo('/dashboard')}
+                                href={undefined}  // Add this
+                                icon={undefined}  // Add this
                             >
                                 Dashboard
                             </Button>
@@ -330,6 +336,8 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
                                     size="lg"
                                     isFullWidth
                                     onClick={() => navigateTo('/auth/register')}
+                                    href={undefined}  // Add this
+                                    icon={undefined}  // Add this
                                 >
                                     Sign Up
                                 </Button>
@@ -339,6 +347,8 @@ const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
                                     isFullWidth
                                     onClick={() => navigateTo('/auth/login')}
                                     className="border-white text-white hover:bg-white hover:text-gray-900"
+                                    href={undefined}  // Add this
+                                    icon={undefined}  // Add this
                                 >
                                     Log In
                                 </Button>

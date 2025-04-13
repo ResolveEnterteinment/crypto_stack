@@ -229,49 +229,87 @@ namespace Infrastructure.Services
                     Builders<BalanceData>.Filter.Eq(s => s.AssetId, updateBalance.AssetId)
                 );
 
-                // Create update definition
-                var update = Builders<BalanceData>.Update
-                    .Inc(s => s.Available, updateBalance.Available)
-                    .Inc(s => s.Locked, updateBalance.Locked)
-                    .Inc(s => s.Total, updateBalance.Available + updateBalance.Locked)
-                    .Set(s => s.LastUpdated, DateTime.UtcNow);
+                // Check if the balance record exists
+                var existingBalance = await _collection.Find(filter).FirstOrDefaultAsync();
 
-                // If ticker is provided, use it (useful for first-time inserts)
-                if (!string.IsNullOrEmpty(updateBalance.Ticker))
+                if (existingBalance != null)
                 {
-                    update = update.Set(s => s.Ticker, updateBalance.Ticker);
-                }
+                    // If record exists, update it
+                    var update = Builders<BalanceData>.Update
+                        .Inc(s => s.Available, updateBalance.Available)
+                        .Inc(s => s.Locked, updateBalance.Locked)
+                        .Inc(s => s.Total, updateBalance.Available + updateBalance.Locked)
+                        .Set(s => s.LastUpdated, DateTime.UtcNow);
 
-                // Execute the update with upsert
-                FindOneAndUpdateOptions<BalanceData> options = new()
-                {
-                    IsUpsert = true,
-                    ReturnDocument = ReturnDocument.After
-                };
+                    // If ticker is provided, use it
+                    if (!string.IsNullOrEmpty(updateBalance.Ticker))
+                    {
+                        update = update.Set(s => s.Ticker, updateBalance.Ticker);
+                    }
 
-                BalanceData updatedBalance;
-                if (session != null)
-                {
-                    updatedBalance = await _collection.FindOneAndUpdateAsync(session, filter, update, options);
+                    var updateOptions = new FindOneAndUpdateOptions<BalanceData>
+                    {
+                        ReturnDocument = ReturnDocument.After
+                    };
+
+                    BalanceData updatedBalance;
+                    if (session != null)
+                    {
+                        updatedBalance = await _collection.FindOneAndUpdateAsync(session, filter, update, updateOptions);
+                    }
+                    else
+                    {
+                        updatedBalance = await _collection.FindOneAndUpdateAsync(filter, update, updateOptions);
+                    }
+
+                    if (updatedBalance == null)
+                    {
+                        throw new InvalidOperationException("Failed to update balance record");
+                    }
+
+                    // Invalidate cache
+                    InvalidateUserBalanceCache(userId);
+
+                    _logger.LogInformation("Successfully updated balance for user {UserId}, asset {AssetId}. " +
+                        "New values: Available: {Available}, Locked: {Locked}, Total: {Total}",
+                        userId, updateBalance.AssetId, updatedBalance.Available, updatedBalance.Locked, updatedBalance.Total);
+
+                    return ResultWrapper<BalanceData>.Success(updatedBalance);
                 }
                 else
                 {
-                    updatedBalance = await _collection.FindOneAndUpdateAsync(filter, update, options);
+                    // If record doesn't exist, create it with a GUID ID
+                    var newBalance = new BalanceData
+                    {
+                        Id = Guid.NewGuid(), // Explicitly generate a new GUID
+                        UserId = userId,
+                        AssetId = updateBalance.AssetId,
+                        Ticker = updateBalance.Ticker ?? asset.Ticker, // Use either provided ticker or asset ticker
+                        Available = updateBalance.Available,
+                        Locked = updateBalance.Locked,
+                        Total = updateBalance.Available + updateBalance.Locked,
+                        LastUpdated = DateTime.UtcNow,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    if (session != null)
+                    {
+                        await _collection.InsertOneAsync(session, newBalance);
+                    }
+                    else
+                    {
+                        await _collection.InsertOneAsync(newBalance);
+                    }
+
+                    // Invalidate cache
+                    InvalidateUserBalanceCache(userId);
+
+                    _logger.LogInformation("Successfully created new balance for user {UserId}, asset {AssetId}. " +
+                        "Values: Available: {Available}, Locked: {Locked}, Total: {Total}",
+                        userId, updateBalance.AssetId, newBalance.Available, newBalance.Locked, newBalance.Total);
+
+                    return ResultWrapper<BalanceData>.Success(newBalance);
                 }
-
-                if (updatedBalance == null)
-                {
-                    throw new InvalidOperationException("Failed to update or insert balance record");
-                }
-
-                // Invalidate cache
-                InvalidateUserBalanceCache(userId);
-
-                _logger.LogInformation("Successfully updated balance for user {UserId}, asset {AssetId}. " +
-                    "New values: Available: {Available}, Locked: {Locked}, Total: {Total}",
-                    userId, updateBalance.AssetId, updatedBalance.Available, updatedBalance.Locked, updatedBalance.Total);
-
-                return ResultWrapper<BalanceData>.Success(updatedBalance);
             }
             catch (Exception ex)
             {

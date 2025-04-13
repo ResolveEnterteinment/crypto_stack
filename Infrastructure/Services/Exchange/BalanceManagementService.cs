@@ -233,7 +233,7 @@ namespace Infrastructure.Services.Exchange
                     // Create an event record
                     var storedEvent = new EventData
                     {
-                        EventType = typeof(RequestfundingEvent).Name,
+                        Name = typeof(RequestfundingEvent).Name,
                         Payload = new
                         {
                             Amount = amount,
@@ -248,7 +248,7 @@ namespace Infrastructure.Services.Exchange
                     if (!storedEventResult.IsAcknowledged || storedEventResult.InsertedId is null)
                     {
                         throw new DatabaseException(
-                            $"Failed to store {storedEvent.EventType} event: {storedEventResult?.ErrorMessage ?? "Unknown error"}");
+                            $"Failed to store {storedEvent.GetType().Name} event: {storedEventResult?.ErrorMessage ?? "Unknown error"}");
                     }
 
                     // Publish the event to be handled by relevant services

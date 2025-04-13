@@ -1,11 +1,7 @@
-using Application.Contracts.Requests.Payment;
-using Application.Contracts.Responses;
 using Application.Extensions;
 using Application.Interfaces;
 using Application.Interfaces.Exchange;
 using Domain.DTOs.Error;
-using Domain.Models.Payment;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Diagnostics;
@@ -36,114 +32,6 @@ namespace crypto_investment_project.Server.Controllers
             _balanceManagementService = balanceManagementService ?? throw new ArgumentNullException(nameof(balanceManagementService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        }
-
-        /// <summary>
-        /// Processes a payment for cryptocurrency purchase
-        /// </summary>
-        /// <param name="paymentRequest">Payment request details</param>
-        /// <returns>Payment processing result</returns>
-        /// <response code="200">Payment processed successfully</response>
-        /// <response code="400">Invalid payment request</response>
-        /// <response code="401">Unauthorized request</response>
-        /// <response code="429">Too many requests</response>
-        /// <response code="500">Internal server error</response>
-        [HttpPost("payment")]
-        [Authorize]
-        [EnableRateLimiting("heavyOperations")]
-        [ValidateAntiForgeryToken]
-        [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status429TooManyRequests)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
-        public async Task<IActionResult> ProcessPayment([FromBody] PaymentIntentRequest paymentRequest)
-        {
-            var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-
-            using (_logger.BeginScope(new Dictionary<string, object>
-            {
-                ["CorrelationId"] = correlationId,
-                ["Operation"] = "ProcessPayment",
-                ["UserId"] = paymentRequest?.UserId
-            }))
-            {
-                try
-                {
-                    // Validate request
-                    if (paymentRequest is null)
-                    {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "A valid payment request is required.",
-                            Code = "INVALID_PAYMENT_REQUEST",
-                            TraceId = correlationId
-                        });
-                    }
-
-                    // Validate user ID
-                    if (string.IsNullOrEmpty(paymentRequest.UserId) || !Guid.TryParse(paymentRequest.UserId, out var userId))
-                    {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Invalid user ID provided.",
-                            Code = "INVALID_USER_ID",
-                            TraceId = correlationId
-                        });
-                    }
-
-                    // Validate subscription ID
-                    if (string.IsNullOrEmpty(paymentRequest.SubscriptionId) || !Guid.TryParse(paymentRequest.SubscriptionId, out var subscriptionId))
-                    {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Invalid subscription ID provided.",
-                            Code = "INVALID_SUBSCRIPTION_ID",
-                            TraceId = correlationId
-                        });
-                    }
-
-                    // Map request to domain model
-                    var paymentData = new PaymentData
-                    {
-                        UserId = userId,
-                        SubscriptionId = subscriptionId,
-                        Provider = paymentRequest.Provider,
-                        PaymentProviderId = paymentRequest.PaymentId,
-                        InvoiceId = paymentRequest.InvoiceId,
-                        PaymentProviderFee = paymentRequest.PaymentProviderFee,
-                        TotalAmount = paymentRequest.TotalAmount,
-                        PlatformFee = paymentRequest.PlatformFee,
-                        NetAmount = paymentRequest.NetAmount,
-                        Currency = paymentRequest.Currency,
-                        Status = paymentRequest.Status,
-                    };
-
-                    _logger.LogInformation(
-                        "Processing payment of {Amount} {Currency} for user {UserId}, subscription {SubscriptionId}",
-                        paymentData.TotalAmount, paymentData.Currency, paymentData.UserId, paymentData.SubscriptionId);
-
-                    // Process payment
-                    var processResult = await _paymentProcessingService.ProcessPayment(paymentData);
-
-                    if (processResult == null || !processResult.IsSuccess || processResult.Data == null)
-                    {
-                        throw new InvalidOperationException(processResult?.ErrorMessage ?? "Payment processing returned null result.");
-                    }
-                    return processResult.ToActionResult(this);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing payment: {ErrorMessage}", ex.Message);
-
-                    return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
-                    {
-                        Message = "An error occurred while processing the payment.",
-                        Code = "PAYMENT_PROCESSING_ERROR",
-                        TraceId = correlationId
-                    });
-                }
-            }
         }
 
         /// <summary>

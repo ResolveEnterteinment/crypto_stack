@@ -7,6 +7,6 @@
     {
         Pending,
         Active,
-        Cancelled
+        Canceled,
     }
 }

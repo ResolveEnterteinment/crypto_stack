@@ -2,12 +2,14 @@
 using Application.Interfaces;
 using Domain.DTOs.Settings;
 using Domain.Events;
+using Domain.Exceptions;
 using Domain.Models.Event;
 using MediatR;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using Polly;
 
 namespace Infrastructure.Services
 {
@@ -31,7 +33,7 @@ namespace Infrastructure.Services
             new List<CreateIndexModel<EventData>>
             {
                 new CreateIndexModel<EventData>(
-                    Builders<EventData>.IndexKeys.Ascending(e => e.EventType),
+                    Builders<EventData>.IndexKeys.Ascending(e => e.Name),
                     new CreateIndexOptions { Name = "EventType_1" }
                 ),
                 new CreateIndexModel<EventData>(
@@ -62,6 +64,32 @@ namespace Infrastructure.Services
                     eventToPublish.GetType().Name,
                     eventToPublish.EventId);
 
+                var storedEvent = new EventData
+                {
+                    Name = eventToPublish.GetType().Name,
+                    Payload = eventToPublish.DomainRecordId.ToString()
+                };
+
+                // Apply retry pattern for storing event data
+                var retryPolicy = Polly.Policy
+                    .Handle<Exception>()
+                    .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+                        (ex, time, retryCount, ctx) =>
+                        {
+                            _logger.LogWarning(ex, "Attempt {RetryCount} to store {EventType} event failed. Retrying in {RetryTime}ms",
+                                retryCount, eventToPublish.GetType().Name, time.TotalMilliseconds);
+                        });
+
+                var storedEventResult = await retryPolicy.ExecuteAsync(async () =>
+                    await InsertOneAsync(storedEvent));
+
+                if (storedEventResult == null || !storedEventResult.IsAcknowledged || storedEventResult.InsertedId is null)
+                {
+                    throw new DatabaseException($"Failed to store {eventToPublish.GetType().Name} event: {storedEventResult?.ErrorMessage ?? "Insert result returned null."}");
+                }
+
+                eventToPublish.EventId = (Guid)storedEventResult.InsertedId;
+
                 await _mediator.Publish(eventToPublish);
             }
             catch (Exception ex)
@@ -83,13 +111,13 @@ namespace Infrastructure.Services
         /// <param name="eventType">The event type name</param>
         /// <param name="limit">Maximum number of events to retrieve</param>
         /// <returns>List of unprocessed events</returns>
-        public async Task<IEnumerable<EventData>> GetUnprocessedEventsAsync(string eventType, int limit = 100)
+        public async Task<IEnumerable<EventData>> GetUnprocessedEventsAsync(Type eventType, int limit = 100)
         {
             try
             {
                 // Don't cache unprocessed events queries - we need fresh data
                 var filter = Builders<EventData>.Filter.And(
-                    Builders<EventData>.Filter.Eq(e => e.EventType, eventType),
+                    Builders<EventData>.Filter.Eq(e => e.GetType(), eventType),
                     Builders<EventData>.Filter.Eq(e => e.Processed, false)
                 );
 
@@ -152,7 +180,7 @@ namespace Infrastructure.Services
                     cacheKey,
                     async () =>
                     {
-                        var filter = Builders<EventData>.Filter.Eq(e => e.EventType, eventType);
+                        var filter = Builders<EventData>.Filter.Eq(e => e.GetType().Name, eventType);
                         var sort = Builders<EventData>.Sort.Descending(e => e.CreatedAt);
 
                         return await _collection.Find(filter)

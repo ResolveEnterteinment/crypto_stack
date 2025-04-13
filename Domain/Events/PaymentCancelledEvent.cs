@@ -7,10 +7,10 @@ namespace Domain.Events
     public class PaymentCancelledEvent : BaseEvent, INotification
     {
         public PaymentData Payment { get; }
-        public PaymentCancelledEvent(PaymentData payment, Guid storedEventId)
+        public PaymentCancelledEvent(PaymentData payment)
         {
-            EventId = storedEventId;
             Payment = payment;
+            DomainRecordId = payment.Id;
         }
     }
 }

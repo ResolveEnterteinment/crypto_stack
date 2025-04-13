@@ -24,14 +24,17 @@ namespace Domain.DTOs.Payment
         /// <summary>
         /// The currency code (e.g., USD)
         /// </summary>
-        public string? Currency { get; set; } = "USD";
+        public string Currency { get; set; } = "USD";
 
         /// <summary>
         /// Whether this is a recurring subscription
         /// </summary>
         public bool IsRecurring { get; set; }
 
-        public string Interval { get; set; }
+        /// <summary>
+        /// The payment interval for subscriptions
+        /// </summary>
+        public string? Interval { get; set; }
 
         /// <summary>
         /// URL to return to after successful payment

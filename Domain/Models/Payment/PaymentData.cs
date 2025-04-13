@@ -3,7 +3,7 @@
     public class PaymentData : BaseEntity
     {
         public required Guid UserId { get; set; }
-        public required Guid SubscriptionId { get; set; }
+        public Guid SubscriptionId { get; set; }
         public required string Provider { get; set; }
         public required string PaymentProviderId { get; set; }
         public required string InvoiceId { get; set; }
@@ -13,5 +13,6 @@
         public required decimal NetAmount { get; set; }
         public required string Currency { get; set; }
         public required string Status { get; set; }
+        public int RetryCount { get; set; } = 0;
     }
 }

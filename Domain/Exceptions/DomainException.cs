@@ -745,6 +745,55 @@ namespace Domain.Exceptions
     }
 
     /// <summary>
+    /// Exception thrown for idempotency conflicts
+    /// </summary>
+    [Serializable]
+    public class IdempotencyException : DomainException
+    {
+        /// <summary>
+        /// Gets the Idempotency Key.
+        /// </summary>
+        public string IdempotencyKey { get; }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="IdempotencyException"/> class.
+        /// </summary>
+        /// <param name="idempotencyKey">The idempotency Key.</param>
+        public IdempotencyException(string idempotencyKey)
+            : base($"Idempotency conflict detected for key {idempotencyKey}", "IDEMPOTENCY_CONFLICT")
+        {
+            IdempotencyKey = idempotencyKey;
+
+            AddContext("ıdempotencyKey", idempotencyKey);
+        }
+
+        /// <summary>
+        /// Used for serialization purposes.
+        /// </summary>
+        protected IdempotencyException(SerializationInfo info, StreamingContext context)
+            : base(info, context)
+        {
+            IdempotencyKey = info.GetString(nameof(IdempotencyKey));
+        }
+
+        /// <summary>
+        /// Serializes the exception data.
+        /// </summary>
+        /// <param name="info">The serialization info.</param>
+        /// <param name="context">The streaming context.</param>
+        public override void GetObjectData(SerializationInfo info, StreamingContext context)
+        {
+            if (info == null)
+            {
+                throw new ArgumentNullException(nameof(info));
+            }
+
+            info.AddValue(nameof(IdempotencyKey), IdempotencyKey);
+            base.GetObjectData(info, context);
+        }
+    }
+
+    /// <summary>
     /// Exception thrown when a payment event cannot be processed
     /// </summary>
     [Serializable]

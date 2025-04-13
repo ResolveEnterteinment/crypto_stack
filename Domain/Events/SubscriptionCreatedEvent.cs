@@ -9,9 +9,8 @@ namespace Domain.Events
         public PaymentProviderEvent Subscription;
 
         public DateTime CurrentPeriodEnd;
-        public SubscriptionCreatedEvent(PaymentProviderEvent subscription, Guid storedEventId)
+        public SubscriptionCreatedEvent(PaymentProviderEvent subscription)
         {
-            EventId = storedEventId;
             Subscription = subscription;
         }
     }

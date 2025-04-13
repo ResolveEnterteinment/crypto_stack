@@ -207,29 +207,31 @@ const TestimonialCarousel: React.FC<TestimonialCarouselProps> = ({
             </div>
 
             {/* Keyframe animations */}
-            <style jsx>{`
-        @keyframes slideFromRight {
-          from {
-            opacity: 0;
-            transform: translateX(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
-        
-        @keyframes slideFromLeft {
-          from {
-            opacity: 0;
-            transform: translateX(-20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
-      `}</style>
+            <style dangerouslySetInnerHTML={{
+                __html: `
+    @keyframes slideFromRight {
+      from {
+        opacity: 0;
+        transform: translateX(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+    
+    @keyframes slideFromLeft {
+      from {
+        opacity: 0;
+        transform: translateX(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+  `
+            }} />
         </div>
     );
 };

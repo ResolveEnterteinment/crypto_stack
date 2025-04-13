@@ -264,24 +264,24 @@ namespace Application.Validation
                 .NotEmpty().WithMessage("PaymentId is required")
                 .MaximumLength(100).WithMessage("PaymentId cannot exceed 100 characters");
 
-            RuleFor(x => x.TotalAmount)
+            RuleFor(x => x.Amount)
                 .GreaterThan(0).WithMessage("TotalAmount must be greater than zero")
                 .LessThan(1000000).WithMessage("TotalAmount exceeds maximum allowed value");
 
-            RuleFor(x => x.PaymentProviderFee)
+            /*RuleFor(x => x.PaymentProviderFee)
                 .GreaterThanOrEqualTo(0).WithMessage("PaymentProviderFee cannot be negative")
-                .LessThan(x => x.TotalAmount).WithMessage("Fee cannot be greater than total amount");
+                .LessThan(x => x.Amount).WithMessage("Fee cannot be greater than total amount");
 
             RuleFor(x => x.PlatformFee)
                 .GreaterThanOrEqualTo(0).WithMessage("PlatformFee cannot be negative")
-                .LessThan(x => x.TotalAmount).WithMessage("Fee cannot be greater than total amount");
+                .LessThan(x => x.Amount).WithMessage("Fee cannot be greater than total amount");
 
             RuleFor(x => x.NetAmount)
                 .GreaterThan(0).WithMessage("NetAmount must be greater than zero")
-                .LessThanOrEqualTo(x => x.TotalAmount).WithMessage("NetAmount cannot exceed TotalAmount")
+                .LessThanOrEqualTo(x => x.Amount).WithMessage("NetAmount cannot exceed TotalAmount")
                 .Must((request, netAmount) =>
-                    Math.Abs(netAmount - (request.TotalAmount - request.PaymentProviderFee - request.PlatformFee)) < 0.01m)
-                .WithMessage("NetAmount must equal TotalAmount minus fees");
+                    Math.Abs(netAmount - (request.Amount - request.PaymentProviderFee - request.PlatformFee)) < 0.01m)
+                .WithMessage("NetAmount must equal TotalAmount minus fees");*/
 
             RuleFor(x => x.Currency)
                 .NotEmpty().WithMessage("Currency is required")

@@ -1,21 +1,24 @@
 import React, { useState } from 'react';
 
+interface ButtonProps {
+    variant?: 'primary' | 'secondary' | 'gradient' | 'outline' | 'ghost' | 'danger' | 'success';
+    size?: 'sm' | 'md' | 'lg';
+    isFullWidth?: boolean;
+    onClick?: () => void;
+    href?: string | undefined;
+    isDisabled?: boolean;
+    isLoading?: boolean;
+    icon?: React.ReactNode;
+    iconPosition?: 'left' | 'right';
+    children: React.ReactNode;
+    className?: string;
+    [x: string]: any; // For other props
+}
+
 /**
  * Animated Button Component with hover effects
- * 
- * @param {Object} props - Component props
- * @param {string} props.variant - Button style variant ('primary', 'secondary', 'gradient', 'outline', 'ghost')
- * @param {string} props.size - Button size ('sm', 'md', 'lg')
- * @param {boolean} props.isFullWidth - Whether button should take full width
- * @param {Function} props.onClick - Click handler function
- * @param {string} props.href - Optional URL if button should act as a link
- * @param {boolean} props.isDisabled - Whether button is disabled
- * @param {boolean} props.isLoading - Whether button is in loading state
- * @param {string} props.icon - Optional icon to display
- * @param {string} props.iconPosition - Position of icon ('left' or 'right')
- * @param {React.ReactNode} props.children - Button content
  */
-const Button = ({
+const Button: React.FC<ButtonProps> = ({
     variant = 'primary',
     size = 'md',
     isFullWidth = false,

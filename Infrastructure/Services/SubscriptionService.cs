@@ -12,12 +12,14 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 
 namespace Infrastructure.Services
 {
     public class SubscriptionService :
         BaseService<SubscriptionData>,
         ISubscriptionService,
+        INotificationHandler<CheckoutSessionCompletedEvent>,
         INotificationHandler<SubscriptionCreatedEvent>,
         INotificationHandler<PaymentReceivedEvent>,
         INotificationHandler<PaymentCancelledEvent>
@@ -297,7 +299,7 @@ namespace Infrastructure.Services
                 };
 
                 // If subscription is cancelled, also set the IsCancelled flag
-                if (status == SubscriptionStatus.Cancelled)
+                if (status == SubscriptionStatus.Canceled)
                 {
                     updatedFields["IsCancelled"] = true;
                 }
@@ -313,7 +315,7 @@ namespace Infrastructure.Services
                     string statusMessage = status switch
                     {
                         SubscriptionStatus.Active => "activated",
-                        SubscriptionStatus.Cancelled => "cancelled",
+                        SubscriptionStatus.Canceled => "cancelled",
                         SubscriptionStatus.Pending => "pending approval",
                         _ => "updated"
                     };
@@ -349,7 +351,7 @@ namespace Infrastructure.Services
                     throw new KeyNotFoundException($"Subscription with ID {subscriptionId} not found");
                 }
 
-                var updatedFields = new { IsCancelled = true, Status = SubscriptionStatus.Cancelled };
+                var updatedFields = new { IsCancelled = true, Status = SubscriptionStatus.Canceled };
                 var result = await UpdateOneAsync(subscriptionId, updatedFields);
 
                 if (result.ModifiedCount > 0)
@@ -482,7 +484,7 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task Handle(CheckoutSessionCreatedEvent notification, CancellationToken cancellationToken)
+        public async Task Handle(CheckoutSessionCompletedEvent notification, CancellationToken cancellationToken)
         {
             try
             {
@@ -521,12 +523,12 @@ namespace Infrastructure.Services
                         });
                     }
 
-                    _logger.LogInformation("Successfully updated subscription {SubscriptionId} with provider details",
+                    _logger.LogInformation("Successfully updated subscription {SubscriptionId} with session details",
                         subscriptionId);
                 }
                 else
                 {
-                    _logger.LogWarning("Failed to update subscription {SubscriptionId} with provider details",
+                    _logger.LogWarning("Failed to update subscription {SubscriptionId} with session details",
                         subscriptionId);
                 }
             }
@@ -626,16 +628,19 @@ namespace Infrastructure.Services
                 var newQuantity = totalInvestments + investmentQuantity;
 
                 // Get next due date from payment provider
-                DateTime? nextDueDate;
-                if (!string.IsNullOrEmpty(subscription.ProviderSubscriptionId))
+                var nextDueDate = await _paymentService.Providers["Stripe"].GetNextDueDate(notification.Payment.InvoiceId);
+
+                if (nextDueDate == null)
                 {
-                    nextDueDate = await _paymentService.Providers[payment.Provider]
-                        .GetNextDueDate(payment.InvoiceId);
-                }
-                else
-                {
-                    // Default to one month in the future if no provider subscription
-                    nextDueDate = DateTime.UtcNow.AddMonths(1);
+                    var interval = subscription.Interval;
+                    nextDueDate = interval switch
+                    {
+                        SubscriptionInterval.Daily => DateTime.Now.AddDays(1),
+                        SubscriptionInterval.Weekly => DateTime.Now.AddWeeks(1),
+                        SubscriptionInterval.Monthly => DateTime.Now.AddMonths(1),
+                        SubscriptionInterval.Yearly => DateTime.Now.AddYears(1),
+                        _ => DateTime.Now.AddMonths(1),
+                    };
                 }
 
                 // Update subscription
@@ -694,7 +699,7 @@ namespace Infrastructure.Services
                     throw new KeyNotFoundException($"Subscription {subscriptionId} not found");
                 }
 
-                var updateResult = await UpdateSubscriptionStatusAsync(payment.SubscriptionId, SubscriptionStatus.Cancelled);
+                var updateResult = await UpdateSubscriptionStatusAsync(payment.SubscriptionId, SubscriptionStatus.Canceled);
 
                 if (updateResult.ModifiedCount > 0)
                 {
@@ -723,6 +728,37 @@ namespace Infrastructure.Services
                     notification.Payment.Id, ex.Message);
                 // We don't rethrow here to avoid disrupting the event pipeline
             }
+        }
+        /// <summary>
+        /// Maps a Stripe subscription status to our internal status
+        /// </summary>
+        private SubscriptionStatus StripeSubscriptionStatusToInternal(string stripeStatus)
+        {
+            return stripeStatus switch
+            {
+                "active" => SubscriptionStatus.Active,
+                "canceled" => SubscriptionStatus.Canceled,
+                "unpaid" => SubscriptionStatus.Active,
+                "past_due" => SubscriptionStatus.Active,
+                "trialing" => SubscriptionStatus.Active,
+                "incomplete" => SubscriptionStatus.Pending,
+                "incomplete_expired" => SubscriptionStatus.Canceled,
+                _ => SubscriptionStatus.Pending
+            };
+        }
+        /// <summary>
+        /// Maps a Stripe subscription status to our internal status
+        /// </summary>
+        private string StripeSubscriptionIntervalToInternal(string stripeInterval)
+        {
+            return stripeInterval switch
+            {
+                "day" => SubscriptionInterval.Daily,
+                "week" => SubscriptionInterval.Weekly,
+                "month" => SubscriptionInterval.Monthly,
+                "year" => SubscriptionInterval.Yearly,
+                _ => SubscriptionInterval.Monthly
+            };
         }
 
     }
