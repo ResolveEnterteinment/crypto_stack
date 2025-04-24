@@ -1,6 +1,8 @@
 ﻿using Application.Interfaces;
+using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Payment;
+using Application.Interfaces.Subscription;
 using MongoDB.Driver;
 
 namespace Domain.Interfaces

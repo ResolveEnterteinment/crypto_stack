@@ -1,305 +1,189 @@
 ﻿using Application.Interfaces;
-using Domain.DTOs.Settings;
+using Application.Interfaces.Base;
+using Domain.DTOs;
 using Domain.Models.Idempotency;
+using Infrastructure.Services.Base;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using System.Diagnostics;
 using System.Text.Json;
 
 namespace Infrastructure.Services
 {
-    /// <summary>
-    /// MongoDB-based implementation of the idempotency service with enhanced caching.
-    /// </summary>
     public class IdempotencyService : BaseService<IdempotencyData>, IIdempotencyService
     {
-        // Default expiration of 24 hours for idempotency records
         private static readonly TimeSpan DEFAULT_EXPIRATION = TimeSpan.FromHours(24);
         private static readonly TimeSpan CACHE_DURATION = TimeSpan.FromMinutes(30);
-        private const string IDEMPOTENCY_CACHE_PREFIX = "idempotency:";
+        private const string CACHE_PREFIX = "idempotency:";
 
+        private readonly IMemoryCache _memoryCache;
         private readonly JsonSerializerOptions _jsonOptions;
 
         public IdempotencyService(
-            IOptions<MongoDbSettings> mongoDbSettings,
-            IMongoClient mongoClient,
+            ICrudRepository<IdempotencyData> repository,
+            ICacheService<IdempotencyData> cacheService,
+            IMongoIndexService<IdempotencyData> indexService,
             ILogger<IdempotencyService> logger,
-            IMemoryCache cache
+            IEventService eventService,
+            IMemoryCache memoryCache
         ) : base(
-            mongoClient,
-            mongoDbSettings,
-            "idempotency",
+            repository,
+            cacheService,
+            indexService,
             logger,
-            cache,
-            new List<CreateIndexModel<IdempotencyData>>
+            eventService,
+            new[]
             {
                 new CreateIndexModel<IdempotencyData>(
-                    Builders<IdempotencyData>.IndexKeys.Ascending(x => x.Key),
-                    new CreateIndexOptions { Name = "Key_Index", Unique = true }
-                ),
+                    Builders<IdempotencyData>.IndexKeys.Ascending(d => d.Key),
+                    new CreateIndexOptions { Name = "Key_Index", Unique = true }),
                 new CreateIndexModel<IdempotencyData>(
-                    Builders<IdempotencyData>.IndexKeys.Ascending(x => x.ExpiresAt),
-                    new CreateIndexOptions { Name = "ExpiresAt_1", ExpireAfter = TimeSpan.Zero }
-                )
+                    Builders<IdempotencyData>.IndexKeys.Ascending(d => d.ExpiresAt),
+                    new CreateIndexOptions { Name = "ExpiresAt_1", ExpireAfter = TimeSpan.Zero })
             }
         )
         {
-            // Setup json serialization options
+            _memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache));
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = false,
                 DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
             };
         }
 
-        /// <summary>
-        /// Gets the stored result for a given idempotency key with in-memory caching.
-        /// </summary>
-        public async Task<(bool exists, T result)> GetResultAsync<T>(string idempotencyKey)
+        public async Task<(bool exists, T result)> GetResultAsync<T>(string key)
         {
-            if (string.IsNullOrEmpty(idempotencyKey))
-                throw new ArgumentNullException(nameof(idempotencyKey), "Idempotency key cannot be null or empty.");
+            if (string.IsNullOrWhiteSpace(key))
+                throw new ArgumentNullException(nameof(key));
 
-            // Check in-memory cache first for fast access
-            string cacheKey = $"{IDEMPOTENCY_CACHE_PREFIX}{idempotencyKey}";
+            string cacheKey = CACHE_PREFIX + key;
+            if (_memoryCache.TryGetValue(cacheKey, out T cached))
+                return (true, cached);
 
-            if (_cache.TryGetValue(cacheKey, out T cachedResult))
-            {
-                _logger.LogDebug("Cache hit for idempotency key: {Key}", idempotencyKey);
-                return (true, cachedResult);
-            }
+            // Fetch from DB
+            var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
+            var record = await Repository.GetOneAsync(filter);
+            if (record == null || string.IsNullOrEmpty(record.ResultJson))
+                return (false, default);
 
             try
             {
-                // Not in cache, check database
-                var filter = Builders<IdempotencyData>.Filter.Eq(r => r.Key, idempotencyKey);
-                var record = await _collection.Find(filter).FirstOrDefaultAsync();
-
-                if (record == null || string.IsNullOrEmpty(record.ResultJson))
-                {
-                    return (false, default);
-                }
-
-                try
-                {
-                    var result = JsonSerializer.Deserialize<T>(record.ResultJson, _jsonOptions);
-
-                    // Store in cache for future fast access
-                    _cache.Set(cacheKey, result, CACHE_DURATION);
-
-                    return (true, result);
-                }
-                catch (JsonException ex)
-                {
-                    _logger.LogError(ex, "Failed to deserialize stored result for key {IdempotencyKey}", idempotencyKey);
-                    return (false, default);
-                }
+                var result = JsonSerializer.Deserialize<T>(record.ResultJson, _jsonOptions);
+                _memoryCache.Set(cacheKey, result, CACHE_DURATION);
+                return (true, result);
             }
-            catch (Exception ex)
+            catch (JsonException ex)
             {
-                _logger.LogError(ex, "Error retrieving idempotency record for key {Key}", idempotencyKey);
+                Logger.LogError(ex, "Deserialization failed for idempotency key {Key}", key);
                 return (false, default);
             }
         }
 
-        /// <summary>
-        /// Stores a result with the given idempotency key.
-        /// </summary>
-        public async Task StoreResultAsync<T>(string idempotencyKey, T result, TimeSpan? expiration = null)
+        public async Task StoreResultAsync<T>(string key, T result, TimeSpan? expiration = null)
         {
-            if (string.IsNullOrEmpty(idempotencyKey))
-                throw new ArgumentNullException(nameof(idempotencyKey), "Idempotency key cannot be null or empty.");
+            if (string.IsNullOrWhiteSpace(key))
+                throw new ArgumentNullException(nameof(key));
 
-            string resultJson = null;
+            var json = result != null
+                ? JsonSerializer.Serialize(result, _jsonOptions)
+                : null;
+
+            var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
+            var existing = await Repository.GetOneAsync(filter);
+            var expireAt = DateTime.UtcNow.Add(expiration ?? DEFAULT_EXPIRATION);
+
+            if (existing != null)
+            {
+                // Update
+                await Repository.UpdateAsync(existing.Id, new { ResultJson = json, ExpiresAt = expireAt });
+            }
+            else
+            {
+                // Insert new record
+                var record = new IdempotencyData
+                {
+                    Key = key,
+                    ResultJson = json,
+                    CreatedAt = DateTime.UtcNow,
+                    ExpiresAt = expireAt
+                };
+                await Repository.InsertAsync(record);
+            }
+
+            // Cache
             if (result != null)
-            {
-                try
-                {
-                    resultJson = JsonSerializer.Serialize(result, _jsonOptions);
-                }
-                catch (JsonException ex)
-                {
-                    _logger.LogError(ex, "Failed to serialize result for key {IdempotencyKey}", idempotencyKey);
-                    throw;
-                }
-            }
-
-            try
-            {
-                // First check if a record already exists
-                var filter = Builders<IdempotencyData>.Filter.Eq(r => r.Key, idempotencyKey);
-                var exists = await _collection.CountDocumentsAsync(filter) > 0;
-
-                if (exists)
-                {
-                    // Update the existing record without changing the ID
-                    var update = Builders<IdempotencyData>.Update
-                        .Set(r => r.ResultJson, resultJson)
-                        .Set(r => r.ExpiresAt, DateTime.UtcNow.Add(expiration ?? DEFAULT_EXPIRATION));
-
-                    await _collection.UpdateOneAsync(filter, update);
-                    _logger.LogDebug("Updated existing idempotency record for key {Key}", idempotencyKey);
-                }
-                else
-                {
-                    // Create a new record
-                    var record = new IdempotencyData
-                    {
-                        Id = Guid.NewGuid(),
-                        Key = idempotencyKey,
-                        ResultJson = resultJson,
-                        CreatedAt = DateTime.UtcNow,
-                        ExpiresAt = DateTime.UtcNow.Add(expiration ?? DEFAULT_EXPIRATION)
-                    };
-
-                    await _collection.InsertOneAsync(record);
-                    _logger.LogDebug("Created new idempotency record for key {Key}", idempotencyKey);
-                }
-
-                // Store in cache for future fast access
-                if (result != null)
-                {
-                    string cacheKey = $"{IDEMPOTENCY_CACHE_PREFIX}{idempotencyKey}";
-                    _cache.Set(cacheKey, result, CACHE_DURATION);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to store idempotency record for key {Key}", idempotencyKey);
-                throw;
-            }
+                _memoryCache.Set(CACHE_PREFIX + key, result, CACHE_DURATION);
         }
 
-        /// <summary>
-        /// Checks if an idempotency key already exists, using caching for performance.
-        /// </summary>
-        public async Task<bool> HasKeyAsync(string idempotencyKey)
+        public async Task<bool> HasKeyAsync(string key)
         {
-            if (string.IsNullOrEmpty(idempotencyKey))
-                throw new ArgumentNullException(nameof(idempotencyKey), "Idempotency key cannot be null or empty.");
+            if (string.IsNullOrWhiteSpace(key))
+                throw new ArgumentNullException(nameof(key));
 
-            // Fast path - check cache first
-            string cacheKey = $"{IDEMPOTENCY_CACHE_PREFIX}exists:{idempotencyKey}";
-
-            if (_cache.TryGetValue(cacheKey, out bool exists))
-            {
+            string cacheKey = CACHE_PREFIX + "exists:" + key;
+            if (_memoryCache.TryGetValue(cacheKey, out bool exists))
                 return exists;
-            }
 
-            try
-            {
-                // Check database
-                var filter = Builders<IdempotencyData>.Filter.Eq(r => r.Key, idempotencyKey);
-                var count = await _collection.CountDocumentsAsync(filter);
-                exists = count > 0;
-
-                // Cache the result
-                _cache.Set(cacheKey, exists, CACHE_DURATION);
-
-                return exists;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error checking for idempotency key {Key}", idempotencyKey);
-                // In case of error, safer to return false so operation can proceed
-                return false;
-            }
+            var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
+            var record = await Repository.GetOneAsync(filter);
+            exists = record != null;
+            _memoryCache.Set(cacheKey, exists, CACHE_DURATION);
+            return exists;
         }
 
-        /// <summary>
-        /// Executes an operation with idempotency guarantees.
-        /// </summary>
-        public async Task<T> ExecuteIdempotentOperationAsync<T>(
-            string idempotencyKey,
-            Func<Task<T>> operation,
-            TimeSpan? expiration = null)
+        public async Task<T> ExecuteIdempotentOperationAsync<T>(string key, Func<Task<T>> operation, TimeSpan? expiration = null)
         {
-            if (string.IsNullOrEmpty(idempotencyKey))
-                throw new ArgumentNullException(nameof(idempotencyKey), "Idempotency key cannot be null or empty.");
+            if (string.IsNullOrWhiteSpace(key))
+                throw new ArgumentNullException(nameof(key));
 
-            using var activity = new Activity("IdempotentOperation")
-                .SetTag("idempotency.key", idempotencyKey)
-                .Start();
-
-            // Check if the operation was already executed
-            var (resultExists, existingResult) = await GetResultAsync<T>(idempotencyKey);
-            if (resultExists)
+            using var activity = new Activity("IdempotentOperation").SetTag("key", key).Start();
+            var (found, cached) = await GetResultAsync<T>(key);
+            if (found)
             {
-                _logger.LogInformation("Found existing result for idempotency key: {Key}", idempotencyKey);
-                activity?.SetTag("idempotency.cached", true);
-                return existingResult;
+                activity.SetTag("cached", true);
+                return cached;
             }
 
-            activity?.SetTag("idempotency.cached", false);
-
+            activity.SetTag("cached", false);
             try
             {
-                // Execute the operation
                 var result = await operation();
-
-                // Store the result for future idempotency checks
-                await StoreResultAsync(idempotencyKey, result, expiration);
-
+                await StoreResultAsync(key, result, expiration);
                 return result;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Operation failed for idempotency key: {Key}", idempotencyKey);
-                activity?.SetTag("error", true);
-                activity?.SetTag("error.message", ex.Message);
+                Logger.LogError(ex, "Operation failed for idempotency key {Key}", key);
+                activity.SetTag("error", true);
                 throw;
             }
         }
 
-        /// <summary>
-        /// Removes an idempotency key and its associated result.
-        /// </summary>
-        public async Task<bool> RemoveKeyAsync(string idempotencyKey)
+        public async Task<bool> RemoveKeyAsync(string key)
         {
-            if (string.IsNullOrEmpty(idempotencyKey))
-                throw new ArgumentNullException(nameof(idempotencyKey));
+            if (string.IsNullOrWhiteSpace(key))
+                throw new ArgumentNullException(nameof(key));
 
-            try
-            {
-                var filter = Builders<IdempotencyData>.Filter.Eq(r => r.Key, idempotencyKey);
-                var result = await _collection.DeleteOneAsync(filter);
+            var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
+            var existing = await Repository.GetOneAsync(filter);
+            if (existing == null) return false;
 
-                // Remove from cache
-                string cacheKey = $"{IDEMPOTENCY_CACHE_PREFIX}{idempotencyKey}";
-                _cache.Remove(cacheKey);
-
-                string existsKey = $"{IDEMPOTENCY_CACHE_PREFIX}exists:{idempotencyKey}";
-                _cache.Remove(existsKey);
-
-                return result.DeletedCount > 0;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error removing idempotency key {Key}", idempotencyKey);
-                return false;
-            }
+            await Repository.DeleteAsync(existing.Id);
+            _memoryCache.Remove(CACHE_PREFIX + key);
+            _memoryCache.Remove(CACHE_PREFIX + "exists:" + key);
+            return true;
         }
 
-        /// <summary>
-        /// Purges expired idempotency records manually.
-        /// </summary>
-        public async Task<long> PurgeExpiredRecordsAsync()
+        public async Task<ResultWrapper<long>> PurgeExpiredRecordsAsync()
         {
-            try
-            {
-                var filter = Builders<IdempotencyData>.Filter.Lt(r => r.ExpiresAt, DateTime.UtcNow);
-                var result = await _collection.DeleteManyAsync(filter);
-                _logger.LogInformation("Purged {Count} expired idempotency records", result.DeletedCount);
-                return result.DeletedCount;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error purging expired idempotency records");
-                return 0;
-            }
+            var now = DateTime.UtcNow;
+            var filter = Builders<IdempotencyData>.Filter.Lt(d => d.ExpiresAt, now);
+            var deleted = await DeleteManyAsync(filter);
+            if (deleted == null || !deleted.IsSuccess)
+                return ResultWrapper<long>.Failure(deleted.Reason, deleted.ErrorMessage);
+            Logger.LogInformation("Purged {Count} expired idempotency records", deleted);
+            return ResultWrapper<long>.Success(deleted.Data.ModifiedCount);
         }
     }
 }

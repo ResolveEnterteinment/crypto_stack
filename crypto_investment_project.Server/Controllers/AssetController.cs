@@ -1,6 +1,7 @@
 using Application.Contracts.Requests.Asset;
 using Application.Extensions;
 using Application.Interfaces;
+using Application.Interfaces.Asset;
 using Domain.DTOs;
 using Domain.Exceptions;
 using FluentValidation;
@@ -52,7 +53,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="404">If the user is not found</response>
         [HttpGet]
         [Route("supported")]
-        [IgnoreAntiforgeryToken]
+        //[IgnoreAntiforgeryToken]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -119,7 +120,7 @@ namespace crypto_investment_project.Server.Controllers
         [HttpPost]
         [Route("new")]
         [Authorize(Roles = "ADMIN")]
-        [ValidateAntiForgeryToken]
+        //[ValidateAntiForgeryToken]
         [EnableRateLimiting("heavyOperations")]
         [ProducesResponseType(StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -223,7 +224,7 @@ namespace crypto_investment_project.Server.Controllers
         [Route("update/{id}")]
         [Authorize]
         [EnableRateLimiting("heavyOperations")]
-        [ValidateAntiForgeryToken]
+        //[ValidateAntiForgeryToken]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -296,9 +297,9 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // Process the request
-                    var updateResult = await _assetService.UpdateOneAsync(assetId, updateRequest);
+                    var updateResult = await _assetService.UpdateAsync(assetId, updateRequest);
 
-                    if (updateResult == null || !updateResult.IsAcknowledged || updateResult.ModifiedCount <= 0)
+                    if (updateResult == null || !updateResult.IsSuccess)
                     {
                         throw new DomainException($"Failed to update asset id {assetId}", "ASSET_UPDATE_FAILED");
                     }
@@ -311,7 +312,7 @@ namespace crypto_investment_project.Server.Controllers
                     return Ok(new
                     {
                         message = $"Asset {assetId} updated successfully",
-                        modifiedCount = updateResult.ModifiedCount
+                        modifiedCount = 1
                     });
                 }
                 catch (Exception ex)

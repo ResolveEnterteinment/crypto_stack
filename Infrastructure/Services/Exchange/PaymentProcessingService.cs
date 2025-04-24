@@ -1,6 +1,8 @@
 ﻿using Application.Interfaces;
+using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Payment;
+using Application.Interfaces.Subscription;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Exchange;
@@ -122,11 +124,11 @@ namespace Infrastructure.Services.Exchange
                 });
 
                 // Mark event as processed
-                await _eventService.UpdateOneAsync(notification.EventId, new
+                await _eventService.UpdateAsync(notification.EventId, new
                 {
                     Processed = true,
                     ProcessedAt = DateTime.UtcNow
-                }, cancellationToken: cancellationToken);
+                }, cancellationToken);
 
                 // Store record for idempotency
                 await _idempotencyService.StoreResultAsync(idempotencyKey, true);
@@ -139,7 +141,7 @@ namespace Infrastructure.Services.Exchange
                     notification.Payment.Id);
 
                 // Mark event as failed but not processed so it can be retried
-                await _eventService.UpdateOneAsync(notification.EventId, new
+                await _eventService.UpdateAsync(notification.EventId, new
                 {
                     ErrorMessage = ex.Message,
                     LastAttempt = DateTime.UtcNow
@@ -243,11 +245,13 @@ namespace Infrastructure.Services.Exchange
                         }
 
                         // Get asset details
-                        var asset = await _assetService.GetByIdAsync(alloc.AssetId);
-                        if (asset == null)
+                        var assetResult = await _assetService.GetByIdAsync(alloc.AssetId);
+                        if (assetResult == null || !assetResult.IsSuccess)
                         {
                             throw new ResourceNotFoundException("Asset", alloc.AssetId.ToString());
                         }
+
+                        var asset = assetResult.Data;
 
                         // Get the exchange for this asset
                         if (string.IsNullOrEmpty(asset.Exchange) ||
@@ -333,94 +337,83 @@ namespace Infrastructure.Services.Exchange
                         await _orderManagementService.HandleDustAsync(placedOrder);
 
                         // Execute database operations in a transaction for ACID compliance
-                        using (var session = await _exchangeService.StartDBSession())
+                        await _exchangeService.ExecuteInTransactionAsync(async (session) =>
                         {
-                            try
+                            // Record the exchange order
+                            var exchangeOrder = new ExchangeOrderData
                             {
-                                session.StartTransaction();
+                                UserId = payment.UserId,
+                                PaymentProviderId = payment.PaymentProviderId,
+                                SubscriptionId = payment.SubscriptionId,
+                                PlacedOrderId = placedOrder.OrderId,
+                                AssetId = alloc.AssetId,
+                                Exchange = exchange.Name,
+                                QuoteQuantity = placedOrder.QuoteQuantity,
+                                QuoteQuantityFilled = placedOrder.QuoteQuantityFilled,
+                                Quantity = placedOrder.QuantityFilled,
+                                Price = placedOrder.Price,
+                                Status = placedOrder.Status
+                            };
 
-                                // Record the exchange order
-                                var exchangeOrder = new ExchangeOrderData
-                                {
-                                    UserId = payment.UserId,
-                                    PaymentProviderId = payment.PaymentProviderId,
-                                    SubscriptionId = payment.SubscriptionId,
-                                    PlacedOrderId = placedOrder.OrderId,
-                                    AssetId = alloc.AssetId,
-                                    Exchange = exchange.Name,
-                                    QuoteQuantity = placedOrder.QuoteQuantity,
-                                    QuoteQuantityFilled = placedOrder.QuoteQuantityFilled,
-                                    Quantity = placedOrder.QuantityFilled,
-                                    Price = placedOrder.Price,
-                                    Status = placedOrder.Status
-                                };
-
-                                var insertOrderResult = await _exchangeService.InsertOneAsync(exchangeOrder, session);
-                                if (!insertOrderResult.IsAcknowledged || insertOrderResult.InsertedId == null)
-                                {
-                                    throw new DatabaseException(
-                                        $"Failed to create order record: {insertOrderResult?.ErrorMessage ?? "Unknown error"}");
-                                }
-
-                                // Update user's balance
-                                var balanceUpdate = new BalanceData
-                                {
-                                    UserId = payment.UserId,
-                                    AssetId = alloc.AssetId,
-                                    Ticker = asset.Ticker,
-                                    Available = placedOrder.QuantityFilled,
-                                    LastUpdated = DateTime.UtcNow
-                                };
-
-                                var updateBalanceResult = await _balanceService.UpsertBalanceAsync(
-                                    payment.UserId, balanceUpdate, session);
-
-                                if (updateBalanceResult is null || !updateBalanceResult.IsSuccess)
-                                {
-                                    throw new DatabaseException(
-                                        $"Failed to update balances: {updateBalanceResult?.ErrorMessage ?? "Unknown error"}");
-                                }
-
-                                // Record the transaction
-                                var transaction = new TransactionData
-                                {
-                                    UserId = payment.UserId,
-                                    PaymentProviderId = payment.PaymentProviderId,
-                                    SubscriptionId = payment.SubscriptionId,
-                                    BalanceId = updateBalanceResult.Data.Id,
-                                    SourceName = exchange.Name,
-                                    SourceId = placedOrder.OrderId.ToString(),
-                                    Action = $"Exchange Order: Buy {asset.Ticker}",
-                                    Quantity = placedOrder.QuantityFilled
-                                };
-
-                                var insertTransactionResult = await _transactionService.InsertOneAsync(transaction, session);
-                                if (!insertTransactionResult.IsAcknowledged)
-                                {
-                                    throw new DatabaseException(
-                                        $"Failed to create transaction record: {insertTransactionResult?.ErrorMessage ?? "Unknown error"}");
-                                }
-
-                                await session.CommitTransactionAsync();
-
-                                _logger.LogInformation(
-                                    "Successfully executed order {OrderId} for {Ticker}: {Quantity} @ {Price}",
-                                    placedOrder.OrderId, asset.Ticker, placedOrder.QuantityFilled, placedOrder.Price);
-
-                                orderResults.Add(OrderResult.Success(
-                                    placedOrder.OrderId,
-                                    assetId,
-                                    placedOrder.QuoteQuantity,
-                                    placedOrder.QuantityFilled,
-                                    placedOrder.Status));
-                            }
-                            catch (Exception ex)
+                            var insertOrderResult = await _exchangeService.InsertAsync(exchangeOrder);
+                            if (insertOrderResult == null || !insertOrderResult.IsSuccess)
                             {
-                                await session.AbortTransactionAsync();
-                                _logger.LogError(ex, "Transaction failed for asset {AssetId}: {Message}", alloc.AssetId, ex.Message);
-                                throw;
+                                throw new DatabaseException(
+                                    $"Failed to create order record: {insertOrderResult?.ErrorMessage ?? "Unknown error"}");
                             }
-                        }
+
+                            // Update user's balance
+                            var balanceUpdate = new BalanceData
+                            {
+                                UserId = payment.UserId,
+                                AssetId = alloc.AssetId,
+                                Ticker = asset.Ticker,
+                                Available = placedOrder.QuantityFilled,
+                                LastUpdated = DateTime.UtcNow
+                            };
+
+                            var updateBalanceResult = await _balanceService.UpsertBalanceAsync(
+                                payment.UserId, balanceUpdate, session);
+
+                            if (updateBalanceResult is null || !updateBalanceResult.IsSuccess)
+                            {
+                                throw new DatabaseException(
+                                    $"Failed to update balances: {updateBalanceResult?.ErrorMessage ?? "Unknown error"}");
+                            }
+
+                            // Record the transaction
+                            var transaction = new TransactionData
+                            {
+                                UserId = payment.UserId,
+                                PaymentProviderId = payment.PaymentProviderId,
+                                SubscriptionId = payment.SubscriptionId,
+                                BalanceId = updateBalanceResult.Data.Id,
+                                SourceName = exchange.Name,
+                                SourceId = placedOrder.OrderId.ToString(),
+                                Action = $"Exchange Order: Buy {asset.Ticker}",
+                                Quantity = placedOrder.QuantityFilled
+                            };
+
+                            var insertTransactionResult = await _transactionService.InsertAsync(transaction);
+                            if (insertTransactionResult == null || !insertTransactionResult.IsSuccess)
+                            {
+                                throw new DatabaseException(
+                                    $"Failed to create transaction record: {insertTransactionResult?.ErrorMessage ?? "Unknown error"}");
+                            }
+
+                            _logger.LogInformation(
+                                "Successfully executed order {OrderId} for {Ticker}: {Quantity} @ {Price}",
+                                placedOrder.OrderId, asset.Ticker, placedOrder.QuantityFilled, placedOrder.Price);
+
+                            orderResults.Add(OrderResult.Success(
+                                placedOrder.OrderId,
+                                assetId,
+                                placedOrder.QuoteQuantity,
+                                placedOrder.QuantityFilled,
+                                placedOrder.Status));
+
+                            return true;
+                        });
                     }
                     catch (Exception ex)
                     {
@@ -468,72 +461,75 @@ namespace Infrastructure.Services.Exchange
             {
                 try
                 {
-                    using var session = await _exchangeService.StartDBSession();
-                    session.StartTransaction();
-
-                    try
+                    await _exchangeService.ExecuteInTransactionAsync(async (session) =>
                     {
-                        // Get subscription
-                        var subscription = await _subscriptionService.GetByIdAsync(payment.SubscriptionId);
-                        if (subscription == null)
+
+                        session.StartTransaction();
+
+                        try
                         {
-                            throw new ResourceNotFoundException("Subscription", payment.SubscriptionId.ToString());
+                            // Get subscription
+                            var subscriptionResult = await _subscriptionService.GetByIdAsync(payment.SubscriptionId);
+                            if (subscriptionResult == null || !subscriptionResult.IsSuccess)
+                            {
+                                throw new ResourceNotFoundException("Subscription", payment.SubscriptionId.ToString());
+                            }
+                            var subscription = subscriptionResult.Data;
+
+                            // Update subscription with payment info
+                            var nextDueDate = await _paymentService.Providers[payment.Provider]
+                                .GetNextDueDate(payment.InvoiceId);
+
+                            var newTotalInvestments = (subscription.TotalInvestments ?? 0) + payment.NetAmount;
+
+                            await _subscriptionService.UpdateAsync(
+                                payment.SubscriptionId,
+                                new
+                                {
+                                    Status = SubscriptionStatus.Active,
+                                    NextDueDate = nextDueDate,
+                                    TotalInvestments = newTotalInvestments,
+                                    LastPaymentDate = DateTime.UtcNow,
+                                    LastPaymentAmount = payment.NetAmount
+                                });
+
+                            // Update user balance
+                            var balanceResult = await _balanceService.UpsertBalanceAsync(
+                                payment.UserId,
+                                new BalanceData
+                                {
+                                    UserId = payment.UserId,
+                                    AssetId = Guid.Parse(payment.Currency), // Assuming currency matches asset ID
+                                    Available = payment.NetAmount,
+                                    Locked = 0
+                                },
+                                session);
+
+                            // Create transaction record
+                            await _transactionService.InsertAsync(
+                                new TransactionData
+                                {
+                                    UserId = payment.UserId,
+                                    PaymentProviderId = payment.PaymentProviderId,
+                                    SubscriptionId = payment.SubscriptionId,
+                                    BalanceId = balanceResult.Data.Id,
+                                    SourceName = payment.Provider,
+                                    SourceId = payment.Id.ToString(),
+                                    Action = "Deposit",
+                                    Quantity = payment.NetAmount
+                                });
+
+                            await session.CommitTransactionAsync();
+                            return true;
                         }
-
-                        // Update subscription with payment info
-                        var nextDueDate = await _paymentService.Providers[payment.Provider]
-                            .GetNextDueDate(payment.InvoiceId);
-
-                        var newTotalInvestments = (subscription.TotalInvestments ?? 0) + payment.NetAmount;
-
-                        await _subscriptionService.UpdateOneAsync(
-                            payment.SubscriptionId,
-                            new
-                            {
-                                Status = SubscriptionStatus.Active,
-                                NextDueDate = nextDueDate,
-                                TotalInvestments = newTotalInvestments,
-                                LastPaymentDate = DateTime.UtcNow,
-                                LastPaymentAmount = payment.NetAmount
-                            },
-                            session);
-
-                        // Update user balance
-                        var balanceResult = await _balanceService.UpsertBalanceAsync(
-                            payment.UserId,
-                            new BalanceData
-                            {
-                                UserId = payment.UserId,
-                                AssetId = Guid.Parse(payment.Currency), // Assuming currency matches asset ID
-                                Available = payment.NetAmount,
-                                Locked = 0
-                            },
-                            session);
-
-                        // Create transaction record
-                        await _transactionService.InsertOneAsync(
-                            new TransactionData
-                            {
-                                UserId = payment.UserId,
-                                PaymentProviderId = payment.PaymentProviderId,
-                                SubscriptionId = payment.SubscriptionId,
-                                BalanceId = balanceResult.Data.Id,
-                                SourceName = payment.Provider,
-                                SourceId = payment.Id.ToString(),
-                                Action = "Deposit",
-                                Quantity = payment.NetAmount
-                            },
-                            session);
-
-                        await session.CommitTransactionAsync();
-                        return ResultWrapper<bool>.Success(true);
-                    }
-                    catch (Exception ex)
-                    {
-                        await session.AbortTransactionAsync();
-                        _logger.LogError(ex, "Transaction failed for payment {PaymentId}", payment.Id);
-                        throw;
-                    }
+                        catch (Exception ex)
+                        {
+                            await session.AbortTransactionAsync();
+                            _logger.LogError(ex, "Transaction failed for payment {PaymentId}", payment.Id);
+                            throw;
+                        }
+                    });
+                    return ResultWrapper<bool>.Success(true);
                 }
                 catch (Exception ex)
                 {

@@ -1,5 +1,8 @@
 using Application.Contracts.Requests.Subscription;
+using Application.Extensions;
 using Application.Interfaces;
+using Application.Interfaces.Subscription;
+using Domain.DTOs;
 using Domain.Exceptions;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
@@ -11,7 +14,6 @@ using System.Security.Claims;
 namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
-    [ApiVersion("1.0")]
     [Route("api/[controller]")]
     [Produces("application/json")]
     public class SubscriptionController : ControllerBase
@@ -51,8 +53,8 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="404">If the user is not found</response>
         [HttpGet]
         [Route("user/{user}")]
-        [IgnoreAntiforgeryToken]
-        [Authorize(Roles = "USER")]
+        //[IgnoreAntiforgeryToken]
+        [Authorize]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -64,12 +66,14 @@ namespace crypto_investment_project.Server.Controllers
             using (_logger.BeginScope(new Dictionary<string, object>
             {
                 ["UserId"] = user,
-                ["Operation"] = "GetSubscriptionsByUser",
+                ["Operation"] = "GetByUser",
                 ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
             }))
             {
                 try
                 {
+                    _logger.LogInformation("Received user ID: '{UserId}'", user);
+
                     // Validate input
                     if (string.IsNullOrEmpty(user) || !Guid.TryParse(user, out Guid userId) || userId == Guid.Empty)
                     {
@@ -96,7 +100,7 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // ETag support for caching
-                    var etagKey = $"subscriptions_user_{user}";
+                    var etagKey = $"user_subscriptions:{user}";
                     var etag = Request.Headers.IfNoneMatch.FirstOrDefault();
                     var (hasEtag, storedEtag) = await _idempotencyService.GetResultAsync<string>(etagKey);
 
@@ -121,7 +125,7 @@ namespace crypto_investment_project.Server.Controllers
                     _logger.LogInformation("Successfully retrieved {Count} subscriptions for user {UserId}",
                         subscriptionsResult.Data?.Count() ?? 0, userId);
 
-                    return Ok(subscriptionsResult.Data);
+                    return subscriptionsResult.ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
@@ -147,7 +151,6 @@ namespace crypto_investment_project.Server.Controllers
         [HttpPost]
         [Route("new")]
         //[ValidateAntiForgeryToken]
-        [IgnoreAntiforgeryToken]
         [Authorize(Roles = "USER")]
         [EnableRateLimiting("heavyOperations")]
         [ProducesResponseType(StatusCodes.Status201Created)]
@@ -218,7 +221,7 @@ namespace crypto_investment_project.Server.Controllers
                     // Process the request
                     var subscriptionCreateResult = await _subscriptionService.CreateAsync(subscriptionRequest);
 
-                    if (!subscriptionCreateResult.IsSuccess)
+                    if (subscriptionCreateResult == null || !subscriptionCreateResult.IsSuccess)
                     {
                         throw new DomainException(subscriptionCreateResult.ErrorMessage, "SUBSCRIPTION_CREATION_FAILED");
                     }
@@ -230,11 +233,13 @@ namespace crypto_investment_project.Server.Controllers
                         subscriptionCreateResult.Data, subscriptionRequest.UserId);
 
                     // Return 201 Created with the location header
-                    return CreatedAtAction(
+                    /*return CreatedAtAction(
                         nameof(GetByUser),
                         new { user = subscriptionRequest.UserId, version = HttpContext.GetRequestedApiVersion()?.ToString() ?? "1.0" },
                         new { id = subscriptionCreateResult.Data, message = "Subscription created successfully" }
-                    );
+                    );*/
+                    return ResultWrapper.Success(subscriptionCreateResult.Data.AffectedIds.First(), "Subscription created successfully")
+                        .ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
@@ -263,7 +268,7 @@ namespace crypto_investment_project.Server.Controllers
         [Route("update/{id}")]
         [Authorize]
         [EnableRateLimiting("heavyOperations")]
-        [ValidateAntiForgeryToken]
+        //[ValidateAntiForgeryToken]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -311,13 +316,13 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // Get the subscription to check ownership
-                    var subscription = await _subscriptionService.GetByIdAsync(subscriptionId);
-                    if (subscription == null)
+                    var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
+                    if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                     {
                         _logger.LogWarning("Subscription not found: {SubscriptionId}", id);
                         return NotFound(new { message = "Subscription not found" });
                     }
-
+                    var subscription = subscriptionResult.Data;
                     // Authorization check - verify current user owns this subscription or is admin
                     var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
                     var isAdmin = User.IsInRole("ADMIN");
@@ -390,7 +395,7 @@ namespace crypto_investment_project.Server.Controllers
         [Route("cancel/{id}")]
         [Authorize]
         [EnableRateLimiting("standard")]
-        [ValidateAntiForgeryToken]
+        //[ValidateAntiForgeryToken]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -435,12 +440,14 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // Get the subscription to check ownership
-                    var subscription = await _subscriptionService.GetByIdAsync(subscriptionId);
-                    if (subscription == null)
+                    var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
+                    if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                     {
                         _logger.LogWarning("Subscription not found: {SubscriptionId}", id);
                         return NotFound(new { message = "Subscription not found" });
                     }
+
+                    var subscription = subscriptionResult.Data;
 
                     // Authorization check - verify current user owns this subscription or is admin
                     var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -456,7 +463,7 @@ namespace crypto_investment_project.Server.Controllers
                     // Process the request
                     var result = await _subscriptionService.CancelAsync(subscriptionId);
 
-                    if (!result.IsAcknowledged)
+                    if (result == null || !result.IsSuccess)
                     {
                         throw new DatabaseException($"Failed to cancel subscription {id}");
                     }

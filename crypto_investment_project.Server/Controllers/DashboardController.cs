@@ -22,9 +22,9 @@ namespace crypto_investment_project.Server.Controllers
             _logger = logger;
         }
 
-        [HttpPost]
+        [HttpGet]
         [Route("user/{user}")]
-        [IgnoreAntiforgeryToken]
+        //[IgnoreAntiforgeryToken]
         [Authorize(Roles = "USER")]
         [EnableRateLimiting("standard")]
         public async Task<IActionResult> GetUserDashboardData(string user)

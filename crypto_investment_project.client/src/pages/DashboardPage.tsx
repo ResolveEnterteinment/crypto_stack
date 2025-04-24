@@ -30,9 +30,19 @@ const DashboardPage: React.FC = () => {
     // Fetch data when component mounts
     useEffect(() => {
         if (!user || !user.id) {
+            // Clear state explicitly upon logout
+            setSubscriptions([]);
+            setDashboardData(null);
             navigate('/auth');
             return;
         }
+
+        setLoading(true);
+        setError(null);
+
+        // Clear previous user's data immediately on user change
+        setSubscriptions([]);
+        setDashboardData(null);
 
         Promise.all([
             fetchDashboardData(),
@@ -44,7 +54,8 @@ const DashboardPage: React.FC = () => {
                 setError('Failed to load dashboard data. Please try again.');
                 setLoading(false);
             });
-    }, [user, navigate]);
+    }, [user]);
+
 
     // Fetch dashboard data
     const fetchDashboardData = async () => {
@@ -61,8 +72,10 @@ const DashboardPage: React.FC = () => {
     // Fetch subscriptions
     const fetchSubscriptions = async () => {
         try {
-            if (!user?.id) return;
-            const data = await getSubscriptions(user.id);
+            console.log("User ID before fetching subscriptions:", user?.id);
+            if (!user?.id) throw new Error("User ID is missing.");
+            const trimmedUserId = user.id.trim(); // Trim whitespaces
+            const data = await getSubscriptions(trimmedUserId);
             setSubscriptions(data);
         } catch (err) {
             console.error('Error fetching subscriptions:', err);

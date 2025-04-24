@@ -1,383 +1,203 @@
 ﻿using Application.Interfaces;
+using Application.Interfaces.Asset;
+using Application.Interfaces.Base;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Balance;
-using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Models.Balance;
-using MediatR;
-using Microsoft.Extensions.Caching.Memory;
+using Infrastructure.Services.Base;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using MongoDB.Driver;
-using System.Diagnostics;
 
 namespace Infrastructure.Services
 {
-    public class BalanceService : BaseService<BalanceData>, IBalanceService, INotificationHandler<PaymentReceivedEvent>
+    public class BalanceService : BaseService<BalanceData>, IBalanceService
     {
-        private readonly IAssetService _assetService;
         private const string CACHE_KEY_USER_BALANCES = "user_balances:{0}:{1}"; // userId_assetClass
+        private static readonly TimeSpan CACHE_DURATION = TimeSpan.FromMinutes(5);
+
+        private readonly IAssetService _assetService;
 
         public BalanceService(
-            IAssetService assetService,
-            IOptions<MongoDbSettings> mongoDbSettings,
-            IMongoClient mongoClient,
-            IMemoryCache cache,
-            ILogger<BalanceService> logger)
-            : base(
-                  mongoClient,
-                  mongoDbSettings,
-                  "balances",
-                  logger,
-                  cache,
-                  new List<CreateIndexModel<BalanceData>>
-                  {
-                      new CreateIndexModel<BalanceData>(
-                          Builders<BalanceData>.IndexKeys.Ascending(x => x.UserId),
-                          new CreateIndexOptions { Name = "UserId_1" }
-                      ),
-                      new CreateIndexModel<BalanceData>(
-                          Builders<BalanceData>.IndexKeys.Ascending(x => x.AssetId),
-                          new CreateIndexOptions { Name = "AssetId_1" }
-                      )
-                  }
-                  )
+            ICrudRepository<BalanceData> repository,
+            ICacheService<BalanceData> cacheService,
+            IMongoIndexService<BalanceData> indexService,
+            ILogger<BalanceService> logger,
+            IEventService eventService,
+            IAssetService assetService
+        ) : base(
+            repository,
+            cacheService,
+            indexService,
+            logger,
+            eventService,
+            new[]
+            {
+                new CreateIndexModel<BalanceData>(Builders<BalanceData>.IndexKeys.Ascending(b => b.UserId), new CreateIndexOptions { Name = "UserId_1" }),
+                new CreateIndexModel<BalanceData>(Builders<BalanceData>.IndexKeys.Ascending(b => b.AssetId), new CreateIndexOptions { Name = "AssetId_1" })
+            }
+        )
         {
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
         }
 
-        public async Task<ResultWrapper<IEnumerable<BalanceData>>> GetAllByUserIdAsync(Guid userId, string? assetType = null)
-        {
-            using var activity = new Activity("BalanceService.GetAllByUserIdAsync").Start();
-            activity?.SetTag("userId", userId);
-            activity?.SetTag("assetClass", assetType ?? "all");
-
-            try
-            {
-                string cacheKey = string.Format(CACHE_KEY_USER_BALANCES, userId, assetType ?? "all");
-
-                return await GetOrCreateCachedItemAsync<ResultWrapper<IEnumerable<BalanceData>>>(
-                    cacheKey,
-                    async () =>
-                    {
-                        _logger.LogInformation("Fetching balances for user {UserId} with assetClass {AssetClass}",
-                            userId, assetType ?? "all");
-
-                        var filter = Builders<BalanceData>.Filter.Eq(b => b.UserId, userId);
-                        var balances = await GetAllAsync(filter);
-
-                        if (balances is null)
-                        {
-                            throw new ArgumentNullException(nameof(balances),
-                                $"Failed to retrieve balances for user {userId}");
-                        }
-
-                        // Filter by asset class if specified
-                        var returnBalances = new List<BalanceData>();
-                        if (assetType != null && AssetType.AllValues.Contains(assetType))
-                        {
-                            foreach (var balance in balances)
-                            {
-                                var assetData = await _assetService.GetByIdAsync(balance.AssetId);
-                                if (assetData != null && assetData.Type.ToLowerInvariant() == assetType.ToLowerInvariant())
-                                {
-                                    returnBalances.Add(balance);
-                                }
-                            }
-                        }
-                        else
-                        {
-                            returnBalances = balances.ToList();
-                        }
-
-                        _logger.LogInformation("Retrieved {Count} balances for user {UserId} with assetClass {AssetClass}",
-                            returnBalances.Count, userId, assetType ?? "all");
-
-                        return ResultWrapper<IEnumerable<BalanceData>>.Success(returnBalances);
-                    },
-                    TimeSpan.FromMinutes(5)
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting balances for user {UserId} with assetClass {AssetClass}: {Message}",
-                    userId, assetType ?? "all", ex.Message);
-                return ResultWrapper<IEnumerable<BalanceData>>.FromException(ex);
-            }
-        }
-
-        public async Task<List<BalanceDto>> FetchBalancesWithAssetsAsync(Guid userId)
-        {
-            using var activity = new Activity("BalanceService.FetchBalancesWithAssetsAsync").Start();
-            activity?.SetTag("userId", userId);
-
-            string cacheKey = $"balances_with_assets:{userId}";
-
-            return await GetOrCreateCachedItemAsync<List<BalanceDto>>(
-                cacheKey,
+        public Task<ResultWrapper<List<BalanceData>>> GetAllByUserIdAsync(Guid userId, string? assetType = null)
+        => FetchCached(
+                string.Format(CACHE_KEY_USER_BALANCES, userId, assetType ?? "all"),
                 async () =>
                 {
-                    try
+                    if (userId == Guid.Empty)
+                        throw new ArgumentException("Invalid userId");
+
+                    var filter = Builders<BalanceData>.Filter.Eq(b => b.UserId, userId);
+                    var allWr = await GetManyAsync(filter);
+                    if (!allWr.IsSuccess)
+                        throw new Exception(allWr.ErrorMessage);
+
+                    var balances = allWr.Data ?? Enumerable.Empty<BalanceData>();
+                    var filtered = new List<BalanceData>();
+
+                    if (!string.IsNullOrWhiteSpace(assetType) && AssetType.AllValues.Contains(assetType))
                     {
-                        // Use simpler approach with multiple queries instead of aggregation
-                        var rawBalances = await GetAllAsync(Builders<BalanceData>.Filter.Eq(b => b.UserId, userId));
-
-                        _logger.LogInformation("Found {Count} raw balances for user {UserId}",
-                            rawBalances.Count, userId);
-
-                        // If there are no balances, return an empty list
-                        if (!rawBalances.Any())
+                        foreach (var bal in balances)
                         {
-                            _logger.LogInformation("No balances found for user {UserId}", userId);
-                            return new List<BalanceDto>();
-                        }
-
-                        var result = new List<BalanceDto>();
-
-                        foreach (var balance in rawBalances)
-                        {
-                            try
+                            var assetWr = await _assetService.GetByIdAsync(bal.AssetId);
+                            if (assetWr.IsSuccess && assetWr.Data != null &&
+                                assetWr.Data.Type.Equals(assetType, StringComparison.OrdinalIgnoreCase))
                             {
-                                // Get the asset for this balance
-                                var asset = await _assetService.GetByIdAsync(balance.AssetId);
-
-                                if (asset == null)
-                                {
-                                    _logger.LogWarning("Asset not found for ID {AssetId}, user {UserId}",
-                                        balance.AssetId, userId);
-                                    continue;
-                                }
-
-                                // Create the DTO
-                                var balanceDto = new BalanceDto
-                                {
-                                    AssetId = asset.Id.ToString(),
-                                    AssetName = asset.Name,
-                                    Ticker = asset.Ticker,
-                                    Symbol = asset.Symbol,
-                                    Available = balance.Available,
-                                    Locked = balance.Locked,
-                                    Total = balance.Total,
-                                    AssetDocs = asset
-                                };
-
-                                result.Add(balanceDto);
-
-                                _logger.LogDebug("Successfully mapped balance for asset {Ticker}", asset.Ticker);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "Error processing balance for asset {AssetId}", balance.AssetId);
-                                // Continue with the next balance instead of failing completely
+                                filtered.Add(bal);
                             }
                         }
-
-                        _logger.LogInformation("Returning {Count} balance DTOs for user {UserId}",
-                            result.Count, userId);
-
-                        return result;
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        _logger.LogError(ex, "Failed to fetch balances with assets for user {UserId}: {ErrorMessage}",
-                            userId, ex.Message);
-                        throw;
+                        filtered = balances.ToList();
                     }
+
+                    return filtered;
                 },
-                TimeSpan.FromMinutes(5)
+                CACHE_DURATION,
+                () => new KeyNotFoundException($"Failed to fetch user {userId} balances")
             );
-        }
+
+        public Task<ResultWrapper<List<BalanceDto>>> FetchBalancesWithAssetsAsync(Guid userId)
+            => FetchCached(
+                $"balances_with_assets:{userId}",
+                async () =>
+                {
+                    var filter = Builders<BalanceData>.Filter.Eq(b => b.UserId, userId);
+                    var allWr = await GetManyAsync(filter);
+                    if (!allWr.IsSuccess)
+                        throw new Exception(allWr.ErrorMessage);
+
+                    var balances = allWr.Data ?? Enumerable.Empty<BalanceData>();
+                    var result = new List<BalanceDto>();
+
+                    foreach (var bal in balances)
+                    {
+                        var assetWr = await _assetService.GetByIdAsync(bal.AssetId);
+                        if (!assetWr.IsSuccess || assetWr.Data == null)
+                        {
+                            Logger.LogWarning("Asset not found for ID {AssetId}", bal.AssetId);
+                            continue;
+                        }
+
+                        result.Add(new BalanceDto
+                        {
+                            AssetId = assetWr.Data.Id.ToString(),
+                            AssetName = assetWr.Data.Name,
+                            Ticker = assetWr.Data.Ticker,
+                            Symbol = assetWr.Data.Symbol,
+                            Available = bal.Available,
+                            Locked = bal.Locked,
+                            Total = bal.Total,
+                            AssetDocs = assetWr.Data
+                        });
+                    }
+
+                    return result;
+                },
+                CACHE_DURATION
+            );
 
         public async Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(Guid userId, BalanceData updateBalance, IClientSessionHandle? session = null)
         {
-            using var activity = new Activity("BalanceService.UpsertBalanceAsync").Start();
-            activity?.SetTag("userId", userId);
-            activity?.SetTag("assetId", updateBalance.AssetId);
+            if (userId == Guid.Empty)
+                return ResultWrapper<BalanceData>.Failure(Domain.Constants.FailureReason.ValidationError, "Invalid userId");
+            if (updateBalance == null)
+                return ResultWrapper<BalanceData>.Failure(Domain.Constants.FailureReason.ValidationError, "Balance data is null");
 
-            try
+            var filter = Builders<BalanceData>.Filter.And(
+                Builders<BalanceData>.Filter.Eq(b => b.UserId, userId),
+                Builders<BalanceData>.Filter.Eq(b => b.AssetId, updateBalance.AssetId)
+            );
+
+            var existingWr = await GetOneAsync(filter);
+            BalanceData resultEntity;
+
+            if (existingWr.IsSuccess && existingWr.Data != null)
             {
-                // Validate input
-                if (updateBalance == null)
+                var existing = existingWr.Data;
+                var fields = new Dictionary<string, object>
                 {
-                    throw new ArgumentNullException(nameof(updateBalance));
-                }
+                    ["Available"] = existing.Available + updateBalance.Available,
+                    ["Locked"] = existing.Locked + updateBalance.Locked,
+                    ["Total"] = existing.Total + updateBalance.Available + updateBalance.Locked,
+                    ["LastUpdated"] = DateTime.UtcNow
+                };
+                if (!string.IsNullOrWhiteSpace(updateBalance.Ticker))
+                    fields["Ticker"] = updateBalance.Ticker;
 
-                if (userId == Guid.Empty)
-                {
-                    throw new ArgumentException("UserId cannot be empty", nameof(userId));
-                }
+                var updateWr = await UpdateAsync(existing.Id, fields);
+                if (!updateWr.IsSuccess)
+                    return ResultWrapper<BalanceData>.FromException(new Exception(updateWr.ErrorMessage));
 
-                if (updateBalance.AssetId == Guid.Empty)
-                {
-                    throw new ArgumentException("AssetId cannot be empty", nameof(updateBalance.AssetId));
-                }
-
-                // Check if asset exists
-                var asset = await _assetService.GetByIdAsync(updateBalance.AssetId);
-                if (asset == null)
-                {
-                    throw new KeyNotFoundException($"Asset with ID {updateBalance.AssetId} not found");
-                }
-
-                _logger.LogInformation("Updating balance for user {UserId}, asset {AssetId}, available {Available}, locked {Locked}",
-                    userId, updateBalance.AssetId, updateBalance.Available, updateBalance.Locked);
-
-                // Create filter to find the balance record
-                var filter = Builders<BalanceData>.Filter.And(
-                    Builders<BalanceData>.Filter.Eq(s => s.UserId, userId),
-                    Builders<BalanceData>.Filter.Eq(s => s.AssetId, updateBalance.AssetId)
-                );
-
-                // Check if the balance record exists
-                var existingBalance = await _collection.Find(filter).FirstOrDefaultAsync();
-
-                if (existingBalance != null)
-                {
-                    // If record exists, update it
-                    var update = Builders<BalanceData>.Update
-                        .Inc(s => s.Available, updateBalance.Available)
-                        .Inc(s => s.Locked, updateBalance.Locked)
-                        .Inc(s => s.Total, updateBalance.Available + updateBalance.Locked)
-                        .Set(s => s.LastUpdated, DateTime.UtcNow);
-
-                    // If ticker is provided, use it
-                    if (!string.IsNullOrEmpty(updateBalance.Ticker))
-                    {
-                        update = update.Set(s => s.Ticker, updateBalance.Ticker);
-                    }
-
-                    var updateOptions = new FindOneAndUpdateOptions<BalanceData>
-                    {
-                        ReturnDocument = ReturnDocument.After
-                    };
-
-                    BalanceData updatedBalance;
-                    if (session != null)
-                    {
-                        updatedBalance = await _collection.FindOneAndUpdateAsync(session, filter, update, updateOptions);
-                    }
-                    else
-                    {
-                        updatedBalance = await _collection.FindOneAndUpdateAsync(filter, update, updateOptions);
-                    }
-
-                    if (updatedBalance == null)
-                    {
-                        throw new InvalidOperationException("Failed to update balance record");
-                    }
-
-                    // Invalidate cache
-                    InvalidateUserBalanceCache(userId);
-
-                    _logger.LogInformation("Successfully updated balance for user {UserId}, asset {AssetId}. " +
-                        "New values: Available: {Available}, Locked: {Locked}, Total: {Total}",
-                        userId, updateBalance.AssetId, updatedBalance.Available, updatedBalance.Locked, updatedBalance.Total);
-
-                    return ResultWrapper<BalanceData>.Success(updatedBalance);
-                }
-                else
-                {
-                    // If record doesn't exist, create it with a GUID ID
-                    var newBalance = new BalanceData
-                    {
-                        Id = Guid.NewGuid(), // Explicitly generate a new GUID
-                        UserId = userId,
-                        AssetId = updateBalance.AssetId,
-                        Ticker = updateBalance.Ticker ?? asset.Ticker, // Use either provided ticker or asset ticker
-                        Available = updateBalance.Available,
-                        Locked = updateBalance.Locked,
-                        Total = updateBalance.Available + updateBalance.Locked,
-                        LastUpdated = DateTime.UtcNow,
-                        CreatedAt = DateTime.UtcNow
-                    };
-
-                    if (session != null)
-                    {
-                        await _collection.InsertOneAsync(session, newBalance);
-                    }
-                    else
-                    {
-                        await _collection.InsertOneAsync(newBalance);
-                    }
-
-                    // Invalidate cache
-                    InvalidateUserBalanceCache(userId);
-
-                    _logger.LogInformation("Successfully created new balance for user {UserId}, asset {AssetId}. " +
-                        "Values: Available: {Available}, Locked: {Locked}, Total: {Total}",
-                        userId, updateBalance.AssetId, newBalance.Available, newBalance.Locked, newBalance.Total);
-
-                    return ResultWrapper<BalanceData>.Success(newBalance);
-                }
+                var fetchWr = await GetByIdAsync(existing.Id);
+                resultEntity = fetchWr.Data!;
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogError(ex, "Error updating balance for user {UserId}, asset {AssetId}: {Message}",
-                    userId, updateBalance.AssetId, ex.Message);
-                return ResultWrapper<BalanceData>.FromException(ex);
+                updateBalance.Id = Guid.NewGuid();
+                updateBalance.UserId = userId;
+                updateBalance.Total = updateBalance.Available + updateBalance.Locked;
+                updateBalance.CreatedAt = DateTime.UtcNow;
+                updateBalance.LastUpdated = DateTime.UtcNow;
+
+                var insertWr = await InsertAsync(updateBalance);
+                if (!insertWr.IsSuccess)
+                    return ResultWrapper<BalanceData>.FromException(new Exception(insertWr.ErrorMessage));
+
+                resultEntity = updateBalance;
             }
+
+            // Invalidate caches
+            foreach (var assetClass in AssetType.AllValues)
+                CacheService.Invalidate(string.Format(CACHE_KEY_USER_BALANCES, userId, assetClass));
+            CacheService.Invalidate(string.Format(CACHE_KEY_USER_BALANCES, userId, "all"));
+            CacheService.Invalidate($"balances_with_assets:{userId}");
+
+            return ResultWrapper<BalanceData>.Success(resultEntity);
         }
 
         public async Task Handle(PaymentReceivedEvent notification, CancellationToken cancellationToken)
         {
-            using var activity = new Activity("BalanceService.HandlePaymentReceivedEvent").Start();
-            activity?.SetTag("paymentId", notification.Payment.Id);
-            activity?.SetTag("userId", notification.Payment.UserId);
-            activity?.SetTag("subscriptionId", notification.Payment.SubscriptionId);
-
-            try
+            var p = notification.Payment;
+            // Fetch asset by currency ticker
+            var assetWr = await _assetService.GetByTickerAsync(p.Currency);
+            if (assetWr == null || !assetWr.IsSuccess || assetWr.Data == null)
             {
-                _logger.LogInformation("Processing payment received event for payment {PaymentId}, user {UserId}",
-                    notification.Payment.Id, notification.Payment.UserId);
-
-                var payment = notification.Payment;
-
-                // Get the asset for the payment currency
-                var assetResult = await _assetService.GetByTickerAsync(payment.Currency);
-                if (assetResult is null || !assetResult.IsSuccess || assetResult.Data is null)
-                {
-                    throw new Exception($"Failed to retrieve asset data for ticker {payment.Currency}: " +
-                        $"{assetResult?.ErrorMessage ?? "Asset result returned null."}");
-                }
-
-                // Update the user's balance for this currency
-                await UpsertBalanceAsync(payment.UserId, new()
-                {
-                    UserId = payment.UserId,
-                    AssetId = assetResult.Data.Id,
-                    Ticker = assetResult.Data.Ticker,
-                    Available = payment.NetAmount,
-                    Locked = 0
-                });
-
-                _logger.LogInformation("Successfully processed payment received event for payment {PaymentId}. " +
-                    "Updated balance for asset {Ticker}", notification.Payment.Id, payment.Currency);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to handle payment received event for payment {PaymentId}: {Message}",
-                    notification.Payment.Id, ex.Message);
-                // Don't rethrow - we don't want to disrupt the event processing pipeline
-            }
-        }
-
-        // Helper method to invalidate all cache entries for a user's balances
-        private void InvalidateUserBalanceCache(Guid userId)
-        {
-            // Invalidate specific user balance caches
-            foreach (var assetClass in AssetType.AllValues)
-            {
-                _cache.Remove(string.Format(CACHE_KEY_USER_BALANCES, userId, assetClass));
+                Logger.LogError("Asset not found for currency {Currency}", p.Currency);
+                return;
             }
 
-            // Invalidate the "all" assets cache
-            _cache.Remove(string.Format(CACHE_KEY_USER_BALANCES, userId, "all"));
-
-            // Invalidate any other balance-related caches
-            _cache.Remove($"balances_with_assets:{userId}");
-
-            _logger.LogDebug("Invalidated balance caches for user {UserId}", userId);
+            await UpsertBalanceAsync(p.UserId, new BalanceData
+            {
+                AssetId = assetWr.Data.Id,
+                Ticker = assetWr.Data.Ticker,
+                Available = p.NetAmount,
+                Locked = 0
+            });
         }
     }
 }

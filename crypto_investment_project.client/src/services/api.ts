@@ -10,7 +10,7 @@ const API_CONFIG = {
     RETRY_STATUS_CODES: [408, 429, 500, 502, 503, 504], // Status codes to retry
     AUTH_HEADER: "Authorization",
     AUTH_SCHEME: "Bearer",
-    CSRF_REFRESH_URL: "/v1/csrf", // Endpoint to refresh CSRF token
+    CSRF_REFRESH_URL: "/v1/Csrf/refresh", // Endpoint to refresh CSRF token
     CSRF_HEADER: "X-CSRF-TOKEN", // Header name for CSRF token
     CSRF_META_NAME: "csrf-token", // Meta tag name for storing CSRF token
     CSRF_STORAGE_KEY: "csrf-token", // Storage key for CSRF token

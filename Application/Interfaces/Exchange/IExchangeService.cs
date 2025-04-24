@@ -1,7 +1,7 @@
-﻿using Domain.DTOs;
+﻿using Application.Interfaces.Base;
+using Domain.DTOs;
 using Domain.DTOs.Exchange;
 using Domain.Models.Exchange;
-using MongoDB.Driver;
 
 namespace Application.Interfaces.Exchange
 {
@@ -9,7 +9,7 @@ namespace Application.Interfaces.Exchange
     /// Service for managing cryptocurrency exchange operations and interactions.
     /// Provides access to configured exchanges and transaction management capabilities.
     /// </summary>
-    public interface IExchangeService : IRepository<ExchangeOrderData>
+    public interface IExchangeService : IBaseService<ExchangeOrderData>
     {
         /// <summary>
         /// Gets a dictionary of available exchange integrations.
@@ -27,48 +27,11 @@ namespace Application.Interfaces.Exchange
         public Task<ResultWrapper<ExchangeBalance>> GetCachedExchangeBalanceAsync(string exchange, string ticker);
 
         /// <summary>
-        /// Starts a new MongoDB client session for transaction management.
-        /// </summary>
-        /// <param name="cancellationToken">Optional cancellation token.</param>
-        /// <returns>A session handle that can be used for transactions.</returns>
-        Task<IClientSessionHandle> StartDBSession(CancellationToken cancellationToken = default);
-
-        /// <summary>
         /// Retrieves all pending exchange orders that need reconciliation.
         /// </summary>
         /// <param name="cancellationToken">Optional cancellation token.</param>
         /// <returns>A collection of pending exchange orders.</returns>
         Task<ResultWrapper<IEnumerable<ExchangeOrderData>>> GetPendingOrdersAsync(CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// Creates a new exchange order.
-        /// </summary>
-        /// <param name="order">The order data to create.</param>
-        /// <param name="session">Optional session handle for transaction support.</param>
-        /// <param name="cancellationToken">Optional cancellation token.</param>
-        /// <returns>The created order with ID.</returns>
-        Task<ResultWrapper<ExchangeOrderData>> CreateOrderAsync(
-            ExchangeOrderData order,
-            IClientSessionHandle session = null,
-            CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// Updates the status of an exchange order.
-        /// </summary>
-        /// <param name="orderId">The ID of the order to update.</param>
-        /// <param name="status">The new status.</param>
-        /// <param name="quantityFilled">The filled quantity.</param>
-        /// <param name="price">The execution price.</param>
-        /// <param name="session">Optional session handle for transaction support.</param>
-        /// <param name="cancellationToken">Optional cancellation token.</param>
-        /// <returns>True if update was successful.</returns>
-        Task<ResultWrapper<bool>> UpdateOrderStatusAsync(
-            Guid orderId,
-            string status,
-            decimal? quantityFilled = null,
-            decimal? price = null,
-            IClientSessionHandle session = null,
-            CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Gets exchange orders by various criteria.

@@ -1,5 +1,7 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Payment;
+using Application.Interfaces.Subscription;
+using DnsClient.Internal;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Payment;
@@ -169,6 +171,7 @@ namespace Infrastructure.Services.Payment
         /// </summary>
         private async Task<ResultWrapper> HandleInvoicePaidAsync(Stripe.Event stripeEvent)
         {
+            _logger.LogInformation($"Handling stripe event invoice.paid");
             var invoice = stripeEvent.Data.Object as Stripe.Invoice;
             if (invoice == null)
             {
@@ -237,14 +240,16 @@ namespace Infrastructure.Services.Payment
             // Find our subscription
             var filter = Builders<Domain.Models.Subscription.SubscriptionData>.Filter.Eq(
                 s => s.ProviderSubscriptionId, stripeSubscription.Id);
-            var subscription = await _subscriptionService.GetOneAsync(filter);
+            var subscriptionResult = await _subscriptionService.GetOneAsync(filter);
 
-            if (subscription == null)
+            if (subscriptionResult == null || !subscriptionResult.IsSuccess)
             {
                 _logger.LogWarning("No subscription found with provider subscription ID: {ProviderSubscriptionId}",
                     stripeSubscription.Id);
                 return false;
             }
+
+            var subscription = subscriptionResult.Data;
 
             try
             {
@@ -255,21 +260,19 @@ namespace Infrastructure.Services.Payment
                     ["IsCancelled"] = true
                 };
 
-                var updateResult = await _subscriptionService.UpdateOneAsync(subscription.Id, updateFields);
+                var updateResult = await _subscriptionService.UpdateAsync(subscription.Id, updateFields);
 
-                if (updateResult.IsAcknowledged && updateResult.ModifiedCount > 0)
-                {
-                    _logger.LogInformation("Successfully cancelled subscription {SubscriptionId} due to Stripe deletion",
-                        subscription.Id);
-
-                    return true;
-                }
-                else
+                if (updateResult == null || !updateResult.IsSuccess)
                 {
                     _logger.LogWarning("Failed to cancel subscription {SubscriptionId}: No documents modified",
                         subscription.Id);
                     return false;
                 }
+
+                _logger.LogInformation("Successfully cancelled subscription {SubscriptionId} due to Stripe deletion",
+                    subscription.Id);
+
+                return true;
             }
             catch (Exception ex)
             {

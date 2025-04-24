@@ -1,6 +1,7 @@
 using Application.Contracts.Requests.Payment;
-using Application.Interfaces;
+using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
+using Application.Interfaces.Subscription;
 using Domain.Models.Payment;
 using Microsoft.AspNetCore.Mvc;
 
@@ -65,7 +66,7 @@ namespace crypto_investment_project.Server.Controllers
             }
             try
             {
-                var result = await _assetService.InsertOneAsync(assetData);
+                var result = await _assetService.InsertAsync(assetData);
                 return result is null ? throw new NullReferenceException(nameof(result)) : (IActionResult)Ok(result);
             }
             catch (Exception ex)
@@ -85,7 +86,7 @@ namespace crypto_investment_project.Server.Controllers
             }
             try
             {
-                var result = await _subscriptionService.InsertOneAsync(subscriptionData);
+                var result = await _subscriptionService.InsertAsync(subscriptionData);
                 return result is null ? throw new NullReferenceException(nameof(result)) : (IActionResult)Ok(result);
             }
             catch (Exception ex)

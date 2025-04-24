@@ -45,7 +45,6 @@
 
   <ItemGroup>
     <Folder Include="Middleware\" />
-    <Folder Include="Configuration\" />
   </ItemGroup>
 
 </Project>

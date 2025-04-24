@@ -1,7 +1,6 @@
 using Domain.DTOs;
 using Domain.DTOs.Exchange;
 using Domain.DTOs.Settings;
-using Encryption;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
@@ -23,9 +22,6 @@ public static class AppSettingsExtensions
         services.Configure<StripeSettings>(configuration.GetSection("Stripe"));
         services.Configure<JwtSettings>(configuration.GetSection("Jwt"));
         services.Configure<EncryptionSettings>(configuration.GetSection("Encryption"));
-
-        // Add encryption services
-        services.AddEncryptionServices();
 
         return services;
     }

@@ -1,6 +1,6 @@
 export default interface IAllocation {
     assetId: string;
     assetName: string;
-    assetTicker: string;
+    ticker: string;
     percentAmount: number;
 }

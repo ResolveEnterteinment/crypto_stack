@@ -10,7 +10,7 @@ namespace Domain.Events
         public PaymentReceivedEvent(PaymentData payment)
         {
             Payment = payment;
-            DomainRecordId = payment.Id;
+            DomainEntityId = payment.Id;
         }
     }
 }

@@ -66,17 +66,17 @@ export const initiatePayment = async (paymentData: PaymentRequestData): Promise<
         const idempotencyKey = paymentData.idempotencyKey ||
             `payment-${paymentData.subscriptionId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 
-        // Get CSRF token if available
-        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-
         const headers: Record<string, string> = {
             'X-Idempotency-Key': idempotencyKey
         };
+        /*
+        // Get CSRF token if available
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
         if (csrfToken) {
             headers['X-CSRF-TOKEN'] = csrfToken;
         }
-
+        */
         // Build the return URLs with query parameters
         const baseUrl = window.location.origin;
         const returnUrl = paymentData.returnUrl ||
@@ -162,14 +162,15 @@ export const cancelPayment = async (paymentId: string): Promise<PaymentCancelRes
     }
 
     try {
+        const headers: Record<string, string> = {};
+        /*
         // Get CSRF token if available
         const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
-        const headers: Record<string, string> = {};
         if (csrfToken) {
             headers['X-CSRF-TOKEN'] = csrfToken;
         }
-
+        */
         const { data } = await api.post(`/Payment/cancel/${paymentId}`, null, { headers });
         return data;
     } catch (error) {

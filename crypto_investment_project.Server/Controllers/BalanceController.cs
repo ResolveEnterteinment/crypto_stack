@@ -1,6 +1,8 @@
 using Application.Interfaces;
+using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
 using Domain.Constants;
+using Domain.Exceptions;
 using Microsoft.AspNetCore.Mvc;
 
 namespace crypto_investment_project.Server.Controllers
@@ -17,7 +19,7 @@ namespace crypto_investment_project.Server.Controllers
         private readonly IExchangeService _exchangeService = exchangeService;
         private readonly IAssetService _assetService = assetService;
 
-        [HttpPost]
+        [HttpGet]
         [Route("user/{user}")]
         public async Task<IActionResult> GetUserBalances(string user)
         {
@@ -35,7 +37,7 @@ namespace crypto_investment_project.Server.Controllers
             return Ok(balancesResult.Data);
         }
 
-        [HttpPost]
+        [HttpGet]
         [Route("totalInvestments/{user}")]
         public async Task<IActionResult> GetTotalInvestments(string user)
         {
@@ -53,7 +55,7 @@ namespace crypto_investment_project.Server.Controllers
             return Ok(balancesResult.Data);
         }
 
-        [HttpPost]
+        [HttpGet]
         [Route("portfolioValue/{user}")]
         public async Task<IActionResult> GetUserPortfolioValue(string user)
         {
@@ -70,7 +72,10 @@ namespace crypto_investment_project.Server.Controllers
             var portfolioValue = 0m;
             foreach (var balance in balancesResult.Data)
             {
-                var asset = await _assetService.GetByIdAsync(balance.AssetId);
+                var assetResult = await _assetService.GetByIdAsync(balance.AssetId);
+                if (assetResult == null || !assetResult.IsSuccess)
+                    throw new AssetFetchException($"Failed to fetch asset {balance.AssetId}");
+                var asset = assetResult.Data;
                 var priceResult = await _exchangeService.Exchanges[asset.Exchange].GetAssetPrice(asset.Ticker);
                 if (priceResult is null || !priceResult.IsSuccess)
                 {
@@ -82,7 +87,7 @@ namespace crypto_investment_project.Server.Controllers
             return Ok(portfolioValue);
         }
 
-        [HttpPost]
+        [HttpGet]
         [Route("subscription/{subscription}")]
         public async Task<IActionResult> GetSubscriptionBalances(string subscription)
         {

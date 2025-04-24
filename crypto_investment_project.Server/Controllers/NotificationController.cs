@@ -1,6 +1,5 @@
-using Infrastructure.Hubs;
+using Domain.Exceptions;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using System.Diagnostics;
 
 namespace crypto_investment_project.Server.Controllers
@@ -10,16 +9,13 @@ namespace crypto_investment_project.Server.Controllers
     public class NotificationController : ControllerBase
     {
         private readonly INotificationService _notificationService;
-        private readonly IHubContext<NotificationHub> _notificationHub;
         private readonly ILogger<NotificationController> _logger;
 
         public NotificationController(
             INotificationService notificationService,
-            IHubContext<NotificationHub> notificationHub,
             ILogger<NotificationController> logger)
         {
             _notificationService = notificationService;
-            _notificationHub = notificationHub;
             _logger = logger;
         }
 
@@ -45,12 +41,15 @@ namespace crypto_investment_project.Server.Controllers
 
             try
             {
-                var notifications = await _notificationService.GetUserNotificationsAsync(
+                var notificationsResult = await _notificationService.GetUserNotificationsAsync(
                     userId
-                //page,
-                //pageSize
-                );
+                    //page,
+                    //pageSize
+                    );
+                if (notificationsResult == null || !notificationsResult.IsSuccess)
+                    throw new DatabaseException(notificationsResult.ErrorMessage);
 
+                var notifications = notificationsResult.Data;
                 _logger.LogInformation(
                     "Retrieved {Count} notifications for user {UserId} (RequestID: {RequestId})",
                     notifications?.Count() ?? 0,
@@ -103,7 +102,7 @@ namespace crypto_investment_project.Server.Controllers
             try
             {
                 // Create notification in database
-                var insertResult = await _notificationService.CreateNotificationAsync(notification);
+                var insertResult = await _notificationService.CreateAndSendNotificationAsync(notification);
 
                 if (!insertResult.IsSuccess)
                 {
@@ -116,33 +115,9 @@ namespace crypto_investment_project.Server.Controllers
                     return BadRequest(insertResult.ErrorMessage);
                 }
 
-                // Send real-time notification via SignalR
-                try
-                {
-                    await _notificationHub.Clients
-                        .Group($"user-{notification.UserId}")
-                        .SendAsync("ReceiveNotification", notification.UserId, notification.Message);
-
-                    _logger.LogInformation(
-                        "Real-time notification sent to user {UserId} (RequestID: {RequestId})",
-                        notification.UserId,
-                        requestId
-                    );
-                }
-                catch (Exception signalREx)
-                {
-                    // Log but don't fail the operation if real-time delivery fails
-                    _logger.LogWarning(
-                        signalREx,
-                        "Failed to send real-time notification to user {UserId} (RequestID: {RequestId})",
-                        notification.UserId,
-                        requestId
-                    );
-                }
-
                 return Ok(new
                 {
-                    id = insertResult.Data.InsertedId.ToString(),
+                    id = insertResult.Data.ToString(),
                     message = "Notification created successfully"
                 });
             }
@@ -164,7 +139,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <param name="notificationId">Notification ID</param>
         /// <returns>Result of the operation</returns>
         [HttpPost("read/{notificationId}")]
-        [IgnoreAntiforgeryToken]
+        //[IgnoreAntiforgeryToken]
         public async Task<IActionResult> MarkAsRead(string notificationId)
         {
             if (string.IsNullOrEmpty(notificationId) || !Guid.TryParse(notificationId, out var notificationGuid))
@@ -209,7 +184,7 @@ namespace crypto_investment_project.Server.Controllers
         /// </summary>
         /// <returns>Health status</returns>
         [HttpGet("health")]
-        [IgnoreAntiforgeryToken]
+        //[IgnoreAntiforgeryToken]
         public IActionResult HealthCheck()
         {
             return Ok(new

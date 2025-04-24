@@ -1,4 +1,6 @@
 ﻿// Domain/DTOs/Payment/PaymentDetailsDto.cs
+using Domain.Models.Payment;
+
 namespace Domain.DTOs.Payment
 {
     /// <summary>
@@ -65,5 +67,24 @@ namespace Domain.DTOs.Payment
         /// When the payment was created
         /// </summary>
         public DateTime CreatedAt { get; set; }
+
+        public PaymentDetailsDto()
+        {
+        }
+        public PaymentDetailsDto(PaymentData payment)
+        {
+            Id = payment.Id.ToString();
+            UserId = payment.UserId.ToString();
+            SubscriptionId = payment.SubscriptionId.ToString();
+            Provider = payment.Provider;
+            PaymentProviderId = payment.PaymentProviderId;
+            TotalAmount = payment.TotalAmount;
+            PaymentProviderFee = payment.PaymentProviderFee;
+            PlatformFee = payment.PlatformFee;
+            NetAmount = payment.NetAmount;
+            Currency = payment.Currency;
+            Status = payment.Status;
+            CreatedAt = payment.CreatedAt;
+        }
     }
 }

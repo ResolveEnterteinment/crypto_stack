@@ -1,6 +1,10 @@
-﻿namespace Application.Interfaces
+﻿using Application.Interfaces.Base;
+using Domain.DTOs;
+using Domain.Models.Idempotency;
+
+namespace Application.Interfaces
 {
-    public interface IIdempotencyService
+    public interface IIdempotencyService : IBaseService<IdempotencyData>
     {
         /// <summary>
         /// Gets the result of a previously executed operation by its idempotency key.
@@ -35,5 +39,9 @@
         /// <param name="expiration">Optional custom expiration timespan for this record.</param>
         /// <returns>The result of the operation.</returns>
         Task<T> ExecuteIdempotentOperationAsync<T>(string idempotencyKey, Func<Task<T>> operation, TimeSpan? expiration = null);
+
+        public Task<bool> RemoveKeyAsync(string key);
+
+        public Task<ResultWrapper<long>> PurgeExpiredRecordsAsync();
     }
 }

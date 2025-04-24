@@ -1,11 +1,11 @@
-﻿using Domain.DTOs;
-using MongoDB.Driver;
+﻿using Application.Interfaces.Base;
+using Domain.DTOs;
 
-public interface INotificationService
+public interface INotificationService : IBaseService<NotificationData>
 {
-    public Task<IEnumerable<NotificationData>> GetUserNotificationsAsync(string userId);
-    public Task<ResultWrapper<InsertResult>> CreateNotificationAsync(NotificationData notification);
-    public Task<ResultWrapper<UpdateResult>> MarkAsReadAsync(Guid notificationId);
+    public Task<ResultWrapper<IEnumerable<NotificationData>>> GetUserNotificationsAsync(string userId);
+    public Task<ResultWrapper> CreateAndSendNotificationAsync(NotificationData notification);
+    public Task<ResultWrapper> MarkAsReadAsync(Guid notificationId);
     public bool AddUserToList(string userToAdd);
     public void RemoveUserFromList(string user);
     public void AddUserConnectionId(string user, string connectionId);

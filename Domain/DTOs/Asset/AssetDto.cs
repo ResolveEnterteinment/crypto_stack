@@ -1,4 +1,6 @@
-﻿namespace Domain.DTOs.Asset
+﻿using Domain.Models.Asset;
+
+namespace Domain.DTOs.Asset
 {
     public class AssetDto
     {
@@ -8,5 +10,14 @@
         public string Symbol { get; set; }
         public uint Precision { get; set; }
         public string? SubunitName { get; set; }
+        public AssetDto(AssetData asset)
+        {
+            Id = asset.Id;
+            Name = asset.Name;
+            Ticker = asset.Ticker;
+            Symbol = asset.Symbol;
+            Precision = asset.Precision;
+            SubunitName = asset.SubunitName;
+        }
     }
 }

@@ -2,6 +2,7 @@
 using Application.Interfaces.Exchange;
 using Domain.Constants;
 using Domain.DTOs.Exchange;
+using Domain.Exceptions;
 using Domain.Models.Exchange;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
@@ -28,7 +29,12 @@ namespace Infrastructure.Services.Exchange
         public async Task ReconcilePendingOrdersAsync()
         {
             var filter = Builders<ExchangeOrderData>.Filter.Eq(o => o.Status, OrderStatus.Pending);
-            var pendingOrders = await _exchangeService.GetAllAsync(filter);
+            var pendingOrdersResult = await _exchangeService.GetManyAsync(filter);
+            if (pendingOrdersResult == null || !pendingOrdersResult.IsSuccess)
+            {
+                throw new OrderFetchException("Failed to fetch pending orders");
+            }
+            var pendingOrders = pendingOrdersResult.Data;
 
             foreach (var order in pendingOrders)
             {
@@ -44,7 +50,7 @@ namespace Infrastructure.Services.Exchange
                         .Set(o => o.Quantity, exchangeOrder.QuantityFilled)
                         .Set(o => o.Price, exchangeOrder.Price);
 
-                    await _exchangeService.UpdateOneAsync(order.Id, new
+                    await _exchangeService.UpdateAsync(order.Id, new
                     {
                         Status = exchangeOrder.Status.ToString(),
                         Quantity = exchangeOrder.QuantityFilled,
@@ -68,7 +74,7 @@ namespace Infrastructure.Services.Exchange
             if (order.RetryCount >= 3)
             {
                 _logger.LogError("Max retries reached for OrderId: {OrderId}", order.PlacedOrderId);
-                await _exchangeService.UpdateOneAsync(order.Id, new
+                await _exchangeService.UpdateAsync(order.Id, new
                 {
                     Status = OrderStatus.Failed
                 });
@@ -116,7 +122,7 @@ namespace Infrastructure.Services.Exchange
 
         private async Task EnqueuOrderAsync(ExchangeOrderData order)
         {
-            await _exchangeService.InsertOneAsync(order);
+            await _exchangeService.InsertAsync(order);
         }
     }
 }

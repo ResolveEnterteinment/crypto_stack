@@ -1,30 +1,31 @@
 ﻿using Application.Interfaces;
-using Domain.DTOs.Settings;
+using Application.Interfaces.Base;
+using Domain.Exceptions;
 using Domain.Models.User;
-using Microsoft.Extensions.Caching.Memory;
+using Infrastructure.Services.Base;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services
 {
     public class UserService : BaseService<UserData>, IUserService
     {
-        private static readonly TimeSpan USER_CACHE_DURATION = TimeSpan.FromMinutes(15);
         private const string USER_EXISTS_CACHE_PREFIX = "user:exists:";
+        private static readonly TimeSpan USER_CACHE_DURATION = TimeSpan.FromMinutes(15);
 
         public UserService(
-            IMongoClient mongoClient,
-            IOptions<MongoDbSettings> mongoDbSettings,
+            ICrudRepository<UserData> repository,
+            ICacheService<UserData> cacheService,
+            IMongoIndexService<UserData> indexService,
             ILogger<UserService> logger,
-            IMemoryCache cache
+            IEventService eventService
         ) : base(
-            mongoClient,
-            mongoDbSettings,
-            "userDatas",
+            repository,
+            cacheService,
+            indexService,
             logger,
-            cache,
-            new List<CreateIndexModel<UserData>>
+            eventService,
+            new[]
             {
                 new CreateIndexModel<UserData>(
                     Builders<UserData>.IndexKeys.Ascending(u => u.Email),
@@ -32,168 +33,89 @@ namespace Infrastructure.Services
                 )
             }
         )
-        {
-        }
+        { }
 
-        /// <summary>
-        /// Checks if a user exists with caching
-        /// </summary>
         public async Task<bool> CheckUserExists(Guid userId)
         {
             if (userId == Guid.Empty)
-            {
                 return false;
-            }
 
-            // Check cache first
-            string cacheKey = $"{USER_EXISTS_CACHE_PREFIX}{userId}";
-
-            if (_cache.TryGetValue(cacheKey, out bool exists))
+            var cacheKey = USER_EXISTS_CACHE_PREFIX + userId;
+            if (CacheService.TryGetValue<UserData>(cacheKey, out _))
             {
-                return exists;
+                return true;
             }
 
-            // Check database
-            exists = await ExistsAsync(userId);
-
-            // Cache the result
-            _cache.Set(cacheKey, exists, USER_CACHE_DURATION);
-
-            return exists;
+            var checkExists = await Repository.CheckExistsAsync(userId);
+            return checkExists;
         }
 
-        /// <summary>
-        /// Gets a user by ID with caching
-        /// </summary>
-        public new async Task<UserData> GetAsync(Guid id)
+        public async Task<UserData?> GetAsync(Guid id)
         {
-            return await GetByIdAsync(id);
+            var result = await GetByIdAsync(id);
+            return result.IsSuccess ? result.Data : null;
         }
 
-        /// <summary>
-        /// Creates a new user
-        /// </summary>
-        public async Task<UserData> CreateAsync(UserData newUserData)
+        public async Task<UserData?> CreateAsync(UserData newUserData)
         {
-            try
+            if (newUserData == null)
+                throw new ArgumentNullException(nameof(newUserData));
+            if (string.IsNullOrWhiteSpace(newUserData.Email))
+                throw new ArgumentException("Email is required", nameof(newUserData));
+            if (string.IsNullOrWhiteSpace(newUserData.FullName))
+                throw new ArgumentException("Full name is required", nameof(newUserData));
+
+            // Check duplicate email
+            var filter = Builders<UserData>.Filter.Eq(u => u.Email, newUserData.Email);
+            var existing = await GetOneAsync(filter);
+            if (existing == null || !existing.IsSuccess)
+                throw new DatabaseException("Error checking existing user by email.");
+            if (existing.Data != null)
             {
-                // Validate user data
-                if (newUserData == null)
-                {
-                    throw new ArgumentNullException(nameof(newUserData));
-                }
-
-                if (string.IsNullOrEmpty(newUserData.Email))
-                {
-                    throw new ArgumentException("Email is required", nameof(newUserData));
-                }
-
-                if (string.IsNullOrEmpty(newUserData.FullName))
-                {
-                    throw new ArgumentException("Full name is required", nameof(newUserData));
-                }
-
-                // Ensure ID is assigned
-                if (newUserData.Id == Guid.Empty)
-                {
-                    newUserData.Id = Guid.NewGuid();
-                }
-
-                // Check if email is already in use
-                var existingUserFilter = Builders<UserData>.Filter.Eq(u => u.Email, newUserData.Email);
-                var existingUser = await GetOneAsync(existingUserFilter);
-
-                if (existingUser != null)
-                {
-                    _logger.LogWarning("Attempted to create user with existing email: {Email}", newUserData.Email);
-                    throw new InvalidOperationException($"A user with email {newUserData.Email} already exists");
-                }
-
-                // Insert user
-                var result = await InsertOneAsync(newUserData);
-
-                if (!result.IsAcknowledged || result.InsertedId == null)
-                {
-                    throw new Exception("Failed to create user");
-                }
-
-                // Update user exists cache
-                string cacheKey = $"{USER_EXISTS_CACHE_PREFIX}{newUserData.Id}";
-                _cache.Set(cacheKey, true, USER_CACHE_DURATION);
-
-                _logger.LogInformation("Created user {UserId} with email {Email}", newUserData.Id, newUserData.Email);
-
-                return newUserData;
+                Logger.LogWarning("Attempt to create user with existing email: {Email}", newUserData.Email);
+                throw new InvalidOperationException($"A user with email {newUserData.Email} already exists.");
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to create user: {Message}", ex.Message);
-                return null;
-            }
+
+            // Insert
+            var insertResult = await InsertAsync(newUserData);
+            if (!insertResult.IsSuccess)
+                throw new DatabaseException("Failed to insert new user.");
+
+            // Invalidate exists cache
+            var cacheKey = USER_EXISTS_CACHE_PREFIX + newUserData.Id;
+            CacheService.Invalidate(cacheKey);
+            Logger.LogInformation("Created user {UserId} with email {Email}", newUserData.Id, newUserData.Email);
+            return newUserData;
         }
 
-        /// <summary>
-        /// Updates a user
-        /// </summary>
         public async Task UpdateAsync(Guid id, UserData updatedUserData)
         {
-            try
-            {
-                // Validate
-                if (id == Guid.Empty)
-                {
-                    throw new ArgumentException("Invalid user ID", nameof(id));
-                }
+            if (id == Guid.Empty)
+                throw new ArgumentException("Invalid user ID", nameof(id));
+            if (updatedUserData == null)
+                throw new ArgumentNullException(nameof(updatedUserData));
 
-                if (updatedUserData == null)
-                {
-                    throw new ArgumentNullException(nameof(updatedUserData));
-                }
+            var updateResult = await base.UpdateAsync(id, updatedUserData);
+            if (!updateResult.IsSuccess)
+                throw new DatabaseException($"Failed to update user {id}: {updateResult.ErrorMessage}");
 
-                // Update user
-                await UpdateOneAsync(id, updatedUserData);
-
-                // Invalidate cache
-                InvalidateEntityCache(id);
-
-                _logger.LogInformation("Updated user {UserId}", id);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to update user {UserId}: {Message}", id, ex.Message);
-                throw;
-            }
+            // Invalidate exists cache
+            CacheService.Invalidate(USER_EXISTS_CACHE_PREFIX + id);
+            Logger.LogInformation("Updated user {UserId}", id);
         }
 
-        /// <summary>
-        /// Deletes a user
-        /// </summary>
         public async Task RemoveAsync(Guid id)
         {
-            try
-            {
-                // Validate
-                if (id == Guid.Empty)
-                {
-                    throw new ArgumentException("Invalid user ID", nameof(id));
-                }
+            if (id == Guid.Empty)
+                throw new ArgumentException("Invalid user ID", nameof(id));
 
-                // Delete user
-                await DeleteAsync(id);
+            var deleteResult = await DeleteAsync(id);
+            if (!deleteResult.IsSuccess)
+                throw new DatabaseException($"Failed to remove user {id}: {deleteResult.ErrorMessage}");
 
-                // Invalidate cache
-                InvalidateEntityCache(id);
-
-                string cacheKey = $"{USER_EXISTS_CACHE_PREFIX}{id}";
-                _cache.Remove(cacheKey);
-
-                _logger.LogInformation("Removed user {UserId}", id);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to remove user {UserId}: {Message}", id, ex.Message);
-                throw;
-            }
+            // Invalidate caches
+            CacheService.Invalidate(USER_EXISTS_CACHE_PREFIX + id);
+            Logger.LogInformation("Removed user {UserId}", id);
         }
     }
 }

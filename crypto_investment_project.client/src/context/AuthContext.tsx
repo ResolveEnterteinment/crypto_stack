@@ -125,7 +125,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Fetch a new CSRF token
     const fetchCsrfToken = useCallback(async (): Promise<string | null> => {
         try {
-            const response = await api.get("/v1/csrf");
+            const response = await api.get("/v1/csrf/refresh");
             const newToken = response.data.token;
             setCsrfToken(newToken);
             return newToken;
@@ -191,11 +191,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // Create user object with roles
             const userData = {
-                id: sessionData.userId,
+                id: sessionData.userId, // Ensure trimmed
                 username: sessionData.username,
                 email: sessionData.email,
                 roles: roles
             };
+
 
             // Store user data
             secureStore(AUTH_CONFIG.STORAGE_KEYS.USER, JSON.stringify(userData));
@@ -223,12 +224,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             // Try to call the backend logout endpoint to invalidate the refresh token
             if (user) {
-                const token = csrfToken || await fetchCsrfToken();
-                await api.post("/v1/auth/logout", null, {
-                    headers: {
-                        'X-CSRF-TOKEN': token || ''
-                    }
-                }).catch(err => {
+                //const token = csrfToken || await fetchCsrfToken();
+                await api.post("/v1/auth/logout").catch(err => {
                     // Log but don't prevent logout if server call fails
                     console.warn("Backend logout failed:", err);
                 });
@@ -251,7 +248,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Update authorization header in API service
             api.setAuthToken(null);
         }
-    }, [user, csrfToken, fetchCsrfToken]);
+    }, [user]);
 
     // Refresh token function with concurrency control
     const refreshToken = async (): Promise<boolean> => {

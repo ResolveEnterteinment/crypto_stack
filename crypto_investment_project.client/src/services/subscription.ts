@@ -21,7 +21,9 @@ export const getSubscriptions = async (userId: string): Promise<ISubscription[]>
         const { data } = await api.get(`/Subscription/user/${userId}`);
 
         // Process dates and ensure proper typing
-        const processedData = Array.isArray(data) ? data.map((subscription: any) => ({
+        const subscriptionsData = data.data ?? [];
+
+        var subscriptions = subscriptionsData.map((subscription: any) => ({
             ...subscription,
             nextDueDate: subscription.nextDueDate ? new Date(subscription.nextDueDate) : null,
             endDate: subscription.endDate ? new Date(subscription.endDate) : null,
@@ -33,9 +35,9 @@ export const getSubscriptions = async (userId: string): Promise<ISubscription[]>
                 : parseFloat(subscription.totalInvestments || '0'),
             // Ensure isCancelled is a boolean
             isCancelled: Boolean(subscription.isCancelled)
-        })) : [];
+        }));
 
-        return processedData;
+        return subscriptions;
     } catch (error) {
         logApiError(error, "Fetch Subscriptions Error");
         throw error;
@@ -83,19 +85,12 @@ export const createSubscription = async (subscriptionData: ICreateSubscriptionRe
         // Generate a unique idempotency key
         const idempotencyKey = `create-subscription-${subscriptionData.userId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 
-        // Get CSRF token if available
-        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-
         const headers: Record<string, string> = {
             'X-Idempotency-Key': idempotencyKey
         };
 
-        if (csrfToken) {
-            headers['X-CSRF-TOKEN'] = csrfToken;
-        }
-
         // Fix: Format request payload to match the server's expected format
-        const requestPayload = {
+        const requestPayload : ICreateSubscriptionRequest = {
             userId: subscriptionData.userId,
             // Fix: Ensure allocations follow the expected format
             allocations: subscriptionData.allocations.map(allocation => ({
@@ -105,7 +100,7 @@ export const createSubscription = async (subscriptionData: ICreateSubscriptionRe
             interval: subscriptionData.interval.toUpperCase(), // Ensure uppercase for constants
             amount: subscriptionData.amount, // Send as decimal
             currency: subscriptionData.currency,
-            endDate: subscriptionData.endDate ? subscriptionData.endDate.toISOString() : null
+            endDate: subscriptionData.endDate ? subscriptionData.endDate : null
         };
 
         // Log the request for debugging
@@ -123,6 +118,8 @@ export const createSubscription = async (subscriptionData: ICreateSubscriptionRe
             subscriptionId = response.data.id;
         } else if (response.data.data && response.data.data.id) {
             subscriptionId = response.data.data.id;
+        } else if (response.data.data && typeof response.data.data === 'string') {
+            subscriptionId = response.data.data;
         } else if (typeof response.data === 'string') {
             // Some APIs return the ID directly as a string
             subscriptionId = response.data;
@@ -154,25 +151,22 @@ export const updateSubscription = async (subscriptionId: string, updateFields: I
         // Generate a unique idempotency key
         const idempotencyKey = `update-subscription-${subscriptionId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 
-        // Get CSRF token if available
-        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-
         const headers: Record<string, string> = {
             'X-Idempotency-Key': idempotencyKey
         };
+        /*
+        // Get CSRF token if available
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
         if (csrfToken) {
             headers['X-CSRF-TOKEN'] = csrfToken;
         }
-
+        */
         // Fix: Format update fields properly
         const requestPayload = { ...updateFields };
 
         if (updateFields.allocations) {
-            requestPayload.allocations = updateFields.allocations.map(allocation => ({
-                assetId: allocation.assetId,
-                percentAmount: Math.round(allocation.percentAmount)
-            }));
+            requestPayload.allocations = updateFields.allocations;
         }
 
         if (updateFields.interval) {
@@ -180,7 +174,7 @@ export const updateSubscription = async (subscriptionId: string, updateFields: I
         }
 
         if (updateFields.endDate) {
-            requestPayload.endDate = updateFields.endDate.toISOString();
+            requestPayload.endDate = updateFields.endDate;
         }
 
         const response = await api.put(`/Subscription/update/${subscriptionId}`, requestPayload, { headers });
@@ -207,16 +201,16 @@ export const cancelSubscription = async (subscriptionId: string): Promise<void> 
         // Generate a unique idempotency key
         const idempotencyKey = `cancel-subscription-${subscriptionId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 
-        // Get CSRF token if available
-        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-
         const headers: Record<string, string> = {
             'X-Idempotency-Key': idempotencyKey
         };
+        /*
+        // Get CSRF token if available
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
         if (csrfToken) {
             headers['X-CSRF-TOKEN'] = csrfToken;
-        }
+        }*/
 
         const response = await api.post(`/Subscription/cancel/${subscriptionId}`, null, { headers });
 
@@ -239,7 +233,7 @@ export const getTransactions = async (subscriptionId: string): Promise<ITransact
     }
 
     try {
-        const response = await api.post(`/Transaction/subscription/${subscriptionId}`);
+        const response = await api.get(`/Transaction/subscription/${subscriptionId}`);
         return Array.isArray(response.data) ? response.data : [];
     } catch (error) {
         console.error(`Error fetching transactions for subscription ${subscriptionId}:`, error);

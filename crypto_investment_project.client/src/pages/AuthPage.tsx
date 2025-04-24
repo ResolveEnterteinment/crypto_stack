@@ -28,7 +28,7 @@ const AuthPage: React.FC = () => {
         // Fetch CSRF token
         const fetchCsrfToken = async () => {
             try {
-                const response = await api.get("/v1/csrf");
+                const response = await api.get("/v1/csrf/refresh");
                 setCsrfToken(response.data.token);
             } catch (err) {
                 console.error("Failed to fetch CSRF token:", err);

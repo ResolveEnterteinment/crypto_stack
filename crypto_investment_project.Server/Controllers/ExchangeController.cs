@@ -1,5 +1,5 @@
 using Application.Extensions;
-using Application.Interfaces;
+using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
 using Domain.DTOs.Error;
 using Microsoft.AspNetCore.Mvc;

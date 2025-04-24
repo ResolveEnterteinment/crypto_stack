@@ -1,14 +1,21 @@
 using Application.Behaviors;
 using Application.Interfaces;
+using Application.Interfaces.Asset;
+using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Payment;
+using Application.Interfaces.Subscription;
 using Application.Validation;
 using Domain.DTOs.Settings;
 using Domain.Interfaces;
 using Infrastructure;
 using Infrastructure.Services;
+using Infrastructure.Services.Asset;
+using Infrastructure.Services.Base;
 using Infrastructure.Services.Exchange;
+using Infrastructure.Services.Index;
 using Infrastructure.Services.Payment;
+using Infrastructure.Services.Subscription;
 using MediatR;
 using MongoDB.Driver;
 
@@ -64,10 +71,10 @@ public static class CoreServicesExtensions
             options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
             options.KeepAliveInterval = TimeSpan.FromSeconds(15);
         })
-        .AddJsonProtocol(options =>
-        {
-            options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
-        });
+            .AddJsonProtocol(options =>
+            {
+                options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+            });
 
         // Add MediatR
         services.AddMediatR(cfg =>
@@ -81,8 +88,16 @@ public static class CoreServicesExtensions
 
     private static void RegisterApplicationServices(IServiceCollection services)
     {
+        // 1) Generic plumbing for all BaseService<T> consumers:
+        services.AddScoped(typeof(ICrudRepository<>), typeof(Repository<>));
+        services.AddScoped(typeof(ICacheService<>), typeof(CacheService<>));
+        services.AddScoped(typeof(IMongoIndexService<>), typeof(MongoIndexService<>));
+
         // Register services with appropriate lifecycles
+        services.AddSingleton(typeof(IMongoIndexService<>), typeof(MongoIndexService<>));
         services.AddScoped<IEncryptionService, Encryption.Services.EncryptionService>();
+
+        // 2) Your existing registrations
         services.AddScoped<IExchangeService, ExchangeService>();
         services.AddScoped<IPaymentProcessingService, PaymentProcessingService>();
         services.AddScoped<IOrderManagementService, OrderManagementService>();

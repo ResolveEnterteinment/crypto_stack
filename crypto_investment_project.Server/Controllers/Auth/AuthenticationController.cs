@@ -1,9 +1,9 @@
 ﻿using Application.Contracts.Requests.Auth;
 using Application.Contracts.Responses;
 using Application.Contracts.Responses.Auth;
-using Application.Interfaces;
 using Domain.DTOs.Error;
 using Domain.Models.Authentication;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -19,14 +19,14 @@ namespace crypto_investment_project.Server.Controllers.Auth
     [Produces("application/json")]
     public class AuthenticationController : ControllerBase
     {
-        private readonly IAuthenticationService _authenticationService;
+        private readonly Application.Interfaces.IAuthenticationService _authenticationService;
         private readonly RoleManager<ApplicationRole> _roleManager;
         private readonly ILogger<AuthenticationController> _logger;
         private readonly HtmlEncoder _htmlEncoder;
 
         public AuthenticationController(
             RoleManager<ApplicationRole> roleManager,
-            IAuthenticationService authenticationService,
+            Application.Interfaces.IAuthenticationService authenticationService,
             ILogger<AuthenticationController> logger,
             HtmlEncoder htmlEncoder)
         {
@@ -528,17 +528,21 @@ namespace crypto_investment_project.Server.Controllers.Auth
         [HttpPost]
         [Route("logout")]
         [Authorize]
-        [ValidateAntiForgeryToken]
+        [IgnoreAntiforgeryToken]
+        [EnableRateLimiting("AuthEndpoints")]
         [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
         public async Task<IActionResult> Logout()
         {
             try
             {
+                string userEmail = User.FindFirstValue(ClaimTypes.Email);
+
                 // Clear refresh token cookie
                 Response.Cookies.Delete("refreshToken");
 
-                string userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                _logger.LogInformation("User {UserId} logged out", userId);
+                await HttpContext.SignOutAsync();
+
+                _logger.LogInformation("User {UserId} logged out", userEmail);
 
                 return Ok(new BaseResponse
                 {

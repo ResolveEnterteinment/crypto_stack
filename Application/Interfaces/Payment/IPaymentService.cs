@@ -5,9 +5,9 @@ using Domain.Models.Payment;
 
 namespace Application.Interfaces.Payment
 {
-    public interface IPaymentService : IRepository<PaymentData>
+    public interface IPaymentService
     {
-        public Dictionary<string, IPaymentProvider> Providers { get; }
+        public IReadOnlyDictionary<string, IPaymentProvider> Providers { get; }
 
         public Task<ResultWrapper> ProcessChargeUpdatedEventAsync(ChargeRequest charge);
         public Task<ResultWrapper> ProcessInvoicePaidEvent(InvoiceRequest invoice);
@@ -40,5 +40,7 @@ namespace Application.Interfaces.Payment
         /// <param name="paymentId">The payment ID</param>
         /// <returns>The result of the cancellation</returns>
         Task<ResultWrapper> CancelPaymentAsync(string paymentId);
+
+        public Task<ResultWrapper<PaymentData>> GetByProviderIdAsync(string paymentProviderId);
     }
 }

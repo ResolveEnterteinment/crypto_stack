@@ -1,6 +1,7 @@
 using Application.Contracts.Requests.Subscription;
 using Application.Extensions;
 using Application.Interfaces;
+using Application.Interfaces.Subscription;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -51,9 +52,9 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="401">If the user is not authenticated</response>
         /// <response code="403">If the user is not authorized to view these subscriptions</response>
         /// <response code="404">If the user is not found</response>
-        [HttpPost]
+        [HttpGet]
         [Route("user/{user}")]
-        [IgnoreAntiforgeryToken]
+        //[IgnoreAntiforgeryToken]
         [Authorize(Roles = "USER")]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(StatusCodes.Status200OK)]
@@ -144,9 +145,9 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="401">If the user is not authenticated</response>
         /// <response code="403">If the user is not authorized to view these subscriptions</response>
         /// <response code="404">If the user is not found</response>
-        [HttpPost]
+        [HttpGet]
         [Route("subscription/{subscription}")]
-        [IgnoreAntiforgeryToken]
+        //[IgnoreAntiforgeryToken]
         [Authorize(Roles = "USER")]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(StatusCodes.Status200OK)]
@@ -173,12 +174,14 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // Verify user exists
-                    var subscriptionData = await _subscriptionService.GetByIdAsync(subscriptionId);
-                    if (subscriptionData == null)
+                    var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
+                    if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                     {
                         _logger.LogWarning("Subscription not found: {SubscriptionId}", subscriptionId);
                         return NotFound(new { message = "Subscription not found" });
                     }
+
+                    var subscriptionData = subscriptionResult.Data;
 
                     // Authorization check - verify current user can access this data
                     var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);

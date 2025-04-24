@@ -31,7 +31,7 @@ export const getDashboardData = async (userId: string): Promise<IDashboardData> 
 
     try {
         // Use the dedicated dashboard endpoint
-        const response = await api.post(`/Dashboard/user/${userId}`);
+        const response = await api.get(`/Dashboard/user/${userId}`);
 
         // Ensure we have proper typing and default values
         const dashboardData: IDashboardData = {

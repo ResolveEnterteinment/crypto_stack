@@ -59,7 +59,7 @@ const SubscriptionCreationPage: React.FC = () => {
         amount: 100,
         currency: 'USD',
         endDate: null as Date | null,
-        allocations: [] as Omit<IAllocation, 'id'>[]
+        allocations: [] as IAllocation[]
     });
 
     // Reset error when changing steps

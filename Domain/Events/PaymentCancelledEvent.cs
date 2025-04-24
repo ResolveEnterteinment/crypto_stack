@@ -10,7 +10,7 @@ namespace Domain.Events
         public PaymentCancelledEvent(PaymentData payment)
         {
             Payment = payment;
-            DomainRecordId = payment.Id;
+            DomainEntityId = payment.Id;
         }
     }
 }

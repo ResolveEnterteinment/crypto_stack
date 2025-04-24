@@ -1,5 +1,6 @@
 ﻿using crypto_investment_project.Server.Configuration;
 using crypto_investment_project.Server.Middleware;
+using Encryption;
 using HealthChecks.UI.Client;
 using Infrastructure.Hubs;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -9,19 +10,16 @@ var builder = WebApplication.CreateBuilder(args);
 // Apply configuration through extension methods
 builder.Services
     .AddAppSettings(builder.Configuration)
+    .AddEncryptionServices()
     .AddIdentityConfiguration(builder.Configuration)
     .AddAuthenticationServices(builder.Configuration)
     .AddCoreServices(builder.Environment)
     .AddRateLimitingPolicies()
     .AddApiVersioningSupport()
     .AddHealthChecksServices(builder.Configuration)
-    .ConfigureCorsPolicy(builder.Environment, builder.Configuration);
-
-// Add controllers with additional config
-builder.Services.AddControllersWithViews();
-
-// Add Swagger
-builder.Services.AddSwaggerServices();
+    .ConfigureCorsPolicy(builder.Environment, builder.Configuration)
+    .AddSwaggerServices()
+    .AddHostedServices(builder.Environment);
 
 // Build the application
 var app = builder.Build();
@@ -48,16 +46,16 @@ app.UseSecurityHeaders();
 // Add rate limiting
 app.UseRateLimiter();
 
-// Configure antiforgery
-app.UseCustomAntiforgery();
-
 // Add CORS
 app.UseCors("AllowSpecifiedOrigins");
 
+// Configure antiforgery
+app.UseCustomAntiforgery();
+
 // Authentication and authorization
 app.UseAuthentication();
-app.UseHttpsRedirection();
 app.UseAuthorization();
+app.UseHttpsRedirection();
 
 // Configure health checks endpoints
 app.MapHealthChecks("/health", new HealthCheckOptions

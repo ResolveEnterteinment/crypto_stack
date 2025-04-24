@@ -1,6 +1,5 @@
 using Domain.DTOs;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 
@@ -79,16 +78,16 @@ public static class AuthenticationExtensions
             options.HeaderName = "X-CSRF-TOKEN";
             options.Cookie.Name = "XSRF-TOKEN";
             options.Cookie.HttpOnly = false; // Must be accessible from JavaScript
-            options.Cookie.SameSite = SameSiteMode.Strict;
+            options.Cookie.SameSite = SameSiteMode.None;
             options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
         });
 
         // Add MVC services
         services.AddControllers(options =>
-        {
-            // Register as a filter factory instead of a direct filter instance
-            options.Filters.Add<AutoValidateAntiforgeryTokenAttribute>();
-        })
+            {
+                // Register as a filter factory instead of a direct filter instance
+                //options.Filters.Add(new AutoValidateAntiforgeryTokenAttribute());
+            })
         .AddNewtonsoftJson(options =>
         {
             options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;

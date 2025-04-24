@@ -1,5 +1,6 @@
 using Application.Interfaces;
 using Application.Interfaces.Payment;
+using Application.Interfaces.Subscription;
 using Domain.Constants;
 using Domain.Constants.Payment;
 using Domain.DTOs.Error;
@@ -47,7 +48,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <returns>Checkout session URL</returns>
         [HttpPost("create-checkout-session")]
         [Authorize]
-        [IgnoreAntiforgeryToken]
+        //[IgnoreAntiforgeryToken]
         [EnableRateLimiting("standard")]
         public async Task<IActionResult> CreateCheckoutSession([FromBody] CheckoutSessionRequest request)
         {
@@ -100,12 +101,13 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // Check if subscription exists and belongs to the user
-                    var subscription = await _subscriptionService.GetByIdAsync(subscriptionId);
-                    if (subscription == null)
+                    var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
+                    if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                     {
                         _logger.LogWarning("Subscription not found: {SubscriptionId}", subscriptionId);
                         return BadRequest(new { message = "Subscription not found", code = "SUBSCRIPTION_NOT_FOUND" });
                     }
+                    var subscription = subscriptionResult.Data;
 
                     if (subscription.UserId.ToString() != request.UserId)
                     {
@@ -148,7 +150,7 @@ namespace crypto_investment_project.Server.Controllers
 
                     if (sessionResult is null || !sessionResult.IsSuccess || sessionResult.Data is null)
                     {
-                        throw new PaymentApiException("Failed to rettieve payment from checkout session.", sessionResult?.Data?.Provider ?? "Session result returned null.");
+                        throw new PaymentApiException("Failed to retrieve payment from checkout session.", sessionResult?.Data?.Provider ?? "Session result returned null.");
                     }
 
                     var checkoutSession = sessionResult.Data;
@@ -188,7 +190,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <returns>Payment status</returns>
         [HttpGet("status/{paymentId}")]
         [Authorize]
-        [IgnoreAntiforgeryToken]
+        //[IgnoreAntiforgeryToken]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(typeof(PaymentStatusResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
@@ -250,7 +252,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <returns>Cancellation result</returns>
         [HttpPost("cancel/{paymentId}")]
         [Authorize]
-        [ValidateAntiForgeryToken]
+        //[ValidateAntiForgeryToken]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(typeof(PaymentCancelResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]

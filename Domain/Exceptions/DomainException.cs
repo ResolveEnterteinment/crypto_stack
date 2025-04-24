@@ -697,23 +697,16 @@ namespace Domain.Exceptions
         public string ResourceType { get; }
 
         /// <summary>
-        /// Gets the resource ID.
-        /// </summary>
-        public string ResourceId { get; }
-
-        /// <summary>
         /// Initializes a new instance of the <see cref="ConcurrencyException"/> class.
         /// </summary>
         /// <param name="resourceType">The resource type.</param>
-        /// <param name="resourceId">The resource ID.</param>
-        public ConcurrencyException(string resourceType, string resourceId)
-            : base($"Concurrency conflict detected for {resourceType} with ID {resourceId}", "CONCURRENCY_CONFLICT")
+        /// <param name="message">The resource ID.</param>
+        public ConcurrencyException(string resourceType, string message)
+            : base($"Concurrency conflict detected for {resourceType}: {message}", "CONCURRENCY_CONFLICT")
         {
             ResourceType = resourceType;
-            ResourceId = resourceId;
 
             AddContext("ResourceType", resourceType);
-            AddContext("ResourceId", resourceId);
         }
 
         /// <summary>
@@ -723,7 +716,6 @@ namespace Domain.Exceptions
             : base(info, context)
         {
             ResourceType = info.GetString(nameof(ResourceType));
-            ResourceId = info.GetString(nameof(ResourceId));
         }
 
         /// <summary>
@@ -739,7 +731,6 @@ namespace Domain.Exceptions
             }
 
             info.AddValue(nameof(ResourceType), ResourceType);
-            info.AddValue(nameof(ResourceId), ResourceId);
             base.GetObjectData(info, context);
         }
     }

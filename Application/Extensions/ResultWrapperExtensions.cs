@@ -25,7 +25,11 @@ namespace Application.Extensions
                 }
                 else if (result.Data != null)
                 {
-                    return controller.Ok(result.Data);
+                    return controller.Ok(new
+                    {
+                        data = result.Data,
+                        message = result.DataMessage
+                    });
                 }
                 else
                 {

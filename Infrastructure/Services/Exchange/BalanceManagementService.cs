@@ -243,23 +243,25 @@ namespace Infrastructure.Services.Exchange
                     };
 
                     // Store the event
-                    var storedEventResult = await _eventService.InsertOneAsync(storedEvent);
+                    var storedEventResult = await _eventService.InsertAsync(storedEvent);
 
-                    if (!storedEventResult.IsAcknowledged || storedEventResult.InsertedId is null)
+                    if (storedEventResult == null || !storedEventResult.IsSuccess)
                     {
                         throw new DatabaseException(
                             $"Failed to store {storedEvent.GetType().Name} event: {storedEventResult?.ErrorMessage ?? "Unknown error"}");
                     }
 
+                    var storedEventData = storedEventResult.Data;
+
                     // Publish the event to be handled by relevant services
-                    await _eventService.Publish(new RequestfundingEvent(amount, storedEventResult.InsertedId.Value));
+                    await _eventService.Publish(new RequestfundingEvent(amount, storedEventData.AffectedIds.First()));
 
                     // Cache the request to prevent duplicates
                     _cache.Set(cacheKey, true, TimeSpan.FromMinutes(15));
 
                     _logger.LogInformation(
                         "Successfully published funding request event. Amount: {Amount}, EventId: {EventId}",
-                        amount, storedEventResult.InsertedId.Value);
+                        amount, storedEventData.AffectedIds.First());
                 }
                 catch (Exception ex)
                 {

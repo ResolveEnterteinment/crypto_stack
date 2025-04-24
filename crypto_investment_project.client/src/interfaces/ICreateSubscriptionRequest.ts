@@ -1,8 +1,8 @@
-import IAllocation from "./IAllocation";
+import IAllocationRequest from "./IAllocationRequest";
 
 export default interface ICreateSubscriptionRequest {
     userId: string;
-    allocations: Omit<IAllocation, 'id'>[];
+    allocations: IAllocationRequest[];
     interval: string;
     amount: number;
     currency: string;

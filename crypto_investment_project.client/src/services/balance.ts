@@ -14,7 +14,7 @@ export const getBalances = async (userId: string) => {
         console.error("getBalances called with undefined userId");
         return [];
     }
-    const { data } = await api.post(`/Balance/user/${userId}`);
+    const { data } = await api.get(`/Balance/user/${userId}`);
     return data;
 };
 
@@ -23,7 +23,7 @@ export const getTotalInvestments = async (userId: string) => {
         console.error("getTotalInvestments called with undefined userId");
         return [];
     }
-    const { data } = await api.post(`/Balance/totalInvestments/${userId}`);
+    const { data } = await api.get(`/Balance/totalInvestments/${userId}`);
     return data;
 };
 
@@ -32,7 +32,7 @@ export const getPortfolioValue = async (userId: string) => {
         console.error("getPortfolioValue called with undefined userId");
         return [];
     }
-    const { data } = await api.post(`/Balance/portfolioValue/${userId}`);
+    const { data } = await api.get(`/Balance/portfolioValue/${userId}`);
     return data;
 };
 

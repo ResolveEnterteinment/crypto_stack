@@ -8,7 +8,7 @@ import { NotificationProvider } from "./context/NotificationContext";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-    <React.StrictMode>
+    //<React.StrictMode>
         <AuthProvider>
             <NotificationProvider>
                 <BrowserRouter>
@@ -16,7 +16,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
                 </BrowserRouter>
             </NotificationProvider>
         </AuthProvider>
-    </React.StrictMode>
+    //</React.StrictMode>
 );
 
 // Initialize API service including CSRF token before rendering the app

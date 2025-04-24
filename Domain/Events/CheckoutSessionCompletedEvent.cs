@@ -14,7 +14,7 @@ namespace Domain.Events
             {
                 if (Guid.TryParse(subscriptionIdString, out var subscriptionId))
                 {
-                    DomainRecordId = subscriptionId;
+                    DomainEntityId = subscriptionId;
                 }
             }
         }
