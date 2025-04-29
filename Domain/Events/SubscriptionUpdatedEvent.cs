@@ -7,7 +7,8 @@ namespace Domain.Events
     public class SubscriptionUpdatedEvent : BaseEvent, INotification
     {
         public PaymentProviderEvent SubscriptionEvent;
-        public SubscriptionUpdatedEvent(PaymentProviderEvent subscription)
+        public SubscriptionUpdatedEvent(PaymentProviderEvent subscription, IDictionary<string, object?> context) :
+            base(context)
         {
             SubscriptionEvent = subscription;
         }

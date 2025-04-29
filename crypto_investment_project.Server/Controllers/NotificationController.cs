@@ -1,3 +1,4 @@
+using Application.Interfaces.Logging;
 using Domain.Exceptions;
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
@@ -9,11 +10,11 @@ namespace crypto_investment_project.Server.Controllers
     public class NotificationController : ControllerBase
     {
         private readonly INotificationService _notificationService;
-        private readonly ILogger<NotificationController> _logger;
+        private readonly ILoggingService _logger;
 
         public NotificationController(
             INotificationService notificationService,
-            ILogger<NotificationController> logger)
+            ILoggingService logger)
         {
             _notificationService = notificationService;
             _logger = logger;
@@ -32,6 +33,8 @@ namespace crypto_investment_project.Server.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
+            using var Scope = _logger.BeginScope();
+
             if (string.IsNullOrEmpty(userId))
             {
                 return BadRequest("User ID is required");
@@ -62,74 +65,12 @@ namespace crypto_investment_project.Server.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(
-                    ex,
                     "Error retrieving notifications for user {UserId} (RequestID: {RequestId})",
                     userId,
                     requestId
                 );
 
                 return StatusCode(500, new { message = "An error occurred while retrieving notifications" });
-            }
-        }
-
-        /// <summary>
-        /// Creates a new notification for a user
-        /// </summary>
-        /// <param name="notification">Notification data</param>
-        /// <returns>Result of the operation</returns>
-        [HttpPost("create")]
-        [IgnoreAntiforgeryToken]
-        public async Task<IActionResult> CreateNotification([FromBody] NotificationData notification)
-        {
-            var requestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-
-            // Validate input
-            if (notification == null)
-            {
-                return BadRequest("Notification data is required");
-            }
-
-            if (string.IsNullOrEmpty(notification.Message))
-            {
-                return BadRequest("Notification message is required");
-            }
-
-            if (string.IsNullOrEmpty(notification.UserId))
-            {
-                return BadRequest("User ID is required");
-            }
-
-            try
-            {
-                // Create notification in database
-                var insertResult = await _notificationService.CreateAndSendNotificationAsync(notification);
-
-                if (!insertResult.IsSuccess)
-                {
-                    _logger.LogWarning(
-                        "Failed to create notification: {ErrorMessage} (RequestID: {RequestId})",
-                        insertResult.ErrorMessage,
-                        requestId
-                    );
-
-                    return BadRequest(insertResult.ErrorMessage);
-                }
-
-                return Ok(new
-                {
-                    id = insertResult.Data.ToString(),
-                    message = "Notification created successfully"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Error creating notification (RequestID: {RequestId})",
-                    requestId
-                );
-
-                return StatusCode(500, new { message = "An error occurred while creating the notification" });
             }
         }
 
@@ -142,40 +83,46 @@ namespace crypto_investment_project.Server.Controllers
         //[IgnoreAntiforgeryToken]
         public async Task<IActionResult> MarkAsRead(string notificationId)
         {
-            if (string.IsNullOrEmpty(notificationId) || !Guid.TryParse(notificationId, out var notificationGuid))
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                return BadRequest("Valid notification ID is required");
-            }
-
-            var requestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-
-            try
+                ["NotificationId"] = notificationId,
+            }))
             {
-                var result = await _notificationService.MarkAsReadAsync(notificationGuid);
-
-                if (!result.IsSuccess)
+                if (string.IsNullOrEmpty(notificationId) || !Guid.TryParse(notificationId, out var notificationGuid))
                 {
-                    // Check for a "not found" scenario
-                    if (result.ErrorMessage?.Contains("not found") == true)
-                    {
-                        return NotFound(new { message = $"Notification {notificationId} not found" });
-                    }
-
-                    return BadRequest(new { message = result.ErrorMessage });
+                    return BadRequest("Valid notification ID is required");
                 }
 
-                return Ok(new { message = "Notification marked as read" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Error marking notification {NotificationId} as read (RequestID: {RequestId})",
-                    notificationId,
-                    requestId
-                );
+                var requestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
-                return StatusCode(500, new { message = "An error occurred while marking the notification as read" });
+                try
+                {
+                    var result = await _notificationService.MarkAsReadAsync(notificationGuid);
+
+                    if (!result.IsSuccess)
+                    {
+                        // Check for a "not found" scenario
+                        if (result.ErrorMessage?.Contains("not found") == true)
+                        {
+                            return NotFound(new { message = $"Notification {notificationId} not found" });
+                        }
+
+                        return BadRequest(new { message = result.ErrorMessage });
+                    }
+
+                    return Ok(new { message = "Notification marked as read" });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        "Error marking notification {NotificationId} as read (RequestID: {RequestId}): {ErrorMessage}",
+                        notificationId,
+                        requestId,
+                        ex.Message
+                    );
+
+                    return StatusCode(500, new { message = "An error occurred while marking the notification as read" });
+                }
             }
         }
 

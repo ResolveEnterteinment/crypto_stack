@@ -1,4 +1,5 @@
 using Application.Interfaces;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
@@ -23,7 +24,7 @@ namespace crypto_investment_project.Server.Controllers
         private readonly IIdempotencyService _idempotencyService;
         private readonly IEventService _eventService;
         private readonly IConfiguration _configuration;
-        private readonly ILogger<PaymentController> _logger;
+        private readonly ILoggingService Logger;
 
         public PaymentController(
             ISubscriptionService subscriptionService,
@@ -31,14 +32,14 @@ namespace crypto_investment_project.Server.Controllers
             IIdempotencyService idempotencyService,
             IEventService eventService,
             IConfiguration configuration,
-            ILogger<PaymentController> logger)
+            ILoggingService logger)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            Logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <summary>
@@ -54,7 +55,7 @@ namespace crypto_investment_project.Server.Controllers
         {
             var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
-            using (_logger.BeginScope(new Dictionary<string, object>
+            using (Logger.BeginScope(new Dictionary<string, object>
             {
                 ["CorrelationId"] = correlationId,
                 ["Operation"] = "CreateCheckoutSession",
@@ -65,38 +66,34 @@ namespace crypto_investment_project.Server.Controllers
                 try
                 {
                     // Log the full request for debugging
-                    _logger.LogInformation("Payment request received: {@Request}", request);
+                    await Logger.LogTraceAsync($"Payment request received: {request}",
+                        "CreateCheckoutSession");
 
                     #region Validate
                     // Validate request
                     if (request is null)
                     {
-                        _logger.LogWarning("Request is null");
                         return BadRequest(new { message = "Request body is required", code = "INVALID_REQUEST" });
                     }
 
                     // Log all validation checks
                     if (string.IsNullOrEmpty(request.SubscriptionId))
                     {
-                        _logger.LogWarning("SubscriptionId is missing");
                         return BadRequest(new { message = "SubscriptionId is required", code = "MISSING_SUBSCRIPTION_ID" });
                     }
 
                     if (!Guid.TryParse(request.SubscriptionId, out var subscriptionId))
                     {
-                        _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", request.SubscriptionId);
                         return BadRequest(new { message = "Invalid subscription ID format", code = "INVALID_SUBSCRIPTION_ID" });
                     }
 
                     if (string.IsNullOrEmpty(request.UserId))
                     {
-                        _logger.LogWarning("UserId is missing");
                         return BadRequest(new { message = "UserId is required", code = "MISSING_USER_ID" });
                     }
 
                     if (request.Amount <= 0)
                     {
-                        _logger.LogWarning("Amount is invalid: {Amount}", request.Amount);
                         return BadRequest(new { message = "Amount must be greater than zero", code = "INVALID_AMOUNT" });
                     }
 
@@ -104,15 +101,16 @@ namespace crypto_investment_project.Server.Controllers
                     var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
                     if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                     {
-                        _logger.LogWarning("Subscription not found: {SubscriptionId}", subscriptionId);
+                        await Logger.LogTraceAsync($"Subscription not found: {subscriptionId}", "CreateCheckoutSession");
+
                         return BadRequest(new { message = "Subscription not found", code = "SUBSCRIPTION_NOT_FOUND" });
                     }
                     var subscription = subscriptionResult.Data;
 
                     if (subscription.UserId.ToString() != request.UserId)
                     {
-                        _logger.LogWarning("Subscription {SubscriptionId} does not belong to user {UserId}", subscriptionId, request.UserId);
-                        return BadRequest(new { message = "Subscription does not belong to the user", code = "UNAUTHORIZED_ACCESS" });
+                        Logger.LogError($"Subscription not found: {subscriptionId}");
+                        return Unauthorized(new { message = "Subscription does not belong to the user", code = "UNAUTHORIZED_ACCESS" });
                     }
                     #endregion
 
@@ -120,8 +118,6 @@ namespace crypto_investment_project.Server.Controllers
                     string idempotencyKey = request.IdempotencyKey ?? Guid.NewGuid().ToString();
                     if (await _idempotencyService.HasKeyAsync(idempotencyKey))
                     {
-                        _logger.LogInformation("Duplicate checkout session request {IdempotencyKey} received and skipped",
-                        request.IdempotencyKey);
                         return Ok(new { status = "Already processed" });
                     }
 
@@ -171,7 +167,8 @@ namespace crypto_investment_project.Server.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error creating checkout session: {ErrorMessage}", ex.Message);
+                    await Logger.LogTraceAsync($"Error creating checkout session: {ex.Message}", requiresResolution: true);
+
                     return StatusCode(StatusCodes.Status500InternalServerError, new
                     {
                         message = "An error occurred while processing your request",
@@ -184,75 +181,12 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         /// <summary>
-        /// Gets the status of a payment
-        /// </summary>
-        /// <param name="paymentId">Payment ID</param>
-        /// <returns>Payment status</returns>
-        [HttpGet("status/{paymentId}")]
-        [Authorize]
-        //[IgnoreAntiforgeryToken]
-        [EnableRateLimiting("standard")]
-        [ProducesResponseType(typeof(PaymentStatusResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> GetPaymentStatus(string paymentId)
-        {
-            var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-
-            using (_logger.BeginScope(new Dictionary<string, object>
-            {
-                ["CorrelationId"] = correlationId,
-                ["Operation"] = "GetPaymentStatus",
-                ["PaymentId"] = paymentId
-            }))
-            {
-                try
-                {
-                    if (string.IsNullOrEmpty(paymentId))
-                    {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Payment ID is required",
-                            Code = "INVALID_PAYMENT_ID",
-                            TraceId = correlationId
-                        });
-                    }
-
-                    var status = await _paymentService.GetPaymentStatusAsync(paymentId);
-                    if (status == null)
-                    {
-                        return NotFound(new ErrorResponse
-                        {
-                            Message = "Payment not found",
-                            Code = "PAYMENT_NOT_FOUND",
-                            TraceId = correlationId
-                        });
-                    }
-
-                    return Ok(status);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error getting payment status");
-                    return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
-                    {
-                        Message = "An error occurred while retrieving the payment status",
-                        Code = "SERVER_ERROR",
-                        TraceId = correlationId
-                    });
-                }
-            }
-        }
-
-        /// <summary>
         /// Cancels a pending payment
         /// </summary>
         /// <param name="paymentId">Payment ID</param>
         /// <returns>Cancellation result</returns>
         [HttpPost("cancel/{paymentId}")]
         [Authorize]
-        //[ValidateAntiForgeryToken]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(typeof(PaymentCancelResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
@@ -262,85 +196,107 @@ namespace crypto_investment_project.Server.Controllers
         {
             var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
-            using (_logger.BeginScope(new Dictionary<string, object>
+            using var scope = Logger.BeginScope(new Dictionary<string, object>
             {
-                ["CorrelationId"] = correlationId,
-                ["Operation"] = "CancelPayment",
                 ["PaymentId"] = paymentId
-            }))
+            });
+
+            try
             {
-                try
+                if (string.IsNullOrEmpty(paymentId))
                 {
-                    if (string.IsNullOrEmpty(paymentId))
-                    {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Payment ID is required",
-                            Code = "INVALID_PAYMENT_ID",
-                            TraceId = correlationId
-                        });
-                    }
-
-                    // Get the payment to check if it belongs to the current user
-                    var payment = await _paymentService.GetPaymentDetailsAsync(paymentId);
-                    if (payment == null)
-                    {
-                        return NotFound(new ErrorResponse
-                        {
-                            Message = "Payment not found",
-                            Code = "PAYMENT_NOT_FOUND",
-                            TraceId = correlationId
-                        });
-                    }
-
-                    // Ensure the payment belongs to the current user
-                    string currentUserId = User.FindFirst("sub")?.Value ?? User.FindFirst("uid")?.Value;
-                    if (payment.UserId != currentUserId)
-                    {
-                        return Forbid();
-                    }
-
-                    // Only allow cancellation of pending payments
-                    if (payment.Status != PaymentStatus.Pending)
-                    {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = "Only pending payments can be cancelled",
-                            Code = "INVALID_PAYMENT_STATUS",
-                            TraceId = correlationId
-                        });
-                    }
-
-                    // Cancel the payment
-                    var result = await _paymentService.CancelPaymentAsync(paymentId);
-                    if (!result.IsSuccess)
-                    {
-                        return BadRequest(new ErrorResponse
-                        {
-                            Message = result.ErrorMessage,
-                            Code = "CANCELLATION_FAILED",
-                            TraceId = correlationId
-                        });
-                    }
-
-                    // If payment is associated with a subscription, update its status
-                    if (!string.IsNullOrEmpty(payment.SubscriptionId))
-                    {
-                        await _subscriptionService.UpdateSubscriptionStatusAsync(Guid.Parse(payment.SubscriptionId), SubscriptionStatus.Canceled);
-                    }
-
-                    return Ok(result);
+                    throw new ArgumentException("Payment ID is required", "PAYMENT_ID");
                 }
-                catch (Exception ex)
+
+                // Get the payment to check if it belongs to the current user
+                var payment = await _paymentService.GetPaymentDetailsAsync(paymentId);
+                if (payment == null)
                 {
-                    _logger.LogError(ex, "Error cancelling payment");
-                    return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
-                    {
-                        Message = "An error occurred while cancelling the payment",
-                        Code = "SERVER_ERROR",
-                        TraceId = correlationId
-                    });
+                    Logger.LogError("Failed to cancel payment {PaymentId}: Payment not found", paymentId);
+                    throw new ResourceNotFoundException(paymentId.GetType().Name, paymentId);
                 }
+
+                // Ensure the payment belongs to the current user
+                string currentUserId = User.FindFirst("sub")?.Value ?? User.FindFirst("uid")?.Value;
+                if (payment.UserId != currentUserId)
+                {
+                    throw new UnauthorizedAccessException();
+                }
+
+                // Only allow cancellation of pending payments
+                if (payment.Status != PaymentStatus.Pending)
+                {
+                    throw new InvalidOperationException("Only pending payments can be cancelled");
+                }
+
+                // Cancel the payment
+                var result = await _paymentService.CancelPaymentAsync(paymentId);
+                if (!result.IsSuccess)
+                {
+                    throw new PaymentApiException(result.ErrorMessage, "Stripe", paymentId);
+                }
+
+                // If payment is associated with a subscription, update its status
+                if (!string.IsNullOrEmpty(payment.SubscriptionId))
+                {
+                    await _subscriptionService.UpdateSubscriptionStatusAsync(Guid.Parse(payment.SubscriptionId), SubscriptionStatus.Canceled);
+                }
+
+                return Ok(result);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new ErrorResponse
+                {
+                    Message = ex.Message,
+                    Code = $"INVALID_{ex.ParamName}",
+                    TraceId = correlationId
+                });
+            }
+            catch (ResourceNotFoundException ex)
+            {
+                return BadRequest(new ErrorResponse
+                {
+                    Message = ex.Message,
+                    Code = $"{ex.ResourceId}_NOT_FOUND",
+                    TraceId = correlationId
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new ErrorResponse
+                {
+                    Message = ex.Message,
+                    Code = $"INVALID_PAYMENT_STATUS",
+                    TraceId = correlationId
+                });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
+
+            catch (PaymentApiException ex)
+            {
+                await Logger.LogTraceAsync($"Error cancelling payment: {ex.Message}", "CancelPayment", requiresResolution: true);
+
+                return BadRequest(new ErrorResponse
+                {
+                    Message = ex.Message,
+                    Code = $"CANCELLATION_FAILED",
+                    TraceId = correlationId
+                });
+            }
+            catch (Exception ex)
+            {
+                await Logger.LogTraceAsync($"Error cancelling payment: {ex.Message}", "CancelPayment", requiresResolution: true);
+
+                return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
+                {
+                    Message = "An error occurred while cancelling the payment",
+                    Code = "SERVER_ERROR",
+                    TraceId = correlationId
+                });
             }
         }
     }

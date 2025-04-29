@@ -1,12 +1,11 @@
 ﻿using Application.Interfaces;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
-using DnsClient.Internal;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Payment;
 using Domain.Exceptions;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services.Payment
@@ -19,13 +18,13 @@ namespace Infrastructure.Services.Payment
         private readonly IPaymentService _paymentService;
         private readonly ISubscriptionService _subscriptionService;
         private readonly IIdempotencyService _idempotencyService;
-        private readonly ILogger<StripeWebhookHandler> _logger;
+        private readonly ILoggingService _logger;
 
         public StripeWebhookHandler(
             IPaymentService paymentService,
             ISubscriptionService subscriptionService,
             IIdempotencyService idempotencyService,
-            ILogger<StripeWebhookHandler> logger)
+            ILoggingService logger)
         {
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
@@ -36,75 +35,54 @@ namespace Infrastructure.Services.Payment
         /// <summary>
         /// Handles a Stripe event
         /// </summary>
-        public async Task<ResultWrapper> HandleStripeEventAsync(object eventObject, string correlationId)
+        public async Task<ResultWrapper> HandleStripeEventAsync(object stripeEventObject)
         {
-            if (eventObject == null)
+            using var Scope = _logger.BeginScope("StripeWebhookHandler => HandleStripeEventAsync");
+            var stripeEvent = stripeEventObject as Stripe.Event;
+
+            if (stripeEvent == null)
             {
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Stripe event is required.");
             }
 
-            Stripe.Event stripeEvent = eventObject as Stripe.Event;
-            // Check idempotency - use Stripe event ID as the idempotency key
-            string idempotencyKey = $"stripe-webhook-{stripeEvent.Id}";
-
-            if (await _idempotencyService.HasKeyAsync(idempotencyKey))
+            try
             {
-                _logger.LogInformation("Duplicate Stripe event {EventId} of type {EventType} received and skipped",
+                _logger.LogInformation("Processing Stripe webhook event {EventId} of type {EventType}",
                     stripeEvent.Id, stripeEvent.Type);
-                return ResultWrapper.Success("Duplicate Stripe event {EventId} of type {EventType} received and skipped");
+
+                bool handled = false;
+
+                // Handle different event types
+                switch (stripeEvent.Type)
+                {
+                    case "checkout.session.completed":
+                        handled = true;
+                        return await HandleCheckoutSessionCompletedAsync(stripeEvent);
+                    case "invoice.paid":
+                        handled = true;
+                        return await HandleInvoicePaidAsync(stripeEvent);
+                    case "customer.subscription.deleted":
+                        handled = await HandleSubscriptionDeletedAsync(stripeEvent);
+                        break;
+                    default:
+                        _logger.LogInformation("Unhandled Stripe event type: {EventType}", stripeEvent.Type);
+                        handled = true; // Mark as handled since we're choosing not to process it
+                        break;
+                }
+
+                // Mark the event as processed for idempotency
+                if (!handled)
+                {
+                    throw new PaymentEventException($"Failed to process {stripeEvent.Type} event", stripeEvent.Type, "Stripe", stripeEvent.Id);
+                }
+
+                return ResultWrapper.Success("Event processed successfully");
             }
-
-            using (_logger.BeginScope(new Dictionary<string, object>
+            catch (Exception ex)
             {
-                ["StripeEventId"] = stripeEvent.Id,
-                ["EventType"] = stripeEvent.Type,
-                ["CorrelationId"] = correlationId
-            }))
-            {
-                try
-                {
-                    _logger.LogInformation("Processing Stripe webhook event {EventId} of type {EventType}",
-                        stripeEvent.Id, stripeEvent.Type);
-
-                    bool handled = false;
-
-                    // Handle different event types
-                    switch (stripeEvent.Type)
-                    {
-                        case "checkout.session.completed":
-                            handled = true;
-                            return await HandleCheckoutSessionCompletedAsync(stripeEvent);
-                        case "invoice.paid":
-                            handled = true;
-                            return await HandleInvoicePaidAsync(stripeEvent);
-                        case "customer.subscription.deleted":
-                            handled = await HandleSubscriptionDeletedAsync(stripeEvent);
-                            break;
-                        default:
-                            _logger.LogInformation("Unhandled Stripe event type: {EventType}", stripeEvent.Type);
-                            handled = true; // Mark as handled since we're choosing not to process it
-                            break;
-                    }
-
-                    // Mark the event as processed for idempotency
-                    if (!handled)
-                    {
-                        throw new PaymentEventException($"Failed to process {stripeEvent.Type} event", stripeEvent.Type, "Stripe", stripeEvent.Id);
-                    }
-
-                    await _idempotencyService.StoreResultAsync(
-                            idempotencyKey,
-                            new { processed = true, timestamp = DateTime.UtcNow }
-                        );
-
-                    return ResultWrapper.Success("Event processed successfully");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing Stripe webhook event {EventId} of type {EventType}: {ErrorMessage}",
-                        stripeEvent.Id, stripeEvent.Type, ex.Message);
-                    return ResultWrapper.FromException(ex);
-                }
+                _logger.LogError("Error processing Stripe webhook event {EventId} of type {EventType}: {ErrorMessage}",
+                    stripeEvent.Id, stripeEvent.Type, ex.Message);
+                return ResultWrapper.FromException(ex);
             }
         }
 
@@ -113,12 +91,19 @@ namespace Infrastructure.Services.Payment
         /// </summary>
         private async Task<ResultWrapper> HandleCheckoutSessionCompletedAsync(Stripe.Event stripeEvent)
         {
+            using var Scope = _logger.BeginScope("StripeWebhookHandler => HandleCheckoutSessionCompletedAsync");
+
             var session = stripeEvent.Data.Object as Stripe.Checkout.Session;
             if (session == null)
             {
                 _logger.LogWarning("Invalid event data: Expected Session object");
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid event data: Expected Session object");
             }
+
+            using var SessionScope = _logger.EnrichScope(
+                ("SessionId", session.Id)
+                );
+
             var metadata = session.Metadata;
             // Extract subscription ID from metadata
             if (metadata == null ||
@@ -126,7 +111,7 @@ namespace Infrastructure.Services.Payment
                 string.IsNullOrEmpty(subscriptionId) ||
                 !Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
             {
-                _logger.LogWarning("Missing or invalid subscriptionId in Invoice metadata");
+                await _logger.LogTraceAsync("Missing or invalid subscriptionId in Invoice metadata", "Extract subscription ID from metadata", true);
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing or invalid subscriptionId in Invoice metadata");
             }
 
@@ -134,9 +119,14 @@ namespace Infrastructure.Services.Payment
             if (!metadata.TryGetValue("userId", out var userId) ||
                 string.IsNullOrEmpty(userId))
             {
-                _logger.LogWarning("Missing userId in Invoice metadata");
+                await _logger.LogTraceAsync("Missing or invalid userId in Invoice metadata", "Extract subscription ID from metadata", true);
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing userId in Invoice metadata");
             }
+
+            using var MetadataScope = _logger.EnrichScope(
+                ("SubscriptionId", subscriptionId),
+                ("UserId", userId)
+                );
 
             try
             {
@@ -160,7 +150,7 @@ namespace Infrastructure.Services.Payment
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling checkout.session.completed for subscription {SubscriptionId}: {ErrorMessage}",
+                _logger.LogError("Error handling checkout.session.completed for subscription {SubscriptionId}: {ErrorMessage}",
                     subscriptionId, ex.Message);
                 throw;
             }
@@ -171,6 +161,8 @@ namespace Infrastructure.Services.Payment
         /// </summary>
         private async Task<ResultWrapper> HandleInvoicePaidAsync(Stripe.Event stripeEvent)
         {
+            using var Scope = _logger.BeginScope("StripeWebhookHandler => HandleInvoicePaidAsync");
+
             _logger.LogInformation($"Handling stripe event invoice.paid");
             var invoice = stripeEvent.Data.Object as Stripe.Invoice;
             if (invoice == null)
@@ -178,6 +170,9 @@ namespace Infrastructure.Services.Payment
                 _logger.LogWarning("Invalid event data: Expected Invoice object");
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid event data: Expected Invoice object");
             }
+
+            using var InvoiceScope = _logger.EnrichScope(("InvoiceId", invoice.Id));
+
             var metadata = invoice.SubscriptionDetails.Metadata;
             // Extract subscription ID from metadata
             if (metadata == null ||
@@ -185,7 +180,7 @@ namespace Infrastructure.Services.Payment
                 string.IsNullOrEmpty(subscriptionId) ||
                 !Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
             {
-                _logger.LogWarning("Missing or invalid subscriptionId in Invoice metadata");
+                await _logger.LogTraceAsync("Missing or invalid subscriptionId in Invoice metadata", "Extract subscription ID from metadata", true);
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing or invalid subscriptionId in Invoice metadata");
             }
 
@@ -193,9 +188,14 @@ namespace Infrastructure.Services.Payment
             if (!metadata.TryGetValue("userId", out var userId) ||
                 string.IsNullOrEmpty(userId))
             {
-                _logger.LogWarning("Missing userId in Invoice metadata");
+                await _logger.LogTraceAsync("Missing or invalid userId in Invoice metadata", "Extract user ID from metadata", true);
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing userId in Invoice metadata");
             }
+
+            using var MetadataScope = _logger.EnrichScope(
+                ("SubscriptionId", subscriptionId),
+                ("UserId", userId)
+                );
 
             try
             {
@@ -219,7 +219,7 @@ namespace Infrastructure.Services.Payment
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling invoice.paid for subscription {SubscriptionId}: {ErrorMessage}",
+                _logger.LogError("Error handling invoice.paid for subscription {SubscriptionId}: {ErrorMessage}",
                     subscriptionId, ex.Message);
                 throw;
             }
@@ -230,6 +230,8 @@ namespace Infrastructure.Services.Payment
         /// </summary>
         private async Task<bool> HandleSubscriptionDeletedAsync(Stripe.Event stripeEvent)
         {
+            using var Scope = _logger.BeginScope("StripeWebhookHandler => HandleSubscriptionDeletedAsync");
+
             var stripeSubscription = stripeEvent.Data.Object as Stripe.Subscription;
             if (stripeSubscription == null)
             {
@@ -237,9 +239,14 @@ namespace Infrastructure.Services.Payment
                 return false;
             }
 
+            using var StripeSubscriptionScope = _logger.EnrichScope(
+                ("StripeSubscriptionId", stripeSubscription.Id)
+                );
+
             // Find our subscription
             var filter = Builders<Domain.Models.Subscription.SubscriptionData>.Filter.Eq(
                 s => s.ProviderSubscriptionId, stripeSubscription.Id);
+
             var subscriptionResult = await _subscriptionService.GetOneAsync(filter);
 
             if (subscriptionResult == null || !subscriptionResult.IsSuccess)
@@ -250,6 +257,10 @@ namespace Infrastructure.Services.Payment
             }
 
             var subscription = subscriptionResult.Data;
+
+            using var SubscriptionScope = _logger.EnrichScope(
+                ("SubscriptionId", subscription.Id)
+                );
 
             try
             {
@@ -276,7 +287,7 @@ namespace Infrastructure.Services.Payment
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling subscription deleted for {SubscriptionId}: {ErrorMessage}",
+                _logger.LogError("Error handling subscription deleted for {SubscriptionId}: {ErrorMessage}",
                     subscription.Id, ex.Message);
                 throw;
             }

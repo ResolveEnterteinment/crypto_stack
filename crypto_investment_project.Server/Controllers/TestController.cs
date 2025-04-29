@@ -1,6 +1,8 @@
 using Application.Contracts.Requests.Payment;
+using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Subscription;
 using Domain.Models.Payment;
 using Microsoft.AspNetCore.Mvc;
@@ -9,15 +11,19 @@ namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [IgnoreAntiforgeryToken]
     public class TestController(
         IPaymentProcessingService paymentProcessingService,
         IAssetService assetService,
-        ISubscriptionService subscriptionService) : ControllerBase
+        ISubscriptionService subscriptionService,
+        ILoggingService logger,
+        ITestService testService
+        ) : ControllerBase
     {
         private readonly IPaymentProcessingService _paymentProcessingService = paymentProcessingService;
         private readonly IAssetService _assetService = assetService;
         private readonly ISubscriptionService _subscriptionService = subscriptionService;
+        private readonly ILoggingService _logger = logger;
+        private readonly ITestService _testService = testService;
 
         [HttpPost]
         [Route("ProcessTransactionRequest")]
@@ -94,6 +100,20 @@ namespace crypto_investment_project.Server.Controllers
                 var message = string.Format("Failed to create asset data: {0}", ex.Message);
                 return BadRequest(message);
             }
+        }
+
+        [HttpGet("branch-test")]
+        public async Task<IActionResult> BranchTest()
+        {
+            using var scope = _logger.BeginScope("TestController.BranchTest", new { Controller = "TestController", Action = "BranchTest" });
+
+            await _logger.LogTraceAsync("Entered BranchTest endpoint.");
+
+            await _testService.PerformActionAsync();
+
+            await _logger.LogTraceAsync("Exiting BranchTest endpoint.");
+
+            return Ok(new { Message = "Trace branching test completed." });
         }
     }
 }

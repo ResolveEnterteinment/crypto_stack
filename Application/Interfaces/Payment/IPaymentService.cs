@@ -9,14 +9,13 @@ namespace Application.Interfaces.Payment
     {
         public IReadOnlyDictionary<string, IPaymentProvider> Providers { get; }
 
-        public Task<ResultWrapper> ProcessChargeUpdatedEventAsync(ChargeRequest charge);
         public Task<ResultWrapper> ProcessInvoicePaidEvent(InvoiceRequest invoice);
         /// <summary>
         /// Creates a checkout session with the payment provider
         /// </summary>
         /// <param name="request">The checkout session request details</param>
         /// <returns>The checkout session response with URL</returns>
-        Task<ResultWrapper<SessionDto>> CreateCheckoutSessionAsync(CreateCheckoutSessionDto request, string? correlationId = null);
+        Task<ResultWrapper<SessionDto>> CreateCheckoutSessionAsync(CreateCheckoutSessionDto requestl);
 
         public Task<ResultWrapper> ProcessCheckoutSessionCompletedAsync(SessionDto checkoutSession);
 

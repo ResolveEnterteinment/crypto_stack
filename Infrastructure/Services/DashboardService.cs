@@ -2,6 +2,7 @@
 using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
 using Domain.DTOs;
@@ -13,17 +14,14 @@ using Domain.Models.Dashboard;
 using Domain.Models.Subscription;
 using Infrastructure.Hubs;
 using Infrastructure.Services.Base;
-using MediatR;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services
 {
-    public class DashboardService : BaseService<DashboardData>,
-        IDashboardService,
-        INotificationHandler<EntityCreatedEvent<SubscriptionData>>,
-        INotificationHandler<PaymentReceivedEvent>
+    public class DashboardService :
+        BaseService<DashboardData>,
+        IDashboardService
     {
         private readonly IExchangeService _exchangeService;
         private readonly ISubscriptionService _subscriptionService;
@@ -38,7 +36,7 @@ namespace Infrastructure.Services
             ICrudRepository<DashboardData> repository,
             ICacheService<DashboardData> cacheService,
             IMongoIndexService<DashboardData> indexService,
-            ILogger<DashboardService> logger,
+            ILoggingService logger,
             IEventService eventService,
             IExchangeService exchangeService,
             ISubscriptionService subscriptionService,
@@ -169,13 +167,11 @@ namespace Infrastructure.Services
         {
             string key = string.Format(CACHE_KEY, userId);
             CacheService.Invalidate(key);
-            Logger.LogDebug("Invalidated dashboard cache for {UserId}", userId);
         }
         private async Task InvalidateCacheAndPush(Guid userId)
         {
             string key = string.Format(CACHE_KEY, userId);
             CacheService.Invalidate(key);
-            Logger.LogDebug("Invalidated dashboard cache for {UserId}", userId);
             var dashWr = await GetDashboardDataAsync(userId);
             if (dashWr.IsSuccess)
                 await _hubContext.Clients.Group(userId.ToString()).SendAsync("DashboardUpdate", dashWr.Data);

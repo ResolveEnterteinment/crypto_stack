@@ -16,7 +16,6 @@ namespace crypto_investment_project.Server.Controllers.Auth
         }
 
         [HttpGet]
-        //[IgnoreAntiforgeryToken]
         [Route("refresh")]
         public IActionResult GetToken()
         {

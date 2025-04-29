@@ -1,9 +1,9 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Domain.Exceptions;
 using Domain.Models.User;
 using Infrastructure.Services.Base;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services
@@ -17,7 +17,7 @@ namespace Infrastructure.Services
             ICrudRepository<UserData> repository,
             ICacheService<UserData> cacheService,
             IMongoIndexService<UserData> indexService,
-            ILogger<UserService> logger,
+            ILoggingService logger,
             IEventService eventService
         ) : base(
             repository,

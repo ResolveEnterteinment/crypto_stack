@@ -1,12 +1,11 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Base;
-using DnsClient.Internal;
+using Application.Interfaces.Logging;
 using Domain.DTOs;
 using Domain.Exceptions;
 using Infrastructure.Hubs;
 using Infrastructure.Services.Base;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using System.Collections.Concurrent;
 
@@ -24,7 +23,7 @@ namespace Infrastructure.Services
             ICrudRepository<NotificationData> repository,
             ICacheService<NotificationData> cacheService,
             IMongoIndexService<NotificationData> indexService,
-            ILogger<NotificationService> logger,
+            ILoggingService logger,
             IHubContext<NotificationHub> hubContext,
             IUserService userService
         ) : base(
@@ -70,7 +69,7 @@ namespace Infrastructure.Services
             if (!string.IsNullOrWhiteSpace(user) && !string.IsNullOrWhiteSpace(connectionId))
             {
                 _userConnections[user] = connectionId;
-                Logger.LogDebug("Added connection {ConnectionId} for user {UserId}", connectionId, user);
+                Logger.LogInformation("Added connection {ConnectionId} for user {UserId}", connectionId, user);
             }
         }
 
@@ -160,50 +159,56 @@ namespace Infrastructure.Services
                     {
                         // Log but don't fail the operation if real-time delivery fails
                         Logger.LogWarning(
-                            signalREx,
-                            "Failed to send real-time notification to user {UserId}",
-                            notification.UserId
+                            "Failed to send real-time notification to user {UserId}: {ErrorMessage}",
+                            notification.UserId,
+                            signalREx.Message
                         );
                     }
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogWarning(ex, "Failed to send real-time notification to user {UserId}", notification.UserId);
+                    Logger.LogWarning("Failed to send real-time notification to user {UserId}", notification.UserId);
                 }
 
                 return ResultWrapper.Success();
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Failed to create notification: {Message}", ex.Message);
+                Logger.LogError("Failed to create notification: {Message}", ex.Message);
                 return ResultWrapper.FromException(ex);
             }
         }
 
         public async Task<ResultWrapper> MarkAsReadAsync(Guid notificationId)
         {
-            try
+            using (Logger.BeginScope("NotificationService::MarkAsReadAsync", new Dictionary<string, object>
             {
-                var notifWrapper = await GetByIdAsync(notificationId);
-                if (notifWrapper == null || !notifWrapper.IsSuccess)
-                    throw new KeyNotFoundException($"Notification with ID {notificationId} not found: {notifWrapper?.ErrorMessage ?? "Fetch notificiation returned null"}");
-
-                var notification = notifWrapper.Data;
-
-                var result = await UpdateAsync(notificationId, new { IsRead = true });
-                if (result == null || !result.IsSuccess)
-                    throw new DatabaseException($"Failed to mark notification with ID {notificationId} as read: {result?.ErrorMessage ?? "Update result returned null."}");
-
-                var cacheKey = string.Format(CACHE_KEY_USER_NOTIFICATIONS, notification!.UserId);
-                CacheService.Invalidate(cacheKey);
-
-                Logger.LogInformation("Marked notification {NotificationId} as read", notificationId);
-                return ResultWrapper.Success("Marked notification {NotificationId} as read");
-            }
-            catch (Exception ex)
+                ["NotificationId"] = notificationId,
+            }))
             {
-                Logger.LogError(ex, "Failed to mark notification {NotificationId} as read: {Message}", notificationId, ex.Message);
-                return ResultWrapper.FromException(ex);
+                try
+                {
+                    var notifWrapper = await GetByIdAsync(notificationId);
+                    if (notifWrapper == null || !notifWrapper.IsSuccess)
+                        throw new KeyNotFoundException($"Notification not found: {notifWrapper?.ErrorMessage ?? "Fetch notificiation returned null"}");
+
+                    var notification = notifWrapper.Data;
+
+                    var result = await UpdateAsync(notificationId, new { IsRead = true });
+                    if (result == null || !result.IsSuccess)
+                        throw new DatabaseException($"Failed to update notification: {result?.ErrorMessage ?? "Update result returned null."}");
+
+                    var cacheKey = string.Format(CACHE_KEY_USER_NOTIFICATIONS, notification!.UserId);
+                    CacheService.Invalidate(cacheKey);
+
+                    Logger.LogInformation("Marked notification {NotificationId} as read", notificationId);
+                    return ResultWrapper.Success("Marked notification {NotificationId} as read");
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError("Failed to mark notification {NotificationId} as read: {Message}", notificationId, ex.Message);
+                    return ResultWrapper.FromException(ex);
+                }
             }
         }
     }

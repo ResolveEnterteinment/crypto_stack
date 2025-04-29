@@ -1,6 +1,7 @@
 using Application.Contracts.Requests.Subscription;
 using Application.Extensions;
 using Application.Interfaces;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Subscription;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
@@ -20,7 +21,7 @@ namespace crypto_investment_project.Server.Controllers
         private readonly ITransactionService _transactionService;
         private readonly IValidator<SubscriptionCreateRequest> _createValidator;
         private readonly IValidator<SubscriptionUpdateRequest> _updateValidator;
-        private readonly ILogger<SubscriptionController> _logger;
+        private readonly ILoggingService _logger;
         private readonly IIdempotencyService _idempotencyService;
         private readonly IUserService _userService;
 
@@ -31,7 +32,7 @@ namespace crypto_investment_project.Server.Controllers
             IValidator<SubscriptionUpdateRequest> updateValidator,
             IIdempotencyService idempotencyService,
             IUserService userService,
-            ILogger<SubscriptionController> logger)
+            ILoggingService logger)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
@@ -64,75 +65,70 @@ namespace crypto_investment_project.Server.Controllers
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetByUser(string user)
         {
-            using (_logger.BeginScope(new Dictionary<string, object>
+            using var scope = _logger.BeginScope();
+
+            try
             {
-                ["UserId"] = user,
-                ["Operation"] = "GetTransactionsByUser",
-                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
-            }))
-            {
-                try
+                // Validate input
+                if (string.IsNullOrEmpty(user) || !Guid.TryParse(user, out Guid userId) || userId == Guid.Empty)
                 {
-                    // Validate input
-                    if (string.IsNullOrEmpty(user) || !Guid.TryParse(user, out Guid userId) || userId == Guid.Empty)
-                    {
-                        _logger.LogWarning("Invalid user ID format: {UserId}", user);
-                        return BadRequest(new { message = "A valid user ID is required." });
-                    }
-
-                    // Verify user exists
-                    var userExists = await _userService.CheckUserExists(userId);
-                    if (!userExists)
-                    {
-                        _logger.LogWarning("User not found: {UserId}", user);
-                        return NotFound(new { message = "User not found" });
-                    }
-
-                    // Authorization check - verify current user can access this data
-                    var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-
-                    if (!User.IsInRole("ADMIN") && currentUserId != user)
-                    {
-                        _logger.LogWarning("Unauthorized access attempt to user {TargetUserId} transactions by user {CurrentUserId}",
-                            user, currentUserId);
-                        return Forbid();
-                    }
-
-                    // ETag support for caching
-                    var etagKey = $"transactions_user_{user}";
-                    var etag = Request.Headers.IfNoneMatch.FirstOrDefault();
-                    var (hasEtag, storedEtag) = await _idempotencyService.GetResultAsync<string>(etagKey);
-
-                    if (hasEtag && etag == storedEtag)
-                    {
-                        return StatusCode(StatusCodes.Status304NotModified);
-                    }
-
-                    // Get user subscriptions
-                    var transactionsResult = await _transactionService.GetUserTransactionsAsync(userId);
-
-                    if (!transactionsResult.IsSuccess)
-                    {
-                        return transactionsResult.ToActionResult(this);
-                    }
-
-                    // Generate ETag from data and store it
-                    var newEtag = $"\"{Guid.NewGuid():N}\""; // Simple approach; production would use content hash
-                    await _idempotencyService.StoreResultAsync(etagKey, newEtag);
-                    Response.Headers.ETag = newEtag;
-
-                    _logger.LogInformation("Successfully retrieved {Count} subscriptions for user {UserId}",
-                        transactionsResult.Data?.Items.Count() ?? 0, userId);
-
-                    return Ok(transactionsResult.Data);
+                    _logger.LogWarning("Invalid user ID format: {UserId}", user);
+                    return BadRequest(new { message = "A valid user ID is required." });
                 }
-                catch (Exception ex)
+
+                // Verify user exists
+                var userExists = await _userService.CheckUserExists(userId);
+                if (!userExists)
                 {
-                    // Let global exception handler middleware handle this
-                    _logger.LogError(ex, "Error retrieving transactions for user {UserId}", user);
-                    throw;
+                    _logger.LogWarning("User not found: {UserId}", user);
+                    return NotFound(new { message = "User not found" });
                 }
+
+                // Authorization check - verify current user can access this data
+                var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                if (!User.IsInRole("ADMIN") && currentUserId != user)
+                {
+                    await _logger.LogTraceAsync($"Unauthorized access attempt to user {user} transactions by user {currentUserId}");
+                    return Forbid();
+                }
+
+                // ETag support for caching
+                var etagKey = $"transactions_user_{user}";
+                var etag = Request.Headers.IfNoneMatch.FirstOrDefault();
+                var (hasEtag, storedEtag) = await _idempotencyService.GetResultAsync<string>(etagKey);
+
+                if (hasEtag && etag == storedEtag)
+                {
+                    _logger.LogWarning("Already processed.");
+                    return StatusCode(StatusCodes.Status304NotModified);
+                }
+
+                // Get user subscriptions
+                var transactionsResult = await _transactionService.GetUserTransactionsAsync(userId);
+
+                if (!transactionsResult.IsSuccess)
+                {
+                    return transactionsResult.ToActionResult(this);
+                }
+
+                // Generate ETag from data and store it
+                var newEtag = $"\"{Guid.NewGuid():N}\""; // Simple approach; production would use content hash
+                await _idempotencyService.StoreResultAsync(etagKey, newEtag);
+                Response.Headers.ETag = newEtag;
+
+                _logger.LogInformation("Successfully retrieved {Count} transactions for user {UserId}",
+                    transactionsResult.Data?.Items.Count() ?? 0, userId);
+
+                return Ok(transactionsResult.Data);
             }
+            catch (Exception ex)
+            {
+                // Let global exception handler middleware handle this
+                _logger.LogError("Error retrieving transactions for user {UserId}", user);
+                throw;
+            }
+
         }
 
         /// <summary>
@@ -224,7 +220,7 @@ namespace crypto_investment_project.Server.Controllers
                 catch (Exception ex)
                 {
                     // Let global exception handler middleware handle this
-                    _logger.LogError(ex, "Error retrieving transactions for subscription {SubscriptionId}", subscription);
+                    _logger.LogError("Error retrieving transactions for subscription {SubscriptionId}", subscription);
                     throw;
                 }
             }

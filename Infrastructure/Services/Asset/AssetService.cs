@@ -2,12 +2,12 @@
 using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Asset;
 using Domain.Exceptions;
 using Infrastructure.Services.Base;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using AssetData = Domain.Models.Asset.AssetData;
 
@@ -26,7 +26,7 @@ namespace Infrastructure.Services.Asset
             ICrudRepository<AssetData> repo,
             ICacheService<AssetData> cache,
             IMongoIndexService<AssetData> indexService,
-            ILogger<AssetService> logger,
+            ILoggingService logger,
             IEventService eventService)
             : base(
                 repo,
@@ -113,7 +113,7 @@ namespace Infrastructure.Services.Asset
                 string.Format(CACHE_KEY_ASSET_SYMBOL, symbol.ToLowerInvariant()),
                 () => Repository.GetOneAsync(Builders<AssetData>.Filter.Where(a => symbol.StartsWith(a.Symbol, StringComparison.OrdinalIgnoreCase))),
                 TimeSpan.FromMinutes(30),
-                () => throw new KeyNotFoundException($"No asset for symbol {symbol}")
+                () => throw new KeyNotFoundException($"No asset found for symbol {symbol}")
             );
 
         public Task<ResultWrapper<IEnumerable<AssetDto>>> GetSupportedAssetsAsync() =>

@@ -1,13 +1,14 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.DTOs;
 using Domain.DTOs.Subscription;
+using Domain.Exceptions;
 using Domain.Models.Transaction;
 using Infrastructure.Services.Base;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services
@@ -24,7 +25,7 @@ namespace Infrastructure.Services
             ICrudRepository<TransactionData> repository,
             ICacheService<TransactionData> cacheService,
             IMongoIndexService<TransactionData> indexService,
-            ILogger<TransactionService> logger,
+            ILoggingService logger,
             IEventService eventService,
             ISubscriptionService subscriptionService,
             IAssetService assetService,
@@ -58,13 +59,35 @@ namespace Infrastructure.Services
 
         public async Task<ResultWrapper<PaginatedResult<TransactionData>>> GetUserTransactionsAsync(Guid userId, int page = 1, int pageSize = 20)
         {
-            var filter = Builders<TransactionData>.Filter.Eq(t => t.UserId, userId);
-            return await GetPaginatedAsync(filter, page, pageSize, sortField: "CreatedAt", false);
+            using var scope = Logger.BeginScope("TransactionService::GetUserTransactionsAsync", new Dictionary<string, object?>
+            {
+                ["UserId"] = userId,
+            });
+
+            try
+            {
+                var filter = Builders<TransactionData>.Filter.Eq(t => t.UserId, userId);
+                var result = await GetPaginatedAsync(filter, page, pageSize, sortField: "CreatedAt", false);
+                if (result == null || !result.IsSuccess || result.Data == null)
+                    throw new TransactionFetchException($"Failed to fetch user {userId} transactions: {result.ErrorMessage}");
+                var transactions = result.Data;
+                return ResultWrapper<PaginatedResult<TransactionData>>.Success(transactions);
+            }
+            catch (Exception ex)
+            {
+                await Logger.LogTraceAsync(ex.Message);
+                return ResultWrapper<PaginatedResult<TransactionData>>.FromException(ex);
+            }
         }
 
         public async Task<ResultWrapper<List<TransactionDto>>> GetBySubscriptionIdAsync(Guid subscriptionId)
-            => await FetchCached(
-                $"subscription:transactions:{subscriptionId}",
+        {
+            using var scope = Logger.BeginScope("TransactionService::GetUserTransactionsAsync", new Dictionary<string, object?>
+            {
+                ["SubscriptionId"] = subscriptionId,
+            });
+
+            var result = await FetchCached($"subscription:transactions:{subscriptionId}",
                 async () =>
                 {
                     var filter = Builders<TransactionData>.Filter.Eq(t => t.SubscriptionId, subscriptionId);
@@ -99,6 +122,13 @@ namespace Infrastructure.Services
                 },
                 TRANSACTION_CACHE_DURATION
             );
+            if (result == null || !result.IsSuccess)
+            {
+                await Logger.LogTraceAsync($"Failed to get transactions for subscriptions ID {subscriptionId}: {result?.ErrorMessage ?? "Fetch result returned null"}");
+            }
+
+            return result;
+        }
 
         public async Task<ResultWrapper<IEnumerable<TransactionData>>> GetByPaymentProviderIdAsync(string paymentProviderId)
         {
@@ -116,13 +146,18 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Failed to get transactions for provider {ProviderId}", paymentProviderId);
+                Logger.LogError("Failed to get transactions for provider {ProviderId}", paymentProviderId);
                 return ResultWrapper<IEnumerable<TransactionData>>.FromException(ex);
             }
         }
 
         public async Task<ResultWrapper> CreateTransactionAsync(TransactionData transaction)
         {
+            using var scope = Logger.BeginScope("TransactionService::CreateTransactionAsync", new Dictionary<string, object?>
+            {
+                ["Transaction"] = transaction,
+            });
+
             try
             {
                 if (transaction == null)
@@ -132,16 +167,14 @@ namespace Infrastructure.Services
                     transaction.Id = Guid.NewGuid();
 
                 var insertResult = await InsertAsync(transaction);
-                if (!insertResult.IsSuccess)
-                    return ResultWrapper.Failure(Domain.Constants.FailureReason.DatabaseError,
-                        "Failed to create transaction record"
-                    );
+                if (insertResult == null || !insertResult.IsSuccess || !insertResult.Data.IsSuccess)
+                    throw new DatabaseException("Failed to create transaction record");
 
                 return ResultWrapper.Success();
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Failed to create transaction");
+                await Logger.LogTraceAsync("Failed to create transaction: {ErrorMessage}", ex.Message);
                 return ResultWrapper.FromException(ex);
             }
         }

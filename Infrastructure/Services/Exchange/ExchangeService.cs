@@ -2,6 +2,7 @@
 using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Subscription;
 using Binan‌​ceLibrary;
 using Domain.Constants;
@@ -11,7 +12,6 @@ using Domain.Exceptions;
 using Domain.Models.Exchange;
 using Infrastructure.Services.Base;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Polly;
@@ -43,7 +43,7 @@ namespace Infrastructure.Services.Exchange
             IBalanceService balanceService,
             ITransactionService transactionService,
             IAssetService assetService,
-            ILogger<ExchangeService> logger,
+            ILoggingService logger,
             IMemoryCache cache)
             : base(repository, cacheService, indexService, logger, eventService)
         {
@@ -53,8 +53,7 @@ namespace Infrastructure.Services.Exchange
             _retryPolicy = Policy
                 .Handle<Exception>(ex => !(ex is ArgumentException || ex is ValidationException))
                 .WaitAndRetryAsync(3, i => TimeSpan.FromSeconds(Math.Pow(2, i)),
-                    (ex, ts, count, ctx) => Logger.LogWarning(ex,
-                        "Retry {Count} for operation {Op}", count, ctx?["Operation"]));
+                    (ex, ts, count, ctx) => Logger.LogWarning("Retry {Count} for operation {Op}", count, ctx?["Operation"]));
 
             // init exchanges
             if (_settings.Value.ExchangeSettings != null)
@@ -86,7 +85,7 @@ namespace Infrastructure.Services.Exchange
                 }
                 catch (Exception ex)
                 {
-                    Logger.LogError(ex, "Failed init {Name}", kv.Key);
+                    Logger.LogError("Failed init {Name}", kv.Key);
                 }
             }
         }
@@ -97,12 +96,13 @@ namespace Infrastructure.Services.Exchange
                 return Task.FromResult(ResultWrapper<decimal>.Failure(FailureReason.ValidationError, "Exchange and ticker required"));
 
             var key = $"price:{exch}:{ticker}";
+
             return FetchCached(
                 key,
                 async () =>
                 {
                     if (!_exchanges.TryGetValue(exch, out var inst))
-                        throw new ValidationException($"Unknown exchange {exch}", new() { ["exchange"] = new[] { exch } });
+                        throw new ValidationException($"Unknown exchange {exch}", new() { ["exchange"] = [exch] });
 
                     var pr = await inst.GetAssetPrice(ticker);
                     if (!pr.IsSuccess) throw new BalanceFetchException(pr.ErrorMessage);
@@ -115,7 +115,11 @@ namespace Infrastructure.Services.Exchange
         public Task<ResultWrapper<ExchangeBalance>> GetCachedExchangeBalanceAsync(string exch, string ticker)
         {
             if (string.IsNullOrEmpty(exch) || string.IsNullOrEmpty(ticker))
-                throw new ValidationException("Exchange and ticker required", new() { ["exchange"] = new[] { exch } });
+                throw new ValidationException("Exchange and ticker required", new()
+                {
+                    ["exchange"] = [exch],
+                    ["ticker"] = [ticker],
+                });
 
             var key = $"balance:{exch}:{ticker}";
             return FetchCached(
@@ -143,7 +147,7 @@ namespace Infrastructure.Services.Exchange
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "GetPendingOrders failed");
+                Logger.LogError("GetPendingOrders failed");
                 return ResultWrapper<IEnumerable<ExchangeOrderData>>.FromException(ex);
             }
         }
@@ -162,7 +166,7 @@ namespace Infrastructure.Services.Exchange
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "CreateOrderAsync failed");
+                Logger.LogError("CreateOrderAsync failed");
                 return ResultWrapper<ExchangeOrderData>.FromException(ex);
             }
         }
@@ -180,7 +184,7 @@ namespace Infrastructure.Services.Exchange
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "UpdateOrderStatusAsync failed");
+                Logger.LogError("UpdateOrderStatusAsync failed");
                 return ResultWrapper<bool>.FromException(ex);
             }
         }
@@ -208,7 +212,7 @@ namespace Infrastructure.Services.Exchange
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "GetOrdersAsync failed");
+                Logger.LogError("GetOrdersAsync failed");
                 return ResultWrapper<PaginatedResult<ExchangeOrderData>>.FromException(ex);
             }
         }
@@ -224,7 +228,7 @@ namespace Infrastructure.Services.Exchange
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "GetOrdersByPaymentProviderIdAsync failed");
+                Logger.LogError("GetOrdersByPaymentProviderIdAsync failed");
                 return ResultWrapper<IEnumerable<ExchangeOrderData>>.FromException(ex);
             }
         }
@@ -245,7 +249,7 @@ namespace Infrastructure.Services.Exchange
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Failed to check exchange availability");
+                Logger.LogError("Failed to check exchange availability");
                 return ResultWrapper<bool>.FromException(ex);
             }
         }

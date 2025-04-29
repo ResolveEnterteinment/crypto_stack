@@ -6,6 +6,6 @@
         public required string Name { get; set; }
         public object Payload { get; set; }
         public bool Processed { get; set; } = false;
-        public DateTime? ProcessedAt { get; set; }
+        public DateTime? ProcessedAt { get; set; } = null;
     }
 }

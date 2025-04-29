@@ -2,6 +2,7 @@
 using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Domain.Constants.Payment;
 using Domain.DTOs;
@@ -12,7 +13,6 @@ using Domain.Exceptions;
 using Domain.Models.Payment;
 using Domain.Models.User;
 using Infrastructure.Services.Base;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using StripeLibrary;
@@ -39,7 +39,7 @@ namespace Infrastructure.Services
             ICrudRepository<PaymentData> repository,
             ICacheService<PaymentData> cacheService,
             IMongoIndexService<PaymentData> indexService,
-            ILogger<PaymentService> logger,
+            ILoggingService logger,
             IEventService eventService,
             IOptions<PaymentServiceSettings> paymentSettings,
             IOptions<StripeSettings> stripeSettings,
@@ -61,56 +61,13 @@ namespace Infrastructure.Services
                     ?? throw new InvalidOperationException("DefaultProvider not configured")];
         }
 
-        public async Task<ResultWrapper> ProcessChargeUpdatedEventAsync(ChargeRequest charge)
-        {
-            using var scope = Logger.BeginScope(new
-            {
-                charge?.Id,
-                charge?.PaymentIntentId
-            });
-            try
-            {
-                // Idempotency
-                var key = $"charge-updated-{charge.Id}";
-                var (hit, _) = await _idempotencyService.GetResultAsync<Guid>(key);
-                if (hit)
-                    return ResultWrapper.Success();
-
-                ValidateCharge(charge);
-
-                var invoice = await _stripeService.GetInvoiceAsync(charge.InvoiceId)
-                              ?? throw new PaymentApiException(
-                                     $"Invoice {charge.InvoiceId} not found", "Stripe", charge.Id);
-
-                ValidateInvoiceMetadata(invoice);
-
-                var request = new InvoiceRequest
-                {
-                    Id = invoice.Id,
-                    Provider = "Stripe",
-                    ChargeId = invoice.ChargeId,
-                    PaymentIntentId = invoice.PaymentIntentId,
-                    UserId = invoice.Metadata["userId"],
-                    SubscriptionId = invoice.Metadata["subscriptionId"],
-                    Amount = invoice.AmountPaid,
-                    Currency = charge.Currency,
-                    Status = invoice.Status
-                };
-
-                var result = await ProcessInvoicePaidEvent(request);
-                await _idempotencyService.StoreResultAsync(key, result.IsSuccess ? result.Data : Guid.Empty);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "Charge update failed");
-                return ResultWrapper.FromException(ex);
-            }
-        }
-
         public async Task<ResultWrapper> ProcessInvoicePaidEvent(InvoiceRequest invoice)
         {
-            using var scope = Logger.BeginScope(new { invoice?.Id });
+            using var scope = Logger.BeginScope("ProcessInvoicePaidEvent", new Dictionary<string, object?>
+            {
+                ["InvoiceId"] = invoice?.Id,
+            });
+
             try
             {
                 ValidateInvoiceRequest(invoice);
@@ -118,16 +75,23 @@ namespace Infrastructure.Services
                 var key = $"invoice-paid-{invoice.Id}";
                 var (hit, _) = await _idempotencyService.GetResultAsync<Guid>(key);
                 if (hit)
-                    return ResultWrapper.Success();
+                {
+                    Logger.LogWarning($"Invoice {invoice.Id} already processed.");
+                    return ResultWrapper.Success($"Invoice {invoice.Id} already processed.");
+                }
 
                 // Check existing
                 var existingWr = await GetOneAsync(
-                    Builders<PaymentData>.Filter.Eq(p => p.PaymentProviderId, invoice.PaymentIntentId));
+                    Builders<PaymentData>.Filter.Eq(p => p.InvoiceId, invoice.Id));
+
                 if (existingWr.Data != null)
-                    return ResultWrapper.Success();
+                {
+                    Logger.LogWarning($"Invoice data with ID {invoice.Id} already present.");
+                    return ResultWrapper.Success($"Invoice data with ID {invoice.Id} already present.");
+                }
 
                 // Calculate amounts
-                var (total, fee, platformFee, net) = CalculatePaymentAmounts(invoice);
+                var (total, fee, platformFee, net) = await CalculatePaymentAmounts(invoice);
 
                 var paymentData = new PaymentData
                 {
@@ -145,39 +109,50 @@ namespace Infrastructure.Services
                 };
 
                 var insertWr = await InsertAsync(paymentData);
+
                 if (!insertWr.IsSuccess)
                     throw new DatabaseException(insertWr.ErrorMessage ?? "Insert failed");
 
-                await EventService!.Publish(new PaymentReceivedEvent(paymentData));
+                await EventService!.PublishAsync(new PaymentReceivedEvent(paymentData, Logger.Context));
+
                 await SendPaymentNotification(invoice);
+
                 await _idempotencyService.StoreResultAsync(key, paymentData.Id);
                 return ResultWrapper.Success();
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Invoice paid processing failed");
+                Logger.LogError($"Invoice paid processing failed: {ex.Message}");
                 return ResultWrapper.FromException(ex);
             }
         }
 
         public async Task<ResultWrapper> ProcessCheckoutSessionCompletedAsync(SessionDto session)
         {
+            using var scope = Logger.BeginScope("PaymentService::ProcessCheckoutSessionCompletedAsync", new Dictionary<string, object?>
+            {
+                ["SessionId"] = session?.Id,
+            });
             try
             {
-                await EventService!.Publish(new CheckoutSessionCompletedEvent(session));
+                await EventService!.PublishAsync(new CheckoutSessionCompletedEvent(session, Logger.Context));
                 return ResultWrapper.Success();
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Failed to process checkout.session.completed event");
+                Logger.LogError($"Failed to process checkout.session.completed event: {ex.Message}");
                 return ResultWrapper.FromException(ex);
             }
         }
 
-        public async Task<ResultWrapper<SessionDto>> CreateCheckoutSessionAsync(
-            CreateCheckoutSessionDto request,
-            string? correlationId = null)
+        public async Task<ResultWrapper<SessionDto>> CreateCheckoutSessionAsync(CreateCheckoutSessionDto request)
         {
+            using var scope = Logger.BeginScope("PaymentService::CreateCheckoutSessionAsync", new Dictionary<string, object?>
+            {
+                ["UserId"] = request.UserId,
+                ["SubscriptionId"] = request.SubscriptionId,
+            });
+
             try
             {
                 ValidateCheckoutRequest(request);
@@ -186,17 +161,29 @@ namespace Infrastructure.Services
                 var customerId = await GetOrCreateStripeCustomerAsync(
                     request.UserId, request.UserEmail);
 
-                var options = BuildCheckoutSessionOptions(request, customerId, correlationId);
+                var options = BuildCheckoutSessionOptions(request, customerId);
                 var sessionWr = await provider.CreateCheckoutSessionWithOptions(options);
                 if (!sessionWr.IsSuccess || sessionWr.Data == null)
                     throw new PaymentApiException("Failed to create session", provider.Name);
 
-                await EventService!.Publish(new CheckoutSessionCreatedEvent(sessionWr.Data));
+                await EventService!.PublishAsync(new CheckoutSessionCreatedEvent(sessionWr.Data, Logger.Context));
                 return ResultWrapper<SessionDto>.Success(sessionWr.Data);
+            }
+            catch (ValidationException ex)
+            {
+                Logger.LogError($"Failed to validate create checkout session: {ex.Message}");
+                return ResultWrapper<SessionDto>.FromException(ex);
+            }
+            catch (PaymentApiException ex)
+            {
+                Logger.LogError($"Payment API Exception: {ex.Message}");
+                return ResultWrapper<SessionDto>.FromException(ex);
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Create checkout session failed");
+                await Logger.LogTraceAsync(
+                    $"Failed to create checkout session: {ex.Message}",
+                    requiresResolution: true);
                 return ResultWrapper<SessionDto>.FromException(ex);
             }
         }
@@ -205,6 +192,11 @@ namespace Infrastructure.Services
         {
             if (string.IsNullOrWhiteSpace(paymentId))
                 throw new ArgumentException("Payment ID is required", nameof(paymentId));
+
+            using var scope = Logger.BeginScope("PaymentService::GetPaymentStatusAsync", new Dictionary<string, object?>
+            {
+                ["PaymentId"] = paymentId,
+            });
 
             try
             {
@@ -220,63 +212,64 @@ namespace Infrastructure.Services
                         Amount = p.TotalAmount,
                         Currency = p.Currency,
                         SubscriptionId = p.SubscriptionId.ToString(),
-                        CreatedAt = p.CreatedAt,
-                        UpdatedAt = p.CreatedAt
+                        CreatedAt = p.CreatedAt
                     };
                 }
 
-                var provider = GetProviderForPaymentId(paymentId);
-                if (provider.Name == "Stripe")
+                var pi = await (_stripeService as IStripeService)!.GetPaymentIntentAsync(paymentId);
+                if (pi != null)
                 {
-                    var pi = await (_stripeService as IStripeService)!.GetPaymentIntentAsync(paymentId);
-                    if (pi != null)
+                    return new PaymentStatusResponse
                     {
-                        return new PaymentStatusResponse
-                        {
-                            Id = paymentId,
-                            Status = MapStripeStatusToLocal(pi.Status),
-                            Amount = pi.Amount / 100m,
-                            Currency = pi.Currency?.ToUpperInvariant() ?? "USD",
-                            SubscriptionId = pi.Metadata.TryGetValue("subscriptionId", out var sid) ? sid : "",
-                            CreatedAt = pi.Created,
-                            UpdatedAt = DateTime.UtcNow
-                        };
-                    }
+                        Id = paymentId,
+                        Status = MapStripeStatusToLocal(pi.Status),
+                        Amount = pi.Amount / 100m,
+                        Currency = pi.Currency?.ToUpperInvariant() ?? "USD",
+                        SubscriptionId = pi.Metadata.TryGetValue("subscriptionId", out var sid) ? sid : "",
+                        CreatedAt = pi.Created,
+                        UpdatedAt = DateTime.UtcNow
+                    };
                 }
 
                 throw new KeyNotFoundException($"Payment {paymentId} not found");
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "GetPaymentStatus failed");
+                await Logger.LogTraceAsync($"Failed to get payment status: {ex.Message}");
                 throw;
             }
         }
 
         public async Task<PaymentDetailsDto> GetPaymentDetailsAsync(string paymentId)
         {
+            using var scope = Logger.BeginScope("PaymentService::GetPaymentDetailsAsync",
+                new Dictionary<string, object?>
+                {
+                    ["PaymentId"] = paymentId,
+                });
+
             if (string.IsNullOrWhiteSpace(paymentId))
                 throw new ArgumentException("Payment ID is required", nameof(paymentId));
 
             try
             {
-                if (Guid.TryParse(paymentId, out var guid))
+                if (Guid.TryParse(paymentId, out var guid) && guid != Guid.Empty)
                 {
                     var wr = await GetByIdAsync(guid);
-                    if (wr.Data != null)
+                    if (wr != null && wr.IsSuccess && wr.Data != null)
                         return new PaymentDetailsDto(wr.Data);
                 }
                 else
                 {
                     var dbWr = await GetOneAsync(
                         Builders<PaymentData>.Filter.Eq(p => p.PaymentProviderId, paymentId));
-                    if (dbWr.Data != null)
+                    if (dbWr != null && dbWr.IsSuccess && dbWr.Data != null)
                         return new PaymentDetailsDto(dbWr.Data);
 
                     var provider = GetProviderForPaymentId(paymentId);
                     if (provider.Name == "Stripe")
                     {
-                        var dto = await GetStripePaymentDetailsAsync(paymentId, provider);
+                        var dto = await GetStripePaymentDetailsAsync(paymentId);
                         if (dto != null) return dto;
                     }
                 }
@@ -285,13 +278,15 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "GetPaymentDetails failed");
+                await Logger.LogTraceAsync($"Failed to get payment {paymentId} details: {ex.Message}");
                 throw;
             }
         }
         public async Task<ResultWrapper<PaymentData>> GetByProviderIdAsync(string paymentProviderId)
-        => await FetchCached(
-                string.Format(CACHE_KEY_PAYMENT_TRANSACTIONS, paymentProviderId),
+        {
+            var cacheKey = string.Format(CACHE_KEY_PAYMENT_TRANSACTIONS, paymentProviderId);
+            return await FetchCached(
+                cacheKey,
                 async () =>
                 {
                     var paymentResult = await GetOneAsync(new FilterDefinitionBuilder<PaymentData>().Eq(t => t.PaymentProviderId, paymentProviderId));
@@ -302,15 +297,20 @@ namespace Infrastructure.Services
                 TimeSpan.FromHours(1),
                 () => new KeyNotFoundException("Failed to fetch payment {paymentProviderId} transactions.")
                 );
+        }
 
         public async Task<ResultWrapper> CancelPaymentAsync(string paymentId)
         {
-            using var scope = Logger.BeginScope(new { paymentId });
+            using var scope = Logger.BeginScope(new Dictionary<string, object?>
+            {
+                ["PaymentId"] = paymentId,
+            });
             try
             {
                 var key = $"payment-cancelled-{paymentId}";
                 var (hit, _) = await _idempotencyService.GetResultAsync<Guid>(key);
                 if (hit)
+
                     return ResultWrapper.Success();
 
                 if (string.IsNullOrEmpty(paymentId))
@@ -331,13 +331,13 @@ namespace Infrastructure.Services
                 if (!updateWr.IsSuccess)
                     throw new DatabaseException(updateWr.ErrorMessage);
 
-                await EventService!.Publish(new PaymentCancelledEvent(paymentData));
+                await EventService!.PublishAsync(new PaymentCancelledEvent(paymentData, Logger.Context));
                 await _idempotencyService.StoreResultAsync(key, paymentData.Id);
                 return ResultWrapper.Success();
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "CancelPayment failed");
+                Logger.LogError("CancelPayment failed");
                 return ResultWrapper.FromException(ex);
             }
         }
@@ -376,13 +376,16 @@ namespace Infrastructure.Services
 
         private void ValidateCheckoutRequest(CreateCheckoutSessionDto r)
         {
-            if (r == null) throw new ArgumentNullException(nameof(r));
-            if (string.IsNullOrEmpty(r.SubscriptionId))
-                throw new ArgumentException("SubscriptionId required", nameof(r));
-            if (string.IsNullOrEmpty(r.UserId))
-                throw new ArgumentException("UserId required", nameof(r));
+            var errors = new Dictionary<string, List<string>>();
+            if (r == null)
+                AddValidationError(errors, nameof(r), "Invalid");
+            if (string.IsNullOrWhiteSpace(r.SubscriptionId) || !Guid.TryParse(r.SubscriptionId, out _))
+                AddValidationError(errors, "SubscriptionId", "Invalid");
+            if (string.IsNullOrWhiteSpace(r.UserId) || !Guid.TryParse(r.UserId, out _))
+                AddValidationError(errors, "UserId", "Invalid");
             if (r.Amount <= 0)
-                throw new ArgumentException("Amount must be>0", nameof(r));
+                AddValidationError(errors, "Amount", "Must be>0");
+            if (errors.Any()) throw new ValidationException("Create checkout session request validation failed", errors.ToDictionary(k => k.Key, k => k.Value.ToArray()));
         }
 
         private void AddValidationError(Dictionary<string, List<string>> errs, string key, string msg)
@@ -391,36 +394,21 @@ namespace Infrastructure.Services
             list.Add(msg);
         }
 
-        private (decimal total, decimal fee, decimal platform, decimal net) CalculatePaymentAmounts(InvoiceRequest i)
+        private async Task<(decimal total, decimal fee, decimal platform, decimal net)> CalculatePaymentAmounts(InvoiceRequest i)
         {
             var total = i.Amount / 100m;
             var fee = 0m;
             var platformFee = total * 0.01m;
             var net = total - fee - platformFee;
-            if (net <= 0) throw new ValidationException("Net<=0", new Dictionary<string, string[]> { { "NetAmount", new[] { "Must>0" } } });
+            if (net <= 0)
+            {
+                await Logger.LogTraceAsync("Invalid net amount. Amount must be > 0", "CalculatePaymentAmounts");
+                throw new ValidationException("Net<=0", new Dictionary<string, string[]> { { "NetAmount", new[] { "Must>0" } } });
+            }
             return (total, fee, platformFee, net);
         }
 
-        private PaymentData CreatePaymentData(InvoiceRequest i, decimal total, decimal fee, decimal platform, decimal net)
-        {
-            return new PaymentData
-            {
-                Id = Guid.NewGuid(),
-                UserId = Guid.Parse(i.UserId),
-                SubscriptionId = Guid.Parse(i.SubscriptionId),
-                Provider = i.Provider,
-                PaymentProviderId = i.PaymentIntentId,
-                InvoiceId = i.Id,
-                TotalAmount = total,
-                PaymentProviderFee = fee,
-                PlatformFee = platform,
-                NetAmount = net,
-                Currency = i.Currency,
-                Status = i.Status
-            };
-        }
-
-        private CheckoutSessionOptions BuildCheckoutSessionOptions(CreateCheckoutSessionDto r, string customerId, string? corr)
+        private CheckoutSessionOptions BuildCheckoutSessionOptions(CreateCheckoutSessionDto r, string customerId, string? corr = null)
         {
             var opts = new CheckoutSessionOptions
             {
@@ -449,7 +437,7 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "Notification failed");
+                Logger.LogWarning("Notification failed: {ErrorMessage}", ex.Message);
             }
         }
 
@@ -469,7 +457,7 @@ namespace Infrastructure.Services
 
         private async Task<PaymentData?> GetPaymentDataForCancel(string pid)
         {
-            if (Guid.TryParse(pid, out var guid))
+            if (Guid.TryParse(pid, out var guid) && guid != Guid.Empty)
             {
                 var wr = await GetByIdAsync(guid);
                 return wr.Data;
@@ -478,9 +466,9 @@ namespace Infrastructure.Services
             return wr2.Data;
         }
 
-        private async Task<PaymentDetailsDto?> GetStripePaymentDetailsAsync(string pid, IPaymentProvider provider)
+        private async Task<PaymentDetailsDto?> GetStripePaymentDetailsAsync(string pid)
         {
-            var stripe = provider as IStripeService;
+            var stripe = _stripeService;
             var pi = await stripe!.GetPaymentIntentAsync(pid);
             if (pi == null) return null;
             return new PaymentDetailsDto

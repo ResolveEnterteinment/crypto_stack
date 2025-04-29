@@ -7,7 +7,8 @@ namespace Domain.Events
     public class CheckoutSessionCreatedEvent : BaseEvent, INotification
     {
         public SessionDto Session { get; }
-        public CheckoutSessionCreatedEvent(SessionDto session)
+        public CheckoutSessionCreatedEvent(SessionDto session, IDictionary<string, object?> context) :
+            base(context)
         {
             Session = session;
             if (session.Metadata.TryGetValue("subscriptionId", out var subscriptionIdString))

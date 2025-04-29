@@ -77,7 +77,7 @@ public class CacheService<T> : ICacheService<T> where T : BaseEntity
 
     public void Invalidate(string key)
     {
-        _logger.LogDebug("Cache {Action} for {Type}:{Key}", "invalidated", typeof(T).Name, key);
+        _logger.LogInformation("Cache {Action} for {Type}:{Key}", "invalidated", typeof(T).Name, key);
 
         _cache.Remove(key);
     }

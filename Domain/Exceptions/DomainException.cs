@@ -425,6 +425,26 @@ namespace Domain.Exceptions
     }
 
     [Serializable]
+    public class EventFetchException : DomainException
+    {
+        public EventFetchException(string message)
+            : base(message, "EVENT_FETCH_ERROR") { }
+
+        public EventFetchException(string message, Exception inner)
+            : base(message, "EVENT_FETCH_ERROR", inner) { }
+    }
+
+    [Serializable]
+    public class TransactionFetchException : DomainException
+    {
+        public TransactionFetchException(string message)
+            : base(message, "TRANSACTION_FETCH_ERROR") { }
+
+        public TransactionFetchException(string message, Exception inner)
+            : base(message, "TRANSACTION_FETCH_ERROR", inner) { }
+    }
+
+    [Serializable]
     public class AssetFetchException : DomainException
     {
         public AssetFetchException(string message)

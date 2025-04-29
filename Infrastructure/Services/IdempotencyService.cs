@@ -1,10 +1,10 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Domain.DTOs;
 using Domain.Models.Idempotency;
 using Infrastructure.Services.Base;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using System.Diagnostics;
 using System.Text.Json;
@@ -24,7 +24,7 @@ namespace Infrastructure.Services
             ICrudRepository<IdempotencyData> repository,
             ICacheService<IdempotencyData> cacheService,
             IMongoIndexService<IdempotencyData> indexService,
-            ILogger<IdempotencyService> logger,
+            ILoggingService logger,
             IEventService eventService,
             IMemoryCache memoryCache
         ) : base(
@@ -75,7 +75,7 @@ namespace Infrastructure.Services
             }
             catch (JsonException ex)
             {
-                Logger.LogError(ex, "Deserialization failed for idempotency key {Key}", key);
+                Logger.LogError("Deserialization failed for idempotency key {Key}", key);
                 return (false, default);
             }
         }
@@ -154,7 +154,7 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Operation failed for idempotency key {Key}", key);
+                Logger.LogError("Operation failed for idempotency key {Key}", key);
                 activity.SetTag("error", true);
                 throw;
             }

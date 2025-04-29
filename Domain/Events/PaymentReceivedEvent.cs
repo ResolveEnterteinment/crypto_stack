@@ -7,7 +7,8 @@ namespace Domain.Events
     public class PaymentReceivedEvent : BaseEvent, INotification
     {
         public PaymentData Payment { get; }
-        public PaymentReceivedEvent(PaymentData payment)
+        public PaymentReceivedEvent(PaymentData payment, IDictionary<string, object?> context) :
+            base(context)
         {
             Payment = payment;
             DomainEntityId = payment.Id;

@@ -1,4 +1,5 @@
 using Application.Interfaces;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Domain.DTOs.Settings;
 using Domain.Exceptions;
@@ -6,7 +7,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using Stripe;
-using System.Diagnostics;
 using System.Text;
 
 namespace crypto_investment_project.Server.Controllers
@@ -19,14 +19,14 @@ namespace crypto_investment_project.Server.Controllers
     {
         private readonly IPaymentWebhookHandler _webhookHandler;
         private readonly IIdempotencyService _idempotencyService;
-        private readonly ILogger<PaymentWebhookController> _logger;
+        private readonly ILoggingService _logger;
         private readonly string _webhookSecret;
 
         public PaymentWebhookController(
             IPaymentWebhookHandler webhookHandler,
             IIdempotencyService idempotencyService,
             IOptions<StripeSettings> stripeSettings,
-            ILogger<PaymentWebhookController> logger)
+            ILoggingService logger)
         {
             _webhookHandler = webhookHandler ?? throw new ArgumentNullException(nameof(webhookHandler));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
@@ -42,108 +42,103 @@ namespace crypto_investment_project.Server.Controllers
         [Route("stripe")]
         public async Task<IActionResult> StripeWebhook()
         {
-            var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+            using var scope = _logger.BeginScope();
 
-            using (_logger.BeginScope(new Dictionary<string, object>
+            try
             {
-                ["CorrelationId"] = correlationId,
-                ["Operation"] = "StripeWebhook"
-            }))
-            {
-                try
+                // Trace incoming webhook
+                await _logger.LogTraceAsync("Received Stripe webhook request");
+
+                // Read the request body
+                string requestBody;
+                using (var reader = new StreamReader(HttpContext.Request.Body, Encoding.UTF8))
                 {
-                    // Read the request body for signature verification
-                    string requestBody;
+                    requestBody = await reader.ReadToEndAsync();
+                }
 
-                    using (var reader = new StreamReader(HttpContext.Request.Body, Encoding.UTF8))
+                // Verify webhook signature
+                string signature = Request.Headers["Stripe-Signature"];
+
+                if (string.IsNullOrEmpty(signature))
+                {
+                    await _logger.LogTraceAsync("Missing Stripe-Signature header", requiresResolution: true);
+                    return BadRequest(new { error = "Missing signature header" });
+                }
+
+                var stripeEvent = EventUtility.ConstructEvent(
+                    requestBody,
+                    signature,
+                    _webhookSecret,
+                    300 // 5 minutes clock skew tolerance
+                );
+
+                using var EventScope = _logger.EnrichScope(
+                    ("EventId", stripeEvent.Id),
+                    ("EventType", stripeEvent.Type)
+                );
+
+                _logger.LogInformation($"Stripe event received: {stripeEvent.Type} (ID: {stripeEvent.Id})");
+
+                // Idempotency check
+                var stripeEventId = stripeEvent.Id;
+                var idempotencyKey = $"stripe-webhook-{stripeEventId}";
+
+                if (await _idempotencyService.HasKeyAsync(idempotencyKey))
+                {
+                    await _logger.LogTraceAsync($"Duplicate Stripe event detected: {stripeEventId}", requiresResolution: true);
+                    throw new IdempotencyException(idempotencyKey);
+                }
+
+                // Handle the webhook event
+                var result = await _webhookHandler.HandleStripeEventAsync(stripeEvent);
+
+                if (result == null || !result.IsSuccess)
+                {
+                    _logger.LogError($"Failed to handle Stripe event {stripeEvent.Id} of type {stripeEvent.Type}: {result?.ErrorMessage ?? "Unknown error"}");
+
+                    return StatusCode(StatusCodes.Status500InternalServerError, new
                     {
-                        requestBody = await reader.ReadToEndAsync();
-                    }
-
-                    // Verify webhook signature
-                    string signature = Request.Headers["Stripe-Signature"];
-
-                    if (string.IsNullOrEmpty(signature))
-                    {
-                        _logger.LogWarning("Missing Stripe-Signature header");
-                        return BadRequest(new { error = "Missing signature header" });
-                    }
-
-                    // Verify the webhook signature
-                    var stripeEvent = EventUtility.ConstructEvent(
-                        requestBody,
-                        signature,
-                        _webhookSecret,
-                        300 // Tolerate 5 minute clock skew
-                    );
-
-                    _logger.LogInformation("Received Stripe webhook {EventId} of type {EventType}",
-                        stripeEvent.Id, stripeEvent.Type);
-
-                    // Check for idempotency - use Stripe event ID as the idempotency key
-                    string stripeEventId = stripeEvent.Id;
-                    string idempotencyKey = $"stripe-webhook-{stripeEventId}";
-
-                    if (await _idempotencyService.HasKeyAsync(idempotencyKey))
-                    {
-                        _logger.LogInformation("Duplicate Stripe event {EventId}", stripeEventId);
-                        throw new IdempotencyException(idempotencyKey);
-                    }
-
-                    // Process the event using our handler
-                    var result = await _webhookHandler.HandleStripeEventAsync(stripeEvent, correlationId);
-
-                    if (result == null || !result.IsSuccess)
-                    {
-                        _logger.LogWarning("Failed to handle Stripe event {EventId} of type {EventType}: {Message}",
-                            stripeEvent.Id, stripeEvent.Type, result?.ErrorMessage ?? "Webhook handler returned null.");
-
-                        return StatusCode(StatusCodes.Status500InternalServerError,
-                            new
-                            {
-                                error = result.ErrorMessage ?? "Failed to process event",
-                                eventId = stripeEvent.Id,
-                                reason = result.Reason.ToString() ?? "Unknown"
-                            });
-                    }
-
-                    await _idempotencyService.StoreResultAsync(idempotencyKey, new { status = "processed", timestamp = DateTime.UtcNow });
-
-                    return Ok(new
-                    {
-                        status = "Processed",
-                        message = result.DataMessage ?? "Event processed successfully",
-                        eventId = stripeEvent.Id
+                        error = result?.ErrorMessage ?? "Failed to process event",
+                        eventId = stripeEvent.Id,
+                        reason = result?.Reason.ToString() ?? "Unknown"
                     });
+                }
 
-                    // Mark the event as processed for idempotency
-                }
-                catch (StripeException ex)
-                {
-                    _logger.LogError(ex, "Stripe exception occurred: {Message}", ex.Message);
+                await _idempotencyService.StoreResultAsync(idempotencyKey, new { status = "processed", timestamp = DateTime.UtcNow });
 
-                    // Return 400 for invalid signatures or malformed requests to prevent retries
-                    if (ex.StripeError?.Type == "invalid_request_error")
-                    {
-                        return BadRequest(new { error = ex.Message });
-                    }
+                _logger.LogInformation($"Stripe event {stripeEvent.Id} processed successfully");
 
-                    // Return 500 for other Stripe errors to allow retries
-                    return StatusCode(500, new { error = "An error occurred processing the webhook" });
-                }
-                catch (ValidationException ex)
+                return Ok(new
                 {
-                    _logger.LogWarning(ex, "Validation error processing webhook");
-                    return BadRequest(new { error = ex.Message, validationErrors = ex.ValidationErrors });
-                }
-                catch (Exception ex)
+                    status = "Processed",
+                    message = result.DataMessage ?? "Event processed successfully",
+                    eventId = stripeEvent.Id
+                });
+            }
+            catch (StripeException ex)
+            {
+                await _logger.LogTraceAsync($"Stripe exception occurred: {ex.Message}", requiresResolution: true);
+
+                if (ex.StripeError?.Type == "invalid_request_error")
                 {
-                    // Log unexpected errors but return 200 to prevent Stripe from retrying events
-                    // that will always fail due to bugs in our code
-                    _logger.LogError(ex, "Unexpected error processing Stripe webhook");
-                    return Ok(new { status = "Error occurred but was logged", message = "Contact support with correlation ID" });
+                    return BadRequest(new { error = ex.Message });
                 }
+
+                return StatusCode(500, new { error = "An error occurred processing the webhook" });
+            }
+            catch (ValidationException ex)
+            {
+                _logger.LogWarning($"Validation error: {ex.Message}");
+
+                return BadRequest(new { error = ex.Message, validationErrors = ex.ValidationErrors });
+            }
+            catch (Exception ex)
+            {
+                await _logger.LogTraceAsync($"Unexpected error processing webhook: {ex.Message}", requiresResolution: true);
+
+                return Ok(); // Return OK to Stripe even if internal error happened to avoid retries
             }
         }
+
     }
 }

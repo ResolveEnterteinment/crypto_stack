@@ -26,5 +26,6 @@ namespace Application.Interfaces.Subscription
         public Task Handle(SubscriptionCreatedEvent notification, CancellationToken cancellationToken);
         public Task Handle(PaymentReceivedEvent notification, CancellationToken cancellationToken);
         public Task Handle(PaymentCancelledEvent notification, CancellationToken cancellationToken);
+        Task TestLog();
     }
 }

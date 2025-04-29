@@ -3,6 +3,7 @@ using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Application.Validation;
@@ -12,12 +13,18 @@ using Infrastructure;
 using Infrastructure.Services;
 using Infrastructure.Services.Asset;
 using Infrastructure.Services.Base;
+using Infrastructure.Services.Event;
 using Infrastructure.Services.Exchange;
 using Infrastructure.Services.Index;
+using Infrastructure.Services.Logging;
 using Infrastructure.Services.Payment;
 using Infrastructure.Services.Subscription;
 using MediatR;
 using MongoDB.Driver;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using Serilog;
 
 namespace crypto_investment_project.Server.Configuration;
 
@@ -55,13 +62,20 @@ public static class CoreServicesExtensions
             return new MongoClient(mongoClientSettings);
         });
 
+        Log.Logger = new LoggerConfiguration()
+            .Enrich.FromLogContext()
+            .Enrich.WithEnvironmentName()
+            .Enrich.WithThreadId()
+            .Enrich.WithProcessId()
+            .Enrich.With<TracingEnricher>()
+            .WriteTo.Console()
+            .WriteTo.MongoDBBson("mongodb://localhost:27017/logs", collectionName: "TraceLogs")
+            .CreateLogger();
+
         // Register Fluent Validation
         services.AddFluentValidators(
             typeof(CoreServicesExtensions).Assembly,
             typeof(FluentValidators).Assembly);
-
-        // Register application services
-        RegisterApplicationServices(services);
 
         // Configure SignalR
         services.AddSignalR(options =>
@@ -83,6 +97,33 @@ public static class CoreServicesExtensions
             cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
         });
 
+        services.AddOpenTelemetry()
+        .WithTracing(tracerProviderBuilder =>
+        {
+            tracerProviderBuilder
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddSource("StackFi") // ActivitySource name
+                .SetResourceBuilder(
+                    ResourceBuilder.CreateDefault()
+                        .AddService("Server"))
+                .AddOtlpExporter(otlpOptions =>
+                {
+                    otlpOptions.Endpoint = new Uri("http://localhost:4317"); // default OTLP gRPC collector
+                    otlpOptions.Protocol = OtlpExportProtocol.Grpc; // or HttpProtobuf if you prefer
+                })
+
+                // Or Zipkin exporter:
+                .AddZipkinExporter(options =>
+                 {
+                     options.Endpoint = new Uri("http://localhost:9411/api/v2/spans");
+                 }
+                 );
+        });
+
+        // Register application services
+        RegisterApplicationServices(services);
+
         return services;
     }
 
@@ -96,6 +137,8 @@ public static class CoreServicesExtensions
         // Register services with appropriate lifecycles
         services.AddSingleton(typeof(IMongoIndexService<>), typeof(MongoIndexService<>));
         services.AddScoped<IEncryptionService, Encryption.Services.EncryptionService>();
+
+        services.AddSingleton<ILoggingService, LoggingService>();
 
         // 2) Your existing registrations
         services.AddScoped<IExchangeService, ExchangeService>();
@@ -116,5 +159,6 @@ public static class CoreServicesExtensions
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IIdempotencyService, IdempotencyService>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+        services.AddScoped<ITestService, TestService>();
     }
 }

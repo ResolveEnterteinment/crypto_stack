@@ -1,13 +1,13 @@
 ﻿// Refactored BalanceManagementService 
 using Application.Interfaces;
 using Application.Interfaces.Exchange;
+using Application.Interfaces.Logging;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.Events;
 using Domain.Exceptions;
 using Domain.Models.Event;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using Polly;
 using Polly.Retry;
@@ -22,7 +22,7 @@ namespace Infrastructure.Services.Exchange
     {
         private readonly IExchangeService _exchangeService;
         private readonly IEventService _eventService;
-        private readonly ILogger<BalanceManagementService> _logger;
+        private readonly ILoggingService _logger;
         private readonly AsyncRetryPolicy _retryPolicy;
         private readonly IMemoryCache _cache;
         private const string BALANCE_CHECK_CACHE_PREFIX = "balance_check:";
@@ -34,7 +34,7 @@ namespace Infrastructure.Services.Exchange
         public BalanceManagementService(
             IExchangeService exchangeService,
             IEventService eventService,
-            ILogger<BalanceManagementService> logger,
+            ILoggingService logger,
             IMemoryCache cache)
         {
             _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
@@ -51,7 +51,7 @@ namespace Infrastructure.Services.Exchange
                     retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
                     (ex, timeSpan, retryCount, context) =>
                     {
-                        _logger.LogWarning(ex,
+                        _logger.LogWarning(
                             "Error checking exchange balance. Retrying {RetryCount}/3 after {RetryInterval}ms",
                             retryCount, timeSpan.TotalMilliseconds);
                     });
@@ -181,7 +181,7 @@ namespace Infrastructure.Services.Exchange
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex,
+                    _logger.LogError(
                         "Error checking exchange balance for {Exchange}:{Ticker}",
                         exchangeName, ticker);
 
@@ -208,66 +208,65 @@ namespace Infrastructure.Services.Exchange
 
             var correlationId = Activity.Current?.Id ?? Guid.NewGuid().ToString();
 
-            using (_logger.BeginScope(new Dictionary<string, object>
+            using var scope = _logger.BeginScope("BalanceManagementService::RequestFunding", new Dictionary<string, object>
             {
                 ["RequestedAmount"] = amount,
                 ["Operation"] = "RequestFunding",
                 ["CorrelationId"] = correlationId
-            }))
+            });
+
+            try
             {
-                try
+                // Check if we've recently requested funding for a similar amount
+                string cacheKey = $"funding_request:{Math.Round(amount, 0)}";
+
+                if (_cache.TryGetValue(cacheKey, out bool _))
                 {
-                    // Check if we've recently requested funding for a similar amount
-                    string cacheKey = $"funding_request:{Math.Round(amount, 0)}";
-
-                    if (_cache.TryGetValue(cacheKey, out bool _))
-                    {
-                        _logger.LogInformation(
-                            "Skipping duplicate funding request for {Amount} - already requested recently",
-                            amount);
-                        return;
-                    }
-
-                    _logger.LogInformation("Requesting additional funding of {Amount}", amount);
-
-                    // Create an event record
-                    var storedEvent = new EventData
-                    {
-                        Name = typeof(RequestfundingEvent).Name,
-                        Payload = new
-                        {
-                            Amount = amount,
-                            Timestamp = DateTime.UtcNow,
-                            CorrelationId = correlationId
-                        }
-                    };
-
-                    // Store the event
-                    var storedEventResult = await _eventService.InsertAsync(storedEvent);
-
-                    if (storedEventResult == null || !storedEventResult.IsSuccess)
-                    {
-                        throw new DatabaseException(
-                            $"Failed to store {storedEvent.GetType().Name} event: {storedEventResult?.ErrorMessage ?? "Unknown error"}");
-                    }
-
-                    var storedEventData = storedEventResult.Data;
-
-                    // Publish the event to be handled by relevant services
-                    await _eventService.Publish(new RequestfundingEvent(amount, storedEventData.AffectedIds.First()));
-
-                    // Cache the request to prevent duplicates
-                    _cache.Set(cacheKey, true, TimeSpan.FromMinutes(15));
-
                     _logger.LogInformation(
-                        "Successfully published funding request event. Amount: {Amount}, EventId: {EventId}",
-                        amount, storedEventData.AffectedIds.First());
+                        "Skipping duplicate funding request for {Amount} - already requested recently",
+                        amount);
+                    return;
                 }
-                catch (Exception ex)
+
+                _logger.LogInformation("Requesting additional funding of {Amount}", amount);
+
+                // Create an event record
+                var storedEvent = new EventData
                 {
-                    _logger.LogError(ex, "Failed to request funding of {Amount}", amount);
-                    throw;
+                    Name = typeof(RequestfundingEvent).Name,
+                    Payload = new
+                    {
+                        Amount = amount,
+                        Timestamp = DateTime.UtcNow,
+                        CorrelationId = correlationId
+                    }
+                };
+
+                // Store the event
+                var storedEventResult = await _eventService.InsertAsync(storedEvent);
+
+                if (storedEventResult == null || !storedEventResult.IsSuccess)
+                {
+                    throw new DatabaseException(
+                        $"Failed to store {storedEvent.GetType().Name} event: {storedEventResult?.ErrorMessage ?? "Unknown error"}");
                 }
+
+                var storedEventData = storedEventResult.Data;
+
+                // Publish the event to be handled by relevant services
+                await _eventService.PublishAsync(new RequestfundingEvent(amount, storedEventData.AffectedIds.First(), _logger.Context));
+
+                // Cache the request to prevent duplicates
+                _cache.Set(cacheKey, true, TimeSpan.FromMinutes(15));
+
+                _logger.LogInformation(
+                    "Successfully published funding request event. Amount: {Amount}, EventId: {EventId}",
+                    amount, storedEventData.AffectedIds.First());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Failed to request funding of {Amount}", amount);
+                throw;
             }
         }
     }

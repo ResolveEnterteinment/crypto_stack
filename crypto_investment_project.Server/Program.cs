@@ -4,6 +4,7 @@ using Encryption;
 using HealthChecks.UI.Client;
 using Infrastructure.Hubs;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,11 +22,18 @@ builder.Services
     .AddSwaggerServices()
     .AddHostedServices(builder.Environment);
 
+builder.Host.UseSerilog();
+
 // Build the application
 var app = builder.Build();
 
 // Configure the HTTP request pipeline
 app.UseGlobalExceptionHandling();
+app.UseTraceContext();
+app.UseActivityNaming();
+app.UseTraceUserEnrichment();
+app.UseTraceException();
+app.UseTraceIdResponse();
 
 // Static files and development tools
 app.UseDefaultFiles();

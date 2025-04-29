@@ -7,7 +7,7 @@ namespace Application.Interfaces
 {
     public interface IEventService : IBaseService<EventData>
     {
-        public Task Publish(BaseEvent eventToPublish);
+        public Task PublishAsync(BaseEvent eventToPublish);
         public Task<ResultWrapper<IEnumerable<EventData>>> GetRecentEventsAsync(string eventType, int limit = 20);
     }
 }

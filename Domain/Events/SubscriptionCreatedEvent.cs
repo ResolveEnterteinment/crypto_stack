@@ -9,7 +9,8 @@ namespace Domain.Events
         public PaymentProviderEvent Subscription;
 
         public DateTime CurrentPeriodEnd;
-        public SubscriptionCreatedEvent(PaymentProviderEvent subscription)
+        public SubscriptionCreatedEvent(PaymentProviderEvent subscription, IDictionary<string, object?> context) :
+            base(context)
         {
             Subscription = subscription;
         }

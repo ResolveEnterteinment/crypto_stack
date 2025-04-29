@@ -2,9 +2,9 @@
 using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
-using DnsClient.Internal;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Subscription;
@@ -12,7 +12,6 @@ using Domain.Events;
 using Domain.Exceptions;
 using Domain.Models.Subscription;
 using Infrastructure.Services.Base;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 
@@ -33,7 +32,7 @@ namespace Infrastructure.Services.Subscription
             ICrudRepository<SubscriptionData> repository,
             ICacheService<SubscriptionData> cacheService,
             IMongoIndexService<SubscriptionData> indexService,
-            ILogger<SubscriptionService> logger,
+            ILoggingService logger,
             IPaymentService paymentService,
             IAssetService assetService,
             INotificationService notificationService,
@@ -373,7 +372,7 @@ namespace Infrastructure.Services.Subscription
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Error handling subscription created event for event {EventId}: {Message}",
+                Logger.LogError("Error handling subscription created event for event {EventId}: {Message}",
                     notification.EventId, ex.Message);
                 // We don't rethrow here because we don't want to fail the event handling pipeline
             }
@@ -442,7 +441,7 @@ namespace Infrastructure.Services.Subscription
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Error handling subscription created event for event {EventId}: {Message}",
+                Logger.LogError("Error handling subscription created event for event {EventId}: {Message}",
                     notification.EventId, ex.Message);
                 // We don't rethrow here because we don't want to fail the event handling pipeline
             }
@@ -521,7 +520,7 @@ namespace Infrastructure.Services.Subscription
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Error handling payment received event for payment {PaymentId}: {Message}",
+                Logger.LogError("Error handling payment received event for payment {PaymentId}: {Message}",
                     notification.Payment.Id, ex.Message);
                 // We don't rethrow here to avoid disrupting the event pipeline
             }
@@ -570,7 +569,7 @@ namespace Infrastructure.Services.Subscription
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Error handling payment received event for payment {PaymentId}: {Message}",
+                Logger.LogError("Error handling payment received event for payment {PaymentId}: {Message}",
                     notification.Payment.Id, ex.Message);
                 // We don't rethrow here to avoid disrupting the event pipeline
             }
@@ -598,5 +597,17 @@ namespace Infrastructure.Services.Subscription
                 "year" => SubscriptionInterval.Yearly,
                 _ => SubscriptionInterval.Monthly
             };
+
+        public async Task TestLog()
+        {
+            using (Logger.BeginScope(new Dictionary<string, object>
+            {
+                ["Level"] = "Service"
+            }))
+            {
+                await Logger.LogTraceAsync("Started scope TestLog");
+                await Logger.LogTraceAsync("Testing LogTrace system.", "TestLog", true);
+            }
+        }
     }
 }

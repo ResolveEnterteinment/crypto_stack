@@ -7,7 +7,7 @@ namespace Domain.Events
     public class EntityDeletedEvent<T> : BaseEvent, INotification where T : BaseEntity
     {
         public T Entity { get; }
-        public EntityDeletedEvent(Guid id, T entity)
+        public EntityDeletedEvent(Guid id, T entity, IDictionary<string, object?> context) : base(context)
         {
             DomainEntityId = id;
             Entity = entity;

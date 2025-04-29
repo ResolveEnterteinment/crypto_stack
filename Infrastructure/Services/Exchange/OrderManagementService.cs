@@ -28,7 +28,7 @@ namespace Infrastructure.Services.Exchange
             string assetTicker,
             decimal quantity,
             string paymentProviderId,
-            string side = OrderSide.Buy,
+            string side = Domain.Constants.OrderSide.Buy,
             string type = "MARKET")
         {
             try
@@ -61,11 +61,11 @@ namespace Infrastructure.Services.Exchange
                 PlacedExchangeOrder placedOrder;
 
                 // Execute the order based on side
-                if (side == OrderSide.Buy)
+                if (side == Domain.Constants.OrderSide.Buy)
                 {
                     placedOrder = await exchange.PlaceSpotMarketBuyOrder(symbol, quantity, paymentProviderId);
                 }
-                else if (side == OrderSide.Sell)
+                else if (side == Domain.Constants.OrderSide.Sell)
                 {
                     placedOrder = await exchange.PlaceSpotMarketSellOrder(symbol, quantity, paymentProviderId);
                 }

@@ -1,4 +1,5 @@
 ﻿using Application.Interfaces.Exchange;
+using Application.Interfaces.Logging;
 using Binance.Net;
 using Binance.Net.Clients;
 using Binance.Net.Objects.Models.Spot;
@@ -7,7 +8,6 @@ using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Exchange;
 using Domain.Exceptions;
-using Microsoft.Extensions.Logging;
 using Polly;
 using Polly.Retry;
 using System.Diagnostics;
@@ -23,7 +23,7 @@ namespace BinanceLibrary
     {
         private readonly string _reserveAssetTicker;
         private readonly BinanceRestClient _binanceClient;
-        private readonly ILogger _logger;
+        private readonly ILoggingService _logger;
         private readonly AsyncRetryPolicy _retryPolicy;
 
         // Dictionary to map Binance OrderStatus to our application OrderStatus
@@ -57,7 +57,7 @@ namespace BinanceLibrary
         /// </summary>
         /// <param name="binanceSettings">Binance API configuration settings</param>
         /// <param name="logger">Logger for recording diagnostic information</param>
-        public BinanceService(ExchangeSettings binanceSettings, ILogger logger)
+        public BinanceService(ExchangeSettings binanceSettings, ILoggingService logger)
         {
             // Input validation
             ArgumentNullException.ThrowIfNull(binanceSettings, nameof(binanceSettings));
@@ -83,8 +83,7 @@ namespace BinanceLibrary
                     retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)), // Exponential backoff
                     (ex, timeSpan, retryCount, context) =>
                     {
-                        _logger.LogWarning(ex,
-                            "Binance API call failed. Retrying {RetryCount}/3 after {RetryInterval}ms. Error: {ErrorMessage}",
+                        _logger.LogWarning("Binance API call failed. Retrying {RetryCount}/3 after {RetryInterval}ms. Error: {ErrorMessage}",
                             retryCount, timeSpan.TotalMilliseconds, ex.Message);
                     }
                 );
@@ -174,7 +173,7 @@ namespace BinanceLibrary
             {
                 // Wrap non-application exceptions
                 var message = $"Error placing Binance order: {ex.Message}";
-                _logger.LogError(ex, message);
+                _logger.LogError(message);
                 throw new ExchangeApiException(message, Name, ex);
             }
         }
@@ -236,7 +235,7 @@ namespace BinanceLibrary
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to place spot market buy order for {Symbol}", symbol);
+                _logger.LogError("Failed to place spot market buy order for {Symbol}", symbol);
                 throw; // Re-throw after logging
             }
         }
@@ -280,7 +279,7 @@ namespace BinanceLibrary
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to place spot market sell order for {Symbol}", symbol);
+                _logger.LogError("Failed to place spot market sell order for {Symbol}", symbol);
                 throw; // Re-throw after logging
             }
         }
@@ -331,7 +330,7 @@ namespace BinanceLibrary
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving exchange balances: {Message}", ex.Message);
+                _logger.LogError("Error retrieving exchange balances: {Message}", ex.Message);
                 return ResultWrapper<IEnumerable<ExchangeBalance>>.Failure(
                     FailureReason.ExchangeApiError,
                     $"Failed to retrieve exchange balances: {ex.Message}");
@@ -415,7 +414,7 @@ namespace BinanceLibrary
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error checking balance for {Ticker}: {Message}", ticker, ex.Message);
+                _logger.LogError("Error checking balance for {Ticker}: {Message}", ticker, ex.Message);
                 return ResultWrapper<bool>.FromException(ex);
             }
         }
@@ -450,7 +449,7 @@ namespace BinanceLibrary
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving order info for order ID {OrderId}: {Message}",
+                _logger.LogError("Error retrieving order info for order ID {OrderId}: {Message}",
                     orderId, ex.Message);
                 throw new OrderFetchException($"Failed to fetch order information: {ex.Message}");
             }
@@ -489,7 +488,7 @@ namespace BinanceLibrary
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving previous filled orders: {Message}", ex.Message);
+                _logger.LogError("Error retrieving previous filled orders: {Message}", ex.Message);
                 return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.FromException(ex);
             }
         }
@@ -550,7 +549,7 @@ namespace BinanceLibrary
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving exchange orders: {Message}", ex.Message);
+                _logger.LogError("Error retrieving exchange orders: {Message}", ex.Message);
                 return ResultWrapper<IEnumerable<PlacedExchangeOrder>>.Failure(
                     FailureReason.ExchangeApiError,
                     $"Failed to retrieve exchange orders: {ex.Message}");
@@ -586,7 +585,7 @@ namespace BinanceLibrary
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error fetching price for {Ticker}: {Message}", ticker, ex.Message);
+                _logger.LogError("Error fetching price for {Ticker}: {Message}", ticker, ex.Message);
                 return ResultWrapper<decimal>.FromException(ex);
             }
         }

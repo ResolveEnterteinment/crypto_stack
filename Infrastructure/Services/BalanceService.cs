@@ -1,13 +1,13 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Balance;
 using Domain.Events;
 using Domain.Models.Balance;
 using Infrastructure.Services.Base;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services
@@ -23,7 +23,7 @@ namespace Infrastructure.Services
             ICrudRepository<BalanceData> repository,
             ICacheService<BalanceData> cacheService,
             IMongoIndexService<BalanceData> indexService,
-            ILogger<BalanceService> logger,
+            ILoggingService logger,
             IEventService eventService,
             IAssetService assetService
         ) : base(
@@ -99,7 +99,7 @@ namespace Infrastructure.Services
                         var assetWr = await _assetService.GetByIdAsync(bal.AssetId);
                         if (!assetWr.IsSuccess || assetWr.Data == null)
                         {
-                            Logger.LogWarning("Asset not found for ID {AssetId}", bal.AssetId);
+                            await Logger.LogTraceAsync($"Asset not found for ID {bal.AssetId}");
                             continue;
                         }
 
@@ -187,7 +187,7 @@ namespace Infrastructure.Services
             var assetWr = await _assetService.GetByTickerAsync(p.Currency);
             if (assetWr == null || !assetWr.IsSuccess || assetWr.Data == null)
             {
-                Logger.LogError("Asset not found for currency {Currency}", p.Currency);
+                await Logger.LogTraceAsync($"Asset not found for currency {p.Currency}");
                 return;
             }
 

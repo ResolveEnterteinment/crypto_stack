@@ -1,11 +1,11 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Domain.DTOs;
 using Domain.Events;
 using Domain.Events.Entity;
 using Domain.Exceptions;
 using Domain.Models;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using System.Reflection;
 
@@ -16,7 +16,7 @@ namespace Infrastructure.Services.Base
         protected readonly ICrudRepository<T> Repository;
         protected readonly ICacheService<T> CacheService;
         protected readonly IMongoIndexService<T> IndexService;
-        protected readonly ILogger Logger;
+        protected readonly ILoggingService Logger;
         protected readonly IEventService? EventService;
 
         private static readonly IReadOnlySet<string> _validPropertyNames;
@@ -33,7 +33,7 @@ namespace Infrastructure.Services.Base
             ICrudRepository<T> repository,
             ICacheService<T> cacheService,
             IMongoIndexService<T> indexService,
-            ILogger logger,
+            ILoggingService logger,
             IEventService? eventService = null,
             IEnumerable<CreateIndexModel<T>>? indexModels = null)
         {
@@ -47,78 +47,173 @@ namespace Infrastructure.Services.Base
                 _ = IndexService.EnsureIndexesAsync(indexModels);
         }
 
-        public virtual Task<ResultWrapper<T>> GetByIdAsync(Guid id, CancellationToken ct = default)
-            => FetchCached(
+        public virtual async Task<ResultWrapper<T>> GetByIdAsync(Guid id, CancellationToken ct = default)
+        {
+            using var Scope = Logger.BeginScope("BaseService::GetByIdAsync", new Dictionary<string, object>
+            {
+                ["EntityType"] = typeof(T).Name,
+                ["EntityId"] = id,
+            });
+
+            var result = await FetchCached(
                 CacheService.GetCacheKey(id),
                 () => Repository.GetByIdAsync(id, ct),
                 TimeSpan.FromMinutes(5),
                 () => new ResourceNotFoundException(typeof(T).Name, id.ToString())
             );
 
-        public virtual Task<ResultWrapper<T>> GetOneAsync(FilterDefinition<T> filter, CancellationToken ct = default)
-            => FetchCached(
+            if (result == null || !result.IsSuccess)
+            {
+                await Logger.LogTraceAsync($"Entity not found: {result?.ErrorMessage ?? "Fetch result returned null"}");
+            }
+
+            return result;
+        }
+
+        public virtual async Task<ResultWrapper<T>> GetOneAsync(FilterDefinition<T> filter, CancellationToken ct = default)
+        {
+            using var Scope = Logger.BeginScope("BaseService::GetOneAsync", new Dictionary<string, object>
+            {
+                ["EntityType"] = typeof(T).Name,
+                ["Filter"] = filter.ToString(),
+            });
+
+            var result = await FetchCached(
                 CacheService.GetFilterCacheKey() + ":one:" + filter,
                 () => Repository.GetOneAsync(filter, ct),
                 TimeSpan.FromMinutes(5),
                 () => new KeyNotFoundException($"{typeof(T).Name} not found with specified filter.")
             );
 
-        public virtual Task<ResultWrapper<List<T>>> GetManyAsync(FilterDefinition<T> filter, CancellationToken ct = default)
-            => FetchCached(
+            if (result == null || !result.IsSuccess)
+            {
+                await Logger.LogTraceAsync($"Entity not found: {result?.ErrorMessage ?? "Fetch result returned null"}");
+            }
+
+            return result;
+        }
+
+        public async virtual Task<ResultWrapper<List<T>>> GetManyAsync(FilterDefinition<T> filter, CancellationToken ct = default)
+        {
+            using var Scope = Logger.BeginScope("BaseService::GetManyAsync", new Dictionary<string, object>
+            {
+                ["EntityType"] = typeof(T).Name,
+                ["Filter"] = filter.ToString(),
+            });
+
+            var result = await FetchCached(
                 CacheService.GetFilterCacheKey() + ":many:" + filter,
                 () => Repository.GetAllAsync(filter, ct),
                 TimeSpan.FromMinutes(5),
                 () => new KeyNotFoundException($"No {typeof(T).Name} entities found with specified filter.")
             );
 
-        public virtual Task<ResultWrapper<List<T>>> GetAllAsync(CancellationToken ct = default)
-            => FetchCached(
+            if (result == null || !result.IsSuccess)
+            {
+                await Logger.LogTraceAsync($"Entity not found: {result?.ErrorMessage ?? "Fetch result returned null"}");
+            }
+
+            return result;
+        }
+
+        public virtual async Task<ResultWrapper<List<T>>> GetAllAsync(CancellationToken ct = default)
+        {
+            using var Scope = Logger.BeginScope("BaseService::GetAllAsync", new Dictionary<string, object>
+            {
+                ["EntityType"] = typeof(T).Name,
+            });
+
+            var result = await FetchCached(
                 CacheService.GetCollectionCacheKey(),
                 () => Repository.GetAllAsync(null, ct),
                 TimeSpan.FromMinutes(5),
                 () => new KeyNotFoundException($"{typeof(T).Name} collection is empty.")
             );
 
-        public virtual Task<ResultWrapper<CrudResult>> InsertAsync(T entity, CancellationToken ct = default)
-            => SafeExecute(async () =>
+            if (result == null || !result.IsSuccess)
             {
-                Logger.LogInformation("Inserting {EntityType} {Id}", typeof(T).Name, entity.Id);
+                await Logger.LogTraceAsync($"Entity not found: {result?.ErrorMessage ?? "Fetch result returned null"}");
+            }
+
+            return result;
+        }
+
+        public virtual async Task<ResultWrapper<CrudResult>> InsertAsync(T entity, CancellationToken ct = default)
+        {
+            using var Scope = Logger.BeginScope("BaseService::InsertAsync", new Dictionary<string, object>
+            {
+                ["EntityType"] = typeof(T).Name,
+                ["Entity"] = entity,
+            });
+
+            var result = await SafeExecute(async () =>
+            {
                 CacheService.Invalidate(CacheService.GetCollectionCacheKey());
                 var crudResult = await Repository.InsertAsync(entity, ct);  // returns CrudResult with AffectedIds, etc.
                 if (crudResult == null || !crudResult.IsSuccess)
-                    throw new DatabaseException(crudResult.ErrorMessage!);
+                    throw new DatabaseException(crudResult!.ErrorMessage!);
 
                 var id = crudResult.AffectedIds.First();
                 if (EventService is not null)
-                    await EventService.Publish(new EntityCreatedEvent<T>(id, entity));
+                    await EventService.PublishAsync(new EntityCreatedEvent<T>(id, entity, Logger.Context));
                 return crudResult;
             });
 
-
-        public virtual Task<ResultWrapper<CrudResult>> UpdateAsync(Guid id, object fields, CancellationToken ct = default)
-            => SafeExecute(async () =>
+            if (result == null || !result.IsSuccess)
             {
-                Logger.LogInformation("Updating {EntityType} {Id}", typeof(T).Name, id);
-                CacheService.Invalidate(CacheService.GetCacheKey(id));
-                CacheService.Invalidate(CacheService.GetCollectionCacheKey());
+                await Logger.LogTraceAsync($"Failed to insert: {result?.ErrorMessage ?? "Insert result returned null"}");
+            }
 
-                // ensure the entity exists (will throw if not)
-                var toUpdate = await Repository.GetByIdAsync(id, ct)
-                    ?? throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
+            return result;
+        }
 
-                var crudResult = await Repository.UpdateAsync(id, fields, ct);
-                if (!crudResult.IsSuccess)
-                    throw new DatabaseException(crudResult.ErrorMessage!);
 
-                var updated = await Repository.GetByIdAsync(id, ct);
-                await EventService?.Publish(new EntityUpdatedEvent<T>(id, updated!));
-                return crudResult;
+        public virtual async Task<ResultWrapper<CrudResult>> UpdateAsync(Guid id, object fields, CancellationToken ct = default)
+        {
+            using (Logger.BeginScope("BaseService::UpdateAsync", new Dictionary<string, object>
+            {
+                ["EntityType"] = typeof(T).Name,
+                ["EntityId"] = id,
+                ["Fields"] = fields,
+            }))
+            {
+                var result = await SafeExecute(async () =>
+                {
+                    CacheService.Invalidate(CacheService.GetCacheKey(id));
+                    CacheService.Invalidate(CacheService.GetCollectionCacheKey());
+
+                    // ensure the entity exists (will throw if not)
+                    var toUpdate = await Repository.GetByIdAsync(id, ct)
+                        ?? throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
+
+                    var crudResult = await Repository.UpdateAsync(id, fields, ct);
+                    if (!crudResult.IsSuccess)
+                        throw new DatabaseException(crudResult.ErrorMessage!);
+
+                    var updated = await Repository.GetByIdAsync(id, ct);
+                    await EventService?.PublishAsync(new EntityUpdatedEvent<T>(id, updated!, Logger.Context));
+                    return crudResult;
+                });
+
+                if (result == null || !result.IsSuccess)
+                {
+                    await Logger.LogTraceAsync($"Failed to update: {result?.ErrorMessage ?? "Update result returned null"}");
+                }
+
+                return result;
+            }
+        }
+
+        public virtual async Task<ResultWrapper<CrudResult>> DeleteAsync(Guid id, CancellationToken ct = default)
+        {
+            using var Scope = Logger.BeginScope("BaseService::DeleteAsync", new Dictionary<string, object>
+            {
+                ["EntityType"] = typeof(T).Name,
+                ["EntityId"] = id,
             });
 
-        public virtual Task<ResultWrapper<CrudResult>> DeleteAsync(Guid id, CancellationToken ct = default)
-            => SafeExecute(async () =>
+            var result = await SafeExecute(async () =>
             {
-                Logger.LogInformation("Deleting {EntityType} {Id}", typeof(T).Name, id);
                 CacheService.Invalidate(CacheService.GetCacheKey(id));
                 CacheService.Invalidate(CacheService.GetCollectionCacheKey());
 
@@ -128,16 +223,33 @@ namespace Infrastructure.Services.Base
 
                 var crudResult = await Repository.DeleteAsync(id, ct);
                 if (!crudResult.IsSuccess)
+                {
+                    await Logger.LogTraceAsync($"Failed to delete record: {toDelete.Id}");
                     throw new DatabaseException(crudResult.ErrorMessage!);
+                }
 
-                await EventService?.Publish(new EntityDeletedEvent<T>(id, toDelete));
+                await EventService?.PublishAsync(new EntityDeletedEvent<T>(id, toDelete, Logger.Context));
                 return crudResult;
             });
 
-        public virtual Task<ResultWrapper<CrudResult<T>>> DeleteManyAsync(FilterDefinition<T> filter, CancellationToken ct = default)
-            => SafeExecute(async () =>
+            if (result == null || !result.IsSuccess)
             {
-                Logger.LogInformation("Deleting many {EntityType} where {Filter}", typeof(T).Name, filter);
+                await Logger.LogTraceAsync($"Failed to delete: {result?.ErrorMessage ?? "Delete result returned null"}");
+            }
+
+            return result;
+        }
+
+        public virtual async Task<ResultWrapper<CrudResult<T>>> DeleteManyAsync(FilterDefinition<T> filter, CancellationToken ct = default)
+        {
+            using var Scope = Logger.BeginScope("BaseService::DeleteManyAsync", new Dictionary<string, object>
+            {
+                ["EntityType"] = typeof(T).Name,
+                ["Filter"] = filter,
+            });
+
+            var result = await SafeExecute(async () =>
+            {
                 // invalidate all affected caches
                 var toDelete = await Repository.GetAllAsync(filter, ct)
                     ?? throw new ResourceNotFoundException(typeof(T).Name, filter.ToString());
@@ -150,26 +262,54 @@ namespace Infrastructure.Services.Base
                 if (!crudResult.IsSuccess)
                     throw new DatabaseException(crudResult.ErrorMessage!);
 
-                await EventService?.Publish(new CollectionDeletedEvent<T>(toDelete));
+                await EventService?.PublishAsync(new CollectionDeletedEvent<T>(toDelete, Logger.Context));
                 return crudResult;
             });
 
-        public virtual Task<ResultWrapper<bool>> ExistsAsync(Guid id, CancellationToken cancellationToken = default)
-            => SafeExecute(async () =>
+            if (result == null || !result.IsSuccess)
+            {
+                await Logger.LogTraceAsync($"Failed to delete: {result?.ErrorMessage ?? "Delete result returned null"}");
+            }
+
+            return result;
+        }
+        public virtual async Task<ResultWrapper<bool>> ExistsAsync(Guid id, CancellationToken cancellationToken = default)
+        {
+            using var Scope = Logger.BeginScope("BaseService::ExistsAsync", new Dictionary<string, object>
+            {
+                ["EntityType"] = typeof(T).Name,
+                ["EntityId"] = id,
+            });
+
+            var result = await SafeExecute(async () =>
             {
                 if (CacheService.TryGetValue(CacheService.GetCacheKey(id), out T _))
                     return true;
                 return await Repository.CheckExistsAsync(id, cancellationToken);
             });
 
-        public virtual Task<ResultWrapper<PaginatedResult<T>>> GetPaginatedAsync(
+            if (result == null || !result.IsSuccess)
+            {
+                await Logger.LogTraceAsync($"Failed to check exists: {result?.ErrorMessage ?? "Check exists result returned null"}");
+            }
+
+            return result;
+        }
+
+        public async virtual Task<ResultWrapper<PaginatedResult<T>>> GetPaginatedAsync(
             FilterDefinition<T> filter,
             int page = 1,
             int pageSize = 20,
             string sortField = null,
             bool sortAscending = false,
             CancellationToken cancellationToken = default)
-            => SafeExecute(async () =>
+        {
+            using var Scope = Logger.BeginScope("BaseService::GetPaginatedAsync", new Dictionary<string, object>
+            {
+                ["EntityType"] = typeof(T).Name,
+            });
+
+            var result = await SafeExecute(async () =>
             {
                 page = Math.Max(1, page);
                 pageSize = Math.Clamp(pageSize, 1, 100);
@@ -181,6 +321,14 @@ namespace Infrastructure.Services.Base
                 var items = await Repository.GetPaginatedAsync(filter, sortDef, page, pageSize, cancellationToken);
                 return items;
             });
+
+            if (result == null || !result.IsSuccess || result.Data == null)
+            {
+                await Logger.LogTraceAsync($"Failed to get paginated data: {result?.ErrorMessage ?? "Fetch result returned null"}");
+            }
+
+            return result?.Data!;
+        }
 
         public async Task<TResult> ExecuteInTransactionAsync<TResult>(
             Func<IClientSessionHandle, Task<TResult>> action,
@@ -210,18 +358,22 @@ namespace Infrastructure.Services.Base
             }
             catch (MongoWriteException mwx) when (mwx.WriteError.Category == ServerErrorCategory.DuplicateKey)
             {
+                Logger.LogError($"Safe execute error: {mwx.Message}");
                 return ResultWrapper<TResult>.FromException(new ConcurrencyException(typeof(T).Name, mwx.Message));
             }
             catch (MongoCommandException mcx)
             {
+                Logger.LogError($"Safe execute error: {mcx.Message}");
                 return ResultWrapper<TResult>.FromException(new DatabaseException(mcx.Message, mcx));
             }
             catch (TimeoutException tex)
             {
+                Logger.LogError($"Safe execute error: {tex.Message}");
                 return ResultWrapper<TResult>.FromException(new DatabaseException(tex.Message, tex));
             }
             catch (Exception ex)
             {
+                Logger.LogError($"Safe execute error: {ex.Message}");
                 return ResultWrapper<TResult>.FromException(new DatabaseException(ex.Message, ex));
             }
         }
@@ -247,6 +399,7 @@ namespace Infrastructure.Services.Base
             }
             catch (Exception ex)
             {
+                Logger.LogError($"Fetch cached error: {ex.Message}");
                 return ResultWrapper<TItem>.FromException(ex);
             }
         }
