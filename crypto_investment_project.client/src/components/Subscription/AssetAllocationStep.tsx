@@ -1,4 +1,3 @@
-// src/components/Subscription/AssetAllocationStep.tsx
 import React from 'react';
 import IAsset from '../../interfaces/IAsset';
 import IAllocation from '../../interfaces/IAllocation';
@@ -6,7 +5,7 @@ import AssetAllocationForm from './AssetAllocationForm';
 
 interface AssetAllocationStepProps {
     formData: {
-        allocations: Omit<IAllocation, 'id'>[];
+        allocations: IAllocation[];
         [key: string]: any;
     };
     updateFormData: (field: string, value: any) => void;
@@ -23,7 +22,7 @@ const AssetAllocationStep: React.FC<AssetAllocationStepProps> = ({
     error = null
 }) => {
     // Handler for when allocations change
-    const handleAllocationChange = (allocations: Omit<IAllocation, 'id'>[]) => {
+    const handleAllocationChange = (allocations: IAllocation[]) => {
         updateFormData('allocations', allocations);
     };
 

@@ -1,5 +1,6 @@
 // src/services/api.ts
 import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from "axios";
+import ITraceLogNode from "../interfaces/TraceLog/ITraceLogNode";
 
 // API configuration
 const API_CONFIG = {
@@ -369,6 +370,15 @@ const api = {
         await csrfTokenManager.initialize();
     }
 };
+
+// Fetch trace tree
+export const getTraceTree = () =>
+    api.get<ITraceLogNode[]>('/Trace/tree');
+
+// Submit resolution for a log entry
+export const resolveTraceLog = (id: string, comment: string) =>
+    api.post(`/Trace/resolve/${id}`, comment);
+
 
 // Add event listener for auth events
 window.addEventListener('auth:tokenExpired', async () => {

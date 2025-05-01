@@ -150,7 +150,6 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="422">If the request validation fails</response>
         [HttpPost]
         [Route("new")]
-        //[ValidateAntiForgeryToken]
         [Authorize(Roles = "USER")]
         [EnableRateLimiting("heavyOperations")]
         [ProducesResponseType(StatusCodes.Status201Created)]

@@ -3,6 +3,7 @@ using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
+using Domain.Constants.Logging;
 using Domain.DTOs;
 using Domain.DTOs.Payment;
 using Domain.Exceptions;
@@ -111,7 +112,7 @@ namespace Infrastructure.Services.Payment
                 string.IsNullOrEmpty(subscriptionId) ||
                 !Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
             {
-                await _logger.LogTraceAsync("Missing or invalid subscriptionId in Invoice metadata", "Extract subscription ID from metadata", true);
+                await _logger.LogTraceAsync("Missing or invalid subscriptionId in Invoice metadata", "Extract subscription ID from metadata", LogLevel.Error, true);
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing or invalid subscriptionId in Invoice metadata");
             }
 
@@ -119,7 +120,7 @@ namespace Infrastructure.Services.Payment
             if (!metadata.TryGetValue("userId", out var userId) ||
                 string.IsNullOrEmpty(userId))
             {
-                await _logger.LogTraceAsync("Missing or invalid userId in Invoice metadata", "Extract subscription ID from metadata", true);
+                await _logger.LogTraceAsync("Missing or invalid userId in Invoice metadata", "Extract subscription ID from metadata", LogLevel.Error, true);
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing userId in Invoice metadata");
             }
 
@@ -180,7 +181,7 @@ namespace Infrastructure.Services.Payment
                 string.IsNullOrEmpty(subscriptionId) ||
                 !Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
             {
-                await _logger.LogTraceAsync("Missing or invalid subscriptionId in Invoice metadata", "Extract subscription ID from metadata", true);
+                await _logger.LogTraceAsync("Missing or invalid subscriptionId in Invoice metadata", "Extract subscription ID from metadata", LogLevel.Error, true);
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing or invalid subscriptionId in Invoice metadata");
             }
 
@@ -188,7 +189,7 @@ namespace Infrastructure.Services.Payment
             if (!metadata.TryGetValue("userId", out var userId) ||
                 string.IsNullOrEmpty(userId))
             {
-                await _logger.LogTraceAsync("Missing or invalid userId in Invoice metadata", "Extract user ID from metadata", true);
+                await _logger.LogTraceAsync("Missing or invalid userId in Invoice metadata", "Extract user ID from metadata", LogLevel.Error, true);
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing userId in Invoice metadata");
             }
 

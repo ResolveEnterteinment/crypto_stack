@@ -1,5 +1,4 @@
-// src/components/Subscription/ReviewStep.jsx
-import React from 'react';
+import IAllocation from '../../interfaces/IAllocation';
 
 // Define interval display mapping
 const INTERVAL_DISPLAY = {
@@ -29,7 +28,7 @@ const ReviewStep = ({ formData }) => {
     const { interval, amount, currency, endDate, allocations } = formData;
 
     // Format date for display
-    const formatDate = (date) => {
+    const formatDate = (date: Date) => {
         if (!date) return 'Ongoing (until cancelled)';
         return new Date(date).toLocaleDateString('en-US', {
             year: 'numeric',
@@ -118,12 +117,12 @@ const ReviewStep = ({ formData }) => {
 
                 {/* Visual representation of allocation */}
                 <div className="mb-4 h-8 bg-gray-200 rounded-full overflow-hidden flex">
-                    {allocations.map(allocation => (
+                    {allocations.map((allocation: IAllocation) => (
                         <div
                             key={allocation.assetId}
                             style={{
                                 width: `${allocation.percentAmount}%`,
-                                backgroundColor: getAssetColor(allocation.assetTicker)
+                                backgroundColor: getAssetColor(allocation.ticker)
                             }}
                             className="h-full"
                         />
@@ -132,14 +131,14 @@ const ReviewStep = ({ formData }) => {
 
                 {/* Allocation details */}
                 <div className="space-y-3 mt-4">
-                    {allocations.map(allocation => (
+                    {allocations.map((allocation: IAllocation) => (
                         <div key={allocation.assetId} className="flex justify-between items-center border-b border-gray-200 pb-2">
                             <div className="flex items-center">
                                 <div
                                     className="w-4 h-4 rounded-full mr-2"
-                                    style={{ backgroundColor: getAssetColor(allocation.assetTicker) }}
+                                    style={{ backgroundColor: getAssetColor(allocation.ticker) }}
                                 />
-                                <span className="font-medium">{allocation.assetName} ({allocation.assetTicker})</span>
+                                <span className="font-medium">{allocation.assetName} ({allocation.ticker})</span>
                             </div>
                             <div className="flex items-center">
                                 <span className="font-medium">{allocation.percentAmount}%</span>

@@ -1,17 +1,18 @@
 ﻿using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Domain.Models;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 
 public class CacheService<T> : ICacheService<T> where T : BaseEntity
 {
     private readonly IMemoryCache _cache;
-    private readonly ILogger<CacheService<T>> _logger;
+    private readonly ILoggingService _logger;
     private static readonly TimeSpan DefaultDuration = TimeSpan.FromMinutes(5);
 
     public CacheService(
         IMemoryCache cache,
-        ILogger<CacheService<T>> logger)
+        ILoggingService logger)
     {
         _cache = cache;
         _logger = logger;
@@ -24,14 +25,17 @@ public class CacheService<T> : ICacheService<T> where T : BaseEntity
     {
         if (_cache.TryGetValue(key, out T? cached))
         {
-            _logger.LogDebug("Cache {Action} for {Type}:{Key}", "hit", typeof(T).Name, key);
+            _logger.LogInformation("Cache {Action} for {Type}:{Key}", "hit", typeof(T).Name, key);
             return cached;
         }
 
-        _logger.LogDebug("Cache {Action} for {Type}:{Key}", "missed", typeof(T).Name, key);
+        _logger.LogInformation("Cache {Action} for {Type}:{Key}", "missed", typeof(T).Name, key);
         var item = await factory();
         if (item is not null)
+        {
             _cache.Set(key, item, duration ?? DefaultDuration);
+            _logger.LogInformation($"Cache {key} set to {item.ToJson()}");
+        }
 
         return item;
     }
@@ -43,15 +47,18 @@ public class CacheService<T> : ICacheService<T> where T : BaseEntity
     {
         if (_cache.TryGetValue(key, out List<T>? cached))
         {
-            _logger.LogDebug("Cache {Action} for {Type}:{Key}", "hit", typeof(T).Name, key);
+            _logger.LogInformation("Cache {Action} for {Type}:{Key}", "hit", typeof(T).Name, key);
             return cached!;
         }
 
-        _logger.LogDebug("Cache {Action} for {Type}:{Key}", "missed", typeof(T).Name, key);
+        _logger.LogInformation("Cache {Action} for {Type}:{Key}", "missed", typeof(T).Name, key);
 
         var collection = await factory();
         if (collection is not null)
+        {
             _cache.Set(key, collection, duration ?? DefaultDuration);
+            _logger.LogInformation($"Cache {key} set to {collection.ToJson()}");
+        }
 
         return collection;
     }
@@ -63,14 +70,17 @@ public class CacheService<T> : ICacheService<T> where T : BaseEntity
     {
         if (_cache.TryGetValue(key, out TItem? cached))
         {
-            _logger.LogDebug("Cache {Action} for {Type}:{Key}", "hit", typeof(T).Name, key);
+            _logger.LogInformation("Cache {Action} for {Type}: {Key}", "hit", typeof(T).Name, key);
             return cached;
         }
 
-        _logger.LogDebug("Cache {Action} for {Type}:{Key}", "missed", typeof(T).Name, key);
+        _logger.LogInformation("Cache {Action} for {Type}: {Key}", "missed", typeof(T).Name, key);
         var item = await factory();
         if (item is not null)
+        {
             _cache.Set(key, item, duration ?? DefaultDuration);
+            _logger.LogInformation($"Cache {key} set to {item.ToJson()}");
+        }
 
         return item;
     }

@@ -1,10 +1,9 @@
-﻿using Application.Interfaces.Logging;
-using Domain.DTOs.Settings;
+﻿using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Domain.Models.Logging;
 using Infrastructure.Utilities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Serilog.Context;
 using System.Diagnostics;
@@ -15,8 +14,9 @@ namespace Infrastructure.Services.Logging
     {
         private readonly ILogger<LoggingService> _logger;
         private readonly IHttpContextAccessor _httpAccessor;
-        private readonly IMongoCollection<TraceLog> _collection;
         private readonly AsyncLocal<Dictionary<string, object?>> _currentContext = new();
+
+        private readonly ICrudRepository<TraceLogData> Repository;
 
         public IDictionary<string, object?> Context
             => _currentContext.Value ?? new Dictionary<string, object?>();
@@ -24,13 +24,11 @@ namespace Infrastructure.Services.Logging
         public LoggingService(
             ILogger<LoggingService> logger,
             IHttpContextAccessor httpAccessor,
-            IMongoClient client,
-            IOptions<MongoDbSettings> mongoSettings)
+            ICrudRepository<TraceLogData> repository)
         {
             _logger = logger;
             _httpAccessor = httpAccessor;
-            var db = client.GetDatabase(mongoSettings.Value.DatabaseName);
-            _collection = db.GetCollection<TraceLog>("TraceLogs");
+            Repository = repository;
         }
 
         public IDisposable BeginScope() =>
@@ -90,7 +88,8 @@ namespace Infrastructure.Services.Logging
         };
             foreach (var kv in tags)
                 disposables.Add(LogContext.PushProperty(kv.Key, kv.Value ?? "null"));
-
+            var scopeName = operationName ?? $"{_httpAccessor.HttpContext.Request.RouteValues["controller"]}/{_httpAccessor.HttpContext.Request.RouteValues["action"]}";
+            LogTraceAsync($"Started scope {scopeName}", level: Domain.Constants.Logging.LogLevel.Trace).GetAwaiter().GetResult();
             return new DisposableCollection(disposables);
         }
 
@@ -117,12 +116,13 @@ namespace Infrastructure.Services.Logging
                 }
             }
 
-            LogTraceAsync($"Enriching {activity.DisplayName} scope", "EnrichScope").GetAwaiter().GetResult();
+            var scopeName = activity.DisplayName ?? $"{_httpAccessor.HttpContext.Request.RouteValues["controller"]}/{_httpAccessor.HttpContext.Request.RouteValues["action"]}";
+            LogTraceAsync($"Enriching scope {scopeName} ", level: Domain.Constants.Logging.LogLevel.Trace).GetAwaiter().GetResult();
 
             return new DisposableCollection(disposables);
         }
 
-        public async Task LogTraceAsync(string message, string? action = null, bool requiresResolution = false, HttpContext? context = null)
+        public async Task LogTraceAsync(string message, string? action = null, Domain.Constants.Logging.LogLevel level = Domain.Constants.Logging.LogLevel.Information, bool requiresResolution = false, HttpContext? context = null)
         {
             var correlation = GetCorrelation();
             context ??= _httpAccessor.HttpContext;
@@ -161,22 +161,19 @@ namespace Infrastructure.Services.Logging
             else
                 contextData.Remove("parent.correlation.id");
 
-            var log = new TraceLog
+            var log = new TraceLogData
             {
                 CorrelationId = correlation?.CorrelationId,
                 ParentCorrelationId = correlation?.ParentCorrelationId,
                 Message = message,
-                Level = LogLevel.Trace,
+                Level = level,
                 Operation = operation,
                 Context = contextData.Any() ? contextData : null,
                 RequiresResolution = requiresResolution
             };
 
-
             _logger.Log(LogLevel.Trace, "{@TraceLog}", log);
-            await _collection.InsertOneAsync(log);
-
-
+            await Repository.InsertAsync(log);
         }
 
         public void LogInformation(string message) => _logger.LogInformation(message);
@@ -215,7 +212,6 @@ namespace Infrastructure.Services.Logging
                         .GetProperties()
                         .ToDictionary(p => p.Name, p => p.GetValue(state));
         }
-
 
         private class DisposableCollection : IDisposable
         {

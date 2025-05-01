@@ -1,6 +1,7 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
@@ -13,7 +14,6 @@ using Domain.Models.Exchange;
 using Domain.Models.Payment;
 using Domain.Models.Transaction;
 using MediatR;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using Polly;
 using System.Diagnostics;
@@ -35,7 +35,7 @@ namespace Infrastructure.Services.Exchange
         private readonly IOrderManagementService _orderManagementService;
         private readonly IEventService _eventService;
         private readonly IIdempotencyService _idempotencyService;
-        private readonly ILogger<PaymentProcessingService> _logger;
+        private readonly ILoggingService _logger;
 
         public PaymentProcessingService(
             ISubscriptionService subscriptionService,
@@ -48,7 +48,7 @@ namespace Infrastructure.Services.Exchange
             IOrderManagementService orderManagementService,
             IEventService eventService,
             IIdempotencyService idempotencyService,
-            ILogger<PaymentProcessingService> logger)
+            ILoggingService logger)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
@@ -76,9 +76,6 @@ namespace Infrastructure.Services.Exchange
                 ["UserId"] = notification.Payment.UserId
             });
 
-            _logger.LogInformation("Processing payment event {EventId} for payment {PaymentId}",
-                notification.EventId, notification.Payment.Id);
-
             try
             {
                 // Check for idempotency to avoid double processing
@@ -87,7 +84,7 @@ namespace Infrastructure.Services.Exchange
 
                 if (exists)
                 {
-                    _logger.LogInformation("Payment event {EventId} already processed", notification.EventId);
+                    _logger.LogWarning("Payment event {EventId} already processed", notification.EventId);
                     return;
                 }
 
@@ -99,7 +96,7 @@ namespace Infrastructure.Services.Exchange
                         retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
                         onRetry: (ex, retryCount, context) =>
                         {
-                            _logger.LogWarning(ex, "Retry {RetryCount}/3 processing payment {PaymentId}",
+                            _logger.LogWarning("Retry {RetryCount}/3 processing payment {PaymentId}",
                                 retryCount, notification.Payment.Id);
                         });
 
@@ -115,10 +112,9 @@ namespace Infrastructure.Services.Exchange
                             string errorDetails = string.Join(", ", failedOrders.Select(o =>
                                 $"Asset {o.AssetId}: {o.ErrorMessage}"));
 
-                            throw new PaymentApiException(
+                            throw new ExchangeApiException(
                                 $"Failed to process orders: {errorDetails}",
-                                notification.Payment.Provider,
-                                notification.Payment.PaymentProviderId);
+                                notification.Payment.Provider);
                         }
                     }
                 });
@@ -137,8 +133,9 @@ namespace Infrastructure.Services.Exchange
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to process PaymentReceivedEvent for PaymentId: {PaymentId}",
-                    notification.Payment.Id);
+                await _logger.LogTraceAsync($"Failed to process PaymentReceivedEvent for payment ID {notification.Payment.Id}: {ex.Message}",
+                    level: Domain.Constants.Logging.LogLevel.Error,
+                    requiresResolution: true);
 
                 // Mark event as failed but not processed so it can be retried
                 await _eventService.UpdateAsync(notification.EventId, new
@@ -151,8 +148,9 @@ namespace Infrastructure.Services.Exchange
                 if (ex is DatabaseException || ex is ExchangeApiException)
                 {
                     // TODO: Add alerting mechanism for critical failures
-                    _logger.LogCritical(ex, "Critical failure processing payment {PaymentId}",
-                        notification.Payment.Id);
+                    await _logger.LogTraceAsync($"Critical failure processing payment ID {notification.Payment.Id}: {ex.Message}",
+                    level: Domain.Constants.Logging.LogLevel.Error,
+                    requiresResolution: true);
                 }
             }
         }
@@ -163,12 +161,11 @@ namespace Infrastructure.Services.Exchange
         public async Task<ResultWrapper<IEnumerable<OrderResult>>> ProcessPayment(PaymentData payment)
         {
             var activityId = Activity.Current?.Id ?? Guid.NewGuid().ToString();
-            using var scope = _logger.BeginScope(new Dictionary<string, object>
+            using var scope = _logger.BeginScope(new
             {
-                ["ActivityId"] = activityId,
-                ["PaymentId"] = payment.Id,
-                ["UserId"] = payment.UserId,
-                ["Amount"] = payment.NetAmount
+                PaymentId = payment.Id,
+                Amount = payment.NetAmount,
+                Currency = payment.Currency
             });
 
             var orderResults = new List<OrderResult>();
@@ -216,6 +213,11 @@ namespace Infrastructure.Services.Exchange
                 // Process each allocation
                 foreach (var alloc in fetchAllocationsResult.Data)
                 {
+                    using var allocationScope = _logger.BeginScope(new
+                    {
+                        Allocation = alloc,
+                    });
+
                     string assetId = alloc.AssetId.ToString();
                     try
                     {
@@ -375,11 +377,13 @@ namespace Infrastructure.Services.Exchange
                             var updateBalanceResult = await _balanceService.UpsertBalanceAsync(
                                 payment.UserId, balanceUpdate, session);
 
-                            if (updateBalanceResult is null || !updateBalanceResult.IsSuccess)
+                            if (updateBalanceResult is null || !updateBalanceResult.IsSuccess || updateBalanceResult.Data is null)
                             {
                                 throw new DatabaseException(
                                     $"Failed to update balances: {updateBalanceResult?.ErrorMessage ?? "Unknown error"}");
                             }
+
+                            var balance = updateBalanceResult.Data;
 
                             // Record the transaction
                             var transaction = new TransactionData
@@ -387,10 +391,10 @@ namespace Infrastructure.Services.Exchange
                                 UserId = payment.UserId,
                                 PaymentProviderId = payment.PaymentProviderId,
                                 SubscriptionId = payment.SubscriptionId,
-                                BalanceId = updateBalanceResult.Data.Id,
+                                BalanceId = balance.Id,
                                 SourceName = exchange.Name,
                                 SourceId = placedOrder.OrderId.ToString(),
-                                Action = $"Exchange Order: Buy {asset.Ticker}",
+                                Action = $"Exchange Order: Buy",
                                 Quantity = placedOrder.QuantityFilled
                             };
 
@@ -419,7 +423,9 @@ namespace Infrastructure.Services.Exchange
                     {
                         var failureReason = FailureReasonExtensions.FromException(ex);
                         orderResults.Add(OrderResult.Failure(assetId, failureReason, ex.Message));
-                        _logger.LogError(ex, "Failed to process order for asset {AssetId}: {Message}", assetId, ex.Message);
+                        await _logger.LogTraceAsync($"Failed to process order for asset {assetId}: {ex.Message}",
+                            level: Domain.Constants.Logging.LogLevel.Critical,
+                            requiresResolution: true);
 
                         // Don't rethrow here - we'll continue with other allocations
                     }
@@ -440,13 +446,8 @@ namespace Infrastructure.Services.Exchange
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to process payment {PaymentId}: {Message}", payment.Id, ex.Message);
-                return ResultWrapper<IEnumerable<OrderResult>>.Failure(
-                    FailureReasonExtensions.FromException(ex),
-                    ex.Message,
-                    null,
-                    null,
-                    ex.StackTrace);
+                _logger.LogError("Failed to process payment {PaymentId}: {Message}", payment.Id, ex.Message);
+                return ResultWrapper<IEnumerable<OrderResult>>.FromException(ex);
             }
         }
 
@@ -525,7 +526,9 @@ namespace Infrastructure.Services.Exchange
                         catch (Exception ex)
                         {
                             await session.AbortTransactionAsync();
-                            _logger.LogError(ex, "Transaction failed for payment {PaymentId}", payment.Id);
+                            _logger.LogError("Transaction failed for payment {PaymentId}: {ErrorMessage}",
+                                payment.Id,
+                                ex.Message);
                             throw;
                         }
                     });
@@ -533,7 +536,9 @@ namespace Infrastructure.Services.Exchange
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to process payment {PaymentId}", payment.Id);
+                    _logger.LogError("Failed to process payment {PaymentId}: {ErrorMessage}",
+                        payment.Id,
+                        ex.Message);
                     return ResultWrapper<bool>.FromException(ex);
                 }
             }

@@ -61,7 +61,7 @@ namespace crypto_investment_project.Server.Controllers
 
                 if (string.IsNullOrEmpty(signature))
                 {
-                    await _logger.LogTraceAsync("Missing Stripe-Signature header", requiresResolution: true);
+                    await _logger.LogTraceAsync("Missing Stripe-Signature header", level: Domain.Constants.Logging.LogLevel.Error, requiresResolution: true);
                     return BadRequest(new { error = "Missing signature header" });
                 }
 
@@ -85,7 +85,7 @@ namespace crypto_investment_project.Server.Controllers
 
                 if (await _idempotencyService.HasKeyAsync(idempotencyKey))
                 {
-                    await _logger.LogTraceAsync($"Duplicate Stripe event detected: {stripeEventId}", requiresResolution: true);
+                    await _logger.LogTraceAsync($"Duplicate Stripe event detected: {stripeEventId}", level: Domain.Constants.Logging.LogLevel.Warning);
                     throw new IdempotencyException(idempotencyKey);
                 }
 
@@ -117,7 +117,7 @@ namespace crypto_investment_project.Server.Controllers
             }
             catch (StripeException ex)
             {
-                await _logger.LogTraceAsync($"Stripe exception occurred: {ex.Message}", requiresResolution: true);
+                _logger.LogError($"Stripe exception occurred: {ex.Message}");
 
                 if (ex.StripeError?.Type == "invalid_request_error")
                 {
@@ -134,7 +134,7 @@ namespace crypto_investment_project.Server.Controllers
             }
             catch (Exception ex)
             {
-                await _logger.LogTraceAsync($"Unexpected error processing webhook: {ex.Message}", requiresResolution: true);
+                await _logger.LogTraceAsync($"Unexpected error processing webhook: {ex.Message}", level: Domain.Constants.Logging.LogLevel.Error);
 
                 return Ok(); // Return OK to Stripe even if internal error happened to avoid retries
             }

@@ -27,6 +27,9 @@ builder.Host.UseSerilog();
 // Build the application
 var app = builder.Build();
 
+// Initialize default roles
+app.InitializeDefaultRoles();
+
 // Configure the HTTP request pipeline
 app.UseGlobalExceptionHandling();
 app.UseTraceContext();

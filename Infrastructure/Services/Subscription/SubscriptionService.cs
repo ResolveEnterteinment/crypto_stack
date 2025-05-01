@@ -6,6 +6,7 @@ using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
+using Domain.Constants.Logging;
 using Domain.DTOs;
 using Domain.DTOs.Subscription;
 using Domain.Events;
@@ -275,15 +276,15 @@ namespace Infrastructure.Services.Subscription
                 async () =>
                 {
                     var filter = Builders<SubscriptionData>.Filter.Eq(x => x.UserId, userId);
-                    var allWr = await GetManyAsync(filter);
-                    if (allWr == null || !allWr.IsSuccess)
+                    var allWr = await Repository.GetAllAsync(filter);
+                    if (allWr == null)
                     {
-                        throw new SubscriptionFetchException($"Failed to fetch subscriptions for user {userId.ToString()}");
+                        throw new SubscriptionFetchException($"Failed to fetch subscriptions for user {userId}");
 
                     }
                     var list = new List<SubscriptionDto>();
 
-                    foreach (var sub in allWr.Data)
+                    foreach (var sub in allWr)
                     {
                         var allocs = new List<AllocationDto>();
                         foreach (var a in sub.Allocations)
@@ -606,7 +607,7 @@ namespace Infrastructure.Services.Subscription
             }))
             {
                 await Logger.LogTraceAsync("Started scope TestLog");
-                await Logger.LogTraceAsync("Testing LogTrace system.", "TestLog", true);
+                await Logger.LogTraceAsync("Testing LogTrace system.", "TestLog", LogLevel.Error, true);
             }
         }
     }

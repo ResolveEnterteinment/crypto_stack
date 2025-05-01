@@ -138,7 +138,7 @@ public static class CoreServicesExtensions
         services.AddSingleton(typeof(IMongoIndexService<>), typeof(MongoIndexService<>));
         services.AddScoped<IEncryptionService, Encryption.Services.EncryptionService>();
 
-        services.AddSingleton<ILoggingService, LoggingService>();
+        services.AddScoped<ILoggingService, LoggingService>();
 
         // 2) Your existing registrations
         services.AddScoped<IExchangeService, ExchangeService>();
@@ -156,6 +156,7 @@ public static class CoreServicesExtensions
         services.AddScoped<IDashboardService, DashboardService>();
         services.AddScoped<IAuthenticationService, AuthenticationService>();
         services.AddScoped<IUserService, UserService>();
+        services.AddScoped<ILogExplorerService, LogExplorerService>();
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IIdempotencyService, IdempotencyService>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();

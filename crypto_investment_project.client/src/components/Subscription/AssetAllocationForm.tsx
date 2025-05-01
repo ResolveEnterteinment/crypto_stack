@@ -6,8 +6,8 @@ import IAllocation from '../../interfaces/IAllocation';
 
 interface AssetAllocationFormProps {
     availableAssets: IAsset[];
-    allocations: Omit<IAllocation, 'id'>[];
-    onChange: (allocations: Omit<IAllocation, 'id'>[]) => void;
+    allocations: IAllocation[];
+    onChange: (allocations: IAllocation[]) => void;
     isLoading?: boolean;
     error?: string | null;
 }
@@ -83,10 +83,10 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
 
         const selectedAsset = getAssetById(selectedAssetId);
         if (selectedAsset) {
-            const newAllocation: Omit<IAllocation, 'id'> = {
+            const newAllocation: IAllocation = {
                 assetId: selectedAsset.id,
                 assetName: selectedAsset.name,
-                assetTicker: selectedAsset.ticker,
+                ticker: selectedAsset.ticker,
                 percentAmount: percentAmount
             };
 
@@ -219,10 +219,10 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                                 key={allocation.assetId}
                                 style={{
                                     width: `${allocation.percentAmount}%`,
-                                    backgroundColor: getAssetColor(allocation.assetTicker)
+                                    backgroundColor: getAssetColor(allocation.ticker)
                                 }}
                                 className="h-full"
-                                title={`${allocation.assetTicker}: ${allocation.percentAmount.toFixed(1)}%`}
+                                title={`${allocation.ticker}: ${allocation.percentAmount.toFixed(1)}%`}
                             />
                         ))}
                     </div>
@@ -234,9 +234,9 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                                 <div className="flex items-center">
                                     <div
                                         className="w-4 h-4 rounded-full mr-2"
-                                        style={{ backgroundColor: getAssetColor(allocation.assetTicker) }}
+                                        style={{ backgroundColor: getAssetColor(allocation.ticker) }}
                                     />
-                                    <span className="font-medium">{allocation.assetName} ({allocation.assetTicker})</span>
+                                    <span className="font-medium">{allocation.assetName} ({allocation.ticker})</span>
                                 </div>
 
                                 <div className="flex items-center space-x-4">

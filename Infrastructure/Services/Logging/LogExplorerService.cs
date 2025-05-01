@@ -1,42 +1,73 @@
-﻿using Domain.Models.Logging;
-using Microsoft.Extensions.Configuration;
+﻿using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
+using Domain.Constants.Logging;
+using Domain.DTOs;
+using Domain.Models.Logging;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services.Logging
 {
-    public class LogExplorerService
+    public class LogExplorerService : ILogExplorerService
     {
-        private readonly IMongoCollection<TraceLog> _collection;
+        private readonly ICrudRepository<TraceLogData> Repository;
 
-        public LogExplorerService(IConfiguration config)
+        public LogExplorerService(ICrudRepository<TraceLogData> repository)
         {
-            var client = new MongoClient(config.GetConnectionString("MongoDb"));
-            var db = client.GetDatabase("LogsDb");
-            _collection = db.GetCollection<TraceLog>("TraceLogs");
+            Repository = repository;
+        }
+
+        public async Task<ResultWrapper<CrudResult>> Resolve(Guid id, string message, Guid resolvedBy)
+        {
+            try
+            {
+                var updateFields = new { ResolutionComment = message, ResolvedBy = resolvedBy, ResolvedAt = DateTime.UtcNow };
+
+                return await Repository.UpdateAsync(id, new
+                {
+                    ResolutionComment = message,
+                    ResolutionStatus = ResolutionStatus.Reconciled,
+                    RequiresResolution = false,
+                    ResolvedBy = resolvedBy,
+                    ResolvedAt = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<CrudResult>.FromException(ex);
+            }
         }
 
         public async Task<List<TraceLogNodeData>> GetTraceTreeAsync(Guid? rootId = null)
         {
-            var allLogs = await _collection.Find(_ => true).ToListAsync();
+            var allLogs = await Repository.GetAllAsync();
+            var allCorrelations = allLogs.Select(a => a.CorrelationId).ToList();
 
-            var logMap = allLogs.ToDictionary(log => log.Id);
-            var nodeMap = allLogs.ToDictionary(log => log.Id, log => new TraceLogNodeData { Log = log });
+            var rootFilter = new FilterDefinitionBuilder<TraceLogData>()
+                .Where(l => l.ParentCorrelationId == null || !allCorrelations.Contains(l.ParentCorrelationId));
+            var rootLogs = await Repository.GetAllAsync(rootFilter);
+            var rootNodes = rootLogs.Select(l => new TraceLogNodeData { Log = l }).ToList();
 
-            List<TraceLogNodeData> roots = new();
+            var childFilter = new FilterDefinitionBuilder<TraceLogData>()
+                .Where(l => l.ParentCorrelationId != null && allCorrelations.Contains(l.ParentCorrelationId));
+            var childLogs = await Repository.GetAllAsync(childFilter);
 
-            foreach (var log in allLogs)
+            rootNodes.ForEach(root => MarchChildTree(root, childLogs));
+
+            return rootNodes;
+        }
+
+        private static void MarchChildTree(TraceLogNodeData parent, List<TraceLogData> childLogs)
+        {
+            foreach (var log in childLogs.ToList())
             {
-                if (log.ParentCorrelationId.HasValue && nodeMap.ContainsKey(log.ParentCorrelationId.Value))
+                if (log.ParentCorrelationId == parent.Log.CorrelationId)
                 {
-                    nodeMap[log.ParentCorrelationId.Value].Children.Add(nodeMap[log.Id]);
-                }
-                else if (rootId == null || log.Id == rootId)
-                {
-                    roots.Add(nodeMap[log.Id]);
+                    var childNode = new TraceLogNodeData { Log = log };
+                    parent.Children.Add(childNode);
+                    childLogs.Remove(log);
+                    MarchChildTree(childNode, childLogs);
                 }
             }
-
-            return roots;
         }
     }
 }

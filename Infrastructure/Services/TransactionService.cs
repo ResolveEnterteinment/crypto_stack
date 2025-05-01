@@ -16,6 +16,10 @@ namespace Infrastructure.Services
     public class TransactionService : BaseService<TransactionData>, ITransactionService
     {
         private static readonly TimeSpan TRANSACTION_CACHE_DURATION = TimeSpan.FromMinutes(10);
+
+        private const string CACHE_KEY_USER_TRANSACTIONS = "user_transactions:{0}";
+        private const string CACHE_KEY_SUBSCRIPTION_TRANSACTIONS = "subscription_transactions:{0}";
+
         private readonly ISubscriptionService _subscriptionService;
         private readonly IAssetService _assetService;
         private readonly IBalanceService _balanceService;
@@ -59,9 +63,9 @@ namespace Infrastructure.Services
 
         public async Task<ResultWrapper<PaginatedResult<TransactionData>>> GetUserTransactionsAsync(Guid userId, int page = 1, int pageSize = 20)
         {
-            using var scope = Logger.BeginScope("TransactionService::GetUserTransactionsAsync", new Dictionary<string, object?>
+            using var scope = Logger.BeginScope("TransactionService::GetUserTransactionsAsync", new
             {
-                ["UserId"] = userId,
+                UserId = userId,
             });
 
             try
@@ -82,21 +86,22 @@ namespace Infrastructure.Services
 
         public async Task<ResultWrapper<List<TransactionDto>>> GetBySubscriptionIdAsync(Guid subscriptionId)
         {
-            using var scope = Logger.BeginScope("TransactionService::GetUserTransactionsAsync", new Dictionary<string, object?>
+            using var scope = Logger.BeginScope("TransactionService::GetUserTransactionsAsync", new
             {
-                ["SubscriptionId"] = subscriptionId,
+                SubscriptionId = subscriptionId,
             });
 
-            var result = await FetchCached($"subscription:transactions:{subscriptionId}",
+            var result = await FetchCached(
+                string.Format(CACHE_KEY_SUBSCRIPTION_TRANSACTIONS, subscriptionId),
                 async () =>
                 {
                     var filter = Builders<TransactionData>.Filter.Eq(t => t.SubscriptionId, subscriptionId);
-                    var dataResult = await GetManyAsync(filter);
-                    if (dataResult == null || !dataResult.IsSuccess)
-                        throw new KeyNotFoundException(dataResult?.ErrorMessage ?? $"Subscripiton transactions fetch returned null");
+                    var dataResult = await Repository.GetAllAsync(filter);
+                    if (dataResult == null)
+                        throw new KeyNotFoundException($"Failed to fetch subscripiton transactions");
 
                     var transactionsDto = new List<TransactionDto>();
-                    foreach (var txn in dataResult.Data!)
+                    foreach (var txn in dataResult!)
                     {
                         var balanceWr = await _balanceService.GetByIdAsync(txn.BalanceId);
                         var paymentWr = await _paymentService.GetByProviderIdAsync(txn.PaymentProviderId);

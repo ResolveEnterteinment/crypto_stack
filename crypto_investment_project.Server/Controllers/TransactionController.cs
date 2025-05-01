@@ -7,7 +7,6 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using System.Diagnostics;
 using System.Security.Claims;
 
 namespace crypto_investment_project.Server.Controllers
@@ -153,76 +152,73 @@ namespace crypto_investment_project.Server.Controllers
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetBySubscriptionId(string subscription)
         {
-            using (_logger.BeginScope(new Dictionary<string, object>
+            using var scope = _logger.BeginScope(new
             {
-                ["SubscriptionId"] = subscription,
-                ["Operation"] = "GetTransactionsBySubscriptionId",
-                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
-            }))
+                SubscriptionId = subscription
+            });
+
+            try
             {
-                try
+                // Validate input
+                if (string.IsNullOrEmpty(subscription) || !Guid.TryParse(subscription, out Guid subscriptionId) || subscriptionId == Guid.Empty)
                 {
-                    // Validate input
-                    if (string.IsNullOrEmpty(subscription) || !Guid.TryParse(subscription, out Guid subscriptionId) || subscriptionId == Guid.Empty)
-                    {
-                        _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", subscription);
-                        return BadRequest(new { message = "A valid Subscription ID is required." });
-                    }
-
-                    // Verify user exists
-                    var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
-                    if (subscriptionResult == null || !subscriptionResult.IsSuccess)
-                    {
-                        _logger.LogWarning("Subscription not found: {SubscriptionId}", subscriptionId);
-                        return NotFound(new { message = "Subscription not found" });
-                    }
-
-                    var subscriptionData = subscriptionResult.Data;
-
-                    // Authorization check - verify current user can access this data
-                    var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-
-                    if (!User.IsInRole("ADMIN") && currentUserId != subscriptionData.UserId.ToString())
-                    {
-                        _logger.LogWarning("Unauthorized access attempt to user {TargetUserId} transactions by user {CurrentUserId}",
-                            subscriptionData.UserId, currentUserId);
-                        return Forbid();
-                    }
-
-                    // ETag support for caching
-                    var etagKey = $"transactions_subscription_{subscription}";
-                    var etag = Request.Headers.IfNoneMatch.FirstOrDefault();
-                    var (hasEtag, storedEtag) = await _idempotencyService.GetResultAsync<string>(etagKey);
-
-                    if (hasEtag && etag == storedEtag)
-                    {
-                        return StatusCode(StatusCodes.Status304NotModified);
-                    }
-
-                    // Get user subscriptions
-                    var transactionsResult = await _transactionService.GetBySubscriptionIdAsync(subscriptionId);
-
-                    if (!transactionsResult.IsSuccess)
-                    {
-                        return transactionsResult.ToActionResult(this);
-                    }
-
-                    // Generate ETag from data and store it
-                    var newEtag = $"\"{Guid.NewGuid():N}\""; // Simple approach; production would use content hash
-                    await _idempotencyService.StoreResultAsync(etagKey, newEtag);
-                    Response.Headers.ETag = newEtag;
-
-                    _logger.LogInformation("Successfully retrieved {Count} subscriptions for user {SubscriptionId}",
-                        transactionsResult.Data?.Count() ?? 0, subscriptionId);
-
-                    return Ok(transactionsResult.Data);
+                    _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", subscription);
+                    return BadRequest(new { message = "A valid Subscription ID is required." });
                 }
-                catch (Exception ex)
+
+                // Verify user exists
+                var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
+                if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                 {
-                    // Let global exception handler middleware handle this
-                    _logger.LogError("Error retrieving transactions for subscription {SubscriptionId}", subscription);
-                    throw;
+                    _logger.LogWarning("Subscription not found: {SubscriptionId}", subscriptionId);
+                    return NotFound(new { message = "Subscription not found" });
                 }
+
+                var subscriptionData = subscriptionResult.Data;
+
+                // Authorization check - verify current user can access this data
+                var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                if (!User.IsInRole("ADMIN") && currentUserId != subscriptionData.UserId.ToString())
+                {
+                    _logger.LogWarning("Unauthorized access attempt to user {TargetUserId} transactions by user {CurrentUserId}",
+                        subscriptionData.UserId, currentUserId);
+                    return Forbid();
+                }
+
+                // ETag support for caching
+                var etagKey = $"transactions_subscription_{subscription}";
+                var etag = Request.Headers.IfNoneMatch.FirstOrDefault();
+                var (hasEtag, storedEtag) = await _idempotencyService.GetResultAsync<string>(etagKey);
+
+                if (hasEtag && etag == storedEtag)
+                {
+                    return StatusCode(StatusCodes.Status304NotModified);
+                }
+
+                // Get user subscriptions
+                var transactionsResult = await _transactionService.GetBySubscriptionIdAsync(subscriptionId);
+
+                if (!transactionsResult.IsSuccess)
+                {
+                    return transactionsResult.ToActionResult(this);
+                }
+
+                // Generate ETag from data and store it
+                var newEtag = $"\"{Guid.NewGuid():N}\""; // Simple approach; production would use content hash
+                await _idempotencyService.StoreResultAsync(etagKey, newEtag);
+                Response.Headers.ETag = newEtag;
+
+                _logger.LogInformation("Successfully retrieved {Count} subscriptions for user {SubscriptionId}",
+                    transactionsResult.Data?.Count() ?? 0, subscriptionId);
+
+                return Ok(transactionsResult.Data);
+            }
+            catch (Exception ex)
+            {
+                // Let global exception handler middleware handle this
+                _logger.LogError("Error retrieving transactions for subscription {SubscriptionId}", subscription);
+                throw;
             }
         }
     }

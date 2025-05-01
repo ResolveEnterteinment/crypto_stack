@@ -1,5 +1,6 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Logging;
+using Domain.Constants.Logging;
 
 namespace Infrastructure.Services
 {
@@ -33,7 +34,7 @@ namespace Infrastructure.Services
             // Simulate async work
             await Task.Delay(100);
 
-            await _logger.LogTraceAsync("Nested action completed.");
+            await _logger.LogTraceAsync("Nested action completed.", level: LogLevel.Critical, requiresResolution: true);
         }
     }
 }

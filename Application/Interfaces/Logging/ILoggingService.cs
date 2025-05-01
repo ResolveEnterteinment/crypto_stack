@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using Domain.Constants.Logging;
+using Microsoft.AspNetCore.Http;
 
 namespace Application.Interfaces.Logging
 {
@@ -16,6 +17,6 @@ namespace Application.Interfaces.Logging
         void LogWarning(string message, params object?[] args);
         void LogError(string message);
         void LogError(string message, params object?[] args);
-        Task LogTraceAsync(string message, string? action = null, bool requiresResolution = false, HttpContext? context = null);
+        Task LogTraceAsync(string message, string? action = null, LogLevel level = LogLevel.Information, bool requiresResolution = false, HttpContext? context = null);
     }
 }
