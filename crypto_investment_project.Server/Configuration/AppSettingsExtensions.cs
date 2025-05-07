@@ -22,6 +22,7 @@ public static class AppSettingsExtensions
         services.Configure<StripeSettings>(configuration.GetSection("Stripe"));
         services.Configure<JwtSettings>(configuration.GetSection("Jwt"));
         services.Configure<EncryptionSettings>(configuration.GetSection("Encryption"));
+        services.Configure<OnfidoSettings>(configuration.GetSection("Onfido"));
 
         return services;
     }

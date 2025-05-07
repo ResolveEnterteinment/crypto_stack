@@ -86,6 +86,18 @@ public static class RateLimitingExtensions
                         Window = TimeSpan.FromMinutes(1)
                     }));
 
+            // KYC API rate limits
+            options.AddPolicy("kycEndpoints", httpContext =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    partitionKey: GetClientIpAddress(httpContext),
+                    factory: _ => new FixedWindowRateLimiterOptions
+                    {
+                        AutoReplenishment = true,
+                        PermitLimit = 20,
+                        QueueLimit = 0,
+                        Window = TimeSpan.FromMinutes(10)
+                    }));
+
             // Configure on-rejected behavior
             options.OnRejected = async (context, token) =>
             {

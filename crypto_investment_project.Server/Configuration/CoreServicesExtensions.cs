@@ -3,9 +3,11 @@ using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
+using Application.Interfaces.KYC;
 using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
+using Application.Interfaces.Withdrawal;
 using Application.Validation;
 using Domain.DTOs.Settings;
 using Domain.Interfaces;
@@ -16,9 +18,11 @@ using Infrastructure.Services.Base;
 using Infrastructure.Services.Event;
 using Infrastructure.Services.Exchange;
 using Infrastructure.Services.Index;
+using Infrastructure.Services.KYC;
 using Infrastructure.Services.Logging;
 using Infrastructure.Services.Payment;
 using Infrastructure.Services.Subscription;
+using Infrastructure.Services.Withdrawal;
 using MediatR;
 using MongoDB.Driver;
 using OpenTelemetry.Exporter;
@@ -97,6 +101,8 @@ public static class CoreServicesExtensions
             cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
         });
 
+        services.AddHttpClient<IKycService, OnfidoKycService>();
+
         services.AddOpenTelemetry()
         .WithTracing(tracerProviderBuilder =>
         {
@@ -160,6 +166,9 @@ public static class CoreServicesExtensions
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IIdempotencyService, IdempotencyService>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+        services.AddScoped<IKycService, OnfidoKycService>();
+        services.AddScoped<IWithdrawalService, WithdrawalService>();
+
         services.AddScoped<ITestService, TestService>();
     }
 }

@@ -37,6 +37,7 @@ app.UseActivityNaming();
 app.UseTraceUserEnrichment();
 app.UseTraceException();
 app.UseTraceIdResponse();
+app.UseKycRequirement();
 
 // Static files and development tools
 app.UseDefaultFiles();

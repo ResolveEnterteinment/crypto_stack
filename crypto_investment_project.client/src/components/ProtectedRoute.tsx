@@ -1,85 +1,154 @@
-// src/components/ProtectedRoute.tsx
-import React, { useState, useEffect } from "react";
-import { Navigate, useLocation } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
+// crypto_investment_project.client/src/components/ProtectedRoute.tsx
 
+import React, { useState, useEffect, ReactNode } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { Spin, Result, Button } from 'antd';
+
+// Define the KYC level type for TypeScript
+type KycLevel = 'NONE' | 'BASIC' | 'STANDARD' | 'ADVANCED' | 'ENHANCED';
+
+// Define the props for the component
 interface ProtectedRouteProps {
-    children: React.ReactNode;
-    requiredRoles?: string[];
-    redirectPath?: string;
+    children: ReactNode;
+    requiredRoles?: string[] | null;
+    requiredKycLevel?: KycLevel | null;
 }
 
-/**
- * Enhanced Protected Route component with role-based authorization and token verification
- */
+// Define interface for KYC status response
+interface KycStatusResponse {
+    status: 'APPROVED' | 'PENDING_VERIFICATION' | 'NOT_STARTED' | 'REJECTED';
+    verificationLevel: KycLevel;
+}
+
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     children,
-    requiredRoles = [],
-    redirectPath = "/auth"
+    requiredRoles = null,
+    requiredKycLevel = null
 }) => {
-    const { isAuthenticated, refreshToken, hasRole, user } = useAuth();
-    const [isVerifying, setIsVerifying] = useState(true);
-    const [isAuthorized, setIsAuthorized] = useState(false);
+    // Use the auth context without type assertion
+    const auth = useAuth();
+
+    const [kycVerified, setKycVerified] = useState<boolean | null>(null);
+    const [kycLoading, setKycLoading] = useState<boolean>(false);
     const location = useLocation();
 
+    // Safely extract values from auth context
+    const isAuthenticated = auth?.isAuthenticated || false;
+    const user = auth?.user || null;
+    const loading = auth?.isLoading || false;
+
     useEffect(() => {
-        // Function to verify token and check roles
-        const verifyAccess = async () => {
-            setIsVerifying(true);
+        // Skip KYC check if not required
+        if (!requiredKycLevel || !isAuthenticated) {
+            setKycVerified(true);
+            return;
+        }
 
-            // If not authenticated at all, no need for further checks
-            if (!isAuthenticated || !user) {
-                setIsAuthorized(false);
-                setIsVerifying(false);
-                return;
+        // Check KYC status
+        const checkKycStatus = async (): Promise<void> => {
+            setKycLoading(true);
+            try {
+                const response = await fetch('/api/kyc/status', {
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                    },
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch KYC status');
+                }
+
+                const data: KycStatusResponse = await response.json();
+
+                // Determine if verified based on status and level
+                const isVerified =
+                    data.status === 'APPROVED' &&
+                    getKycLevelValue(data.verificationLevel) >= getKycLevelValue(requiredKycLevel);
+
+                setKycVerified(isVerified);
+            } catch (err) {
+                console.error('Error checking KYC status:', err);
+                setKycVerified(false);
+            } finally {
+                setKycLoading(false);
             }
-
-            // Check if the user has required roles
-            let hasRequiredRole = true;
-            if (requiredRoles.length > 0) {
-                hasRequiredRole = requiredRoles.some(role => hasRole(role));
-            }
-
-            if (!hasRequiredRole) {
-                setIsAuthorized(false);
-                setIsVerifying(false);
-                return;
-            }
-
-            // Simple check - just use the token we have
-            const accessToken = localStorage.getItem("access_token");
-            if (!accessToken) {
-                setIsAuthorized(false);
-                setIsVerifying(false);
-                return;
-            }
-
-            // Always set as authorized if we have a token and required roles
-            setIsAuthorized(true);
-            setIsVerifying(false);
         };
 
-        verifyAccess();
-    }, [isAuthenticated, hasRole, requiredRoles, user]);
+        checkKycStatus();
+    }, [isAuthenticated, requiredKycLevel]);
 
-    // Show loading state while verifying
-    if (isVerifying) {
+    // Helper to convert KYC level to numeric value for comparison
+    const getKycLevelValue = (level: KycLevel): number => {
+        switch (level) {
+            case 'NONE': return 0;
+            case 'BASIC': return 1;
+            case 'STANDARD': return 2;
+            case 'ADVANCED': return 3;
+            case 'ENHANCED': return 4;
+            default: return 0;
+        }
+    };
+
+    // Check if user has required roles
+    const hasRequiredRoles = (): boolean => {
+        if (!requiredRoles || requiredRoles.length === 0) {
+            return true; // No roles required
+        }
+
+        if (!user?.roles || user.roles.length === 0) {
+            return false; // User has no roles but roles are required
+        }
+
+        // Check if user has at least one of the required roles
+        return requiredRoles.some(role => user?.roles?.includes(role));
+    };
+
+    if (loading || kycLoading) {
         return (
-            <div className="flex justify-center items-center h-screen bg-gray-100">
-                <div className="bg-white p-6 rounded-lg shadow-md text-center">
-                    <div className="animate-spin w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-                    <p className="text-gray-600">Verifying authentication...</p>
-                </div>
+            <div className="flex items-center justify-center h-screen">
+                <Spin size="large" />
             </div>
         );
     }
 
-    // If not authorized, redirect to login with return URL
-    if (!isAuthorized) {
-        return <Navigate to={redirectPath} state={{ from: location.pathname }} replace />;
+    if (!isAuthenticated) {
+        return <Navigate to="/login" state={{ from: location }} replace />;
     }
 
-    // If user is authenticated and authorized, render children
+    // Check for required roles
+    if (requiredRoles && !hasRequiredRoles()) {
+        return (
+            <Result
+                status="403"
+                title="Unauthorized"
+                subTitle="You do not have the required permissions to access this page."
+                extra={
+                    <Button type="primary" onClick={() => window.location.href = '/dashboard'}>
+                        Return to Dashboard
+                    </Button>
+                }
+            />
+        );
+    }
+
+    // Check for required KYC level
+    if (requiredKycLevel && !kycVerified) {
+        return (
+            <Result
+                status="403"
+                title="KYC Verification Required"
+                subTitle={`You need to complete KYC verification (level: ${requiredKycLevel}) to access this page.`}
+                extra={
+                    <Button type="primary" onClick={() => window.location.href = '/kyc-verification'}>
+                        Complete Verification
+                    </Button>
+                }
+            />
+        );
+    }
+
+    // If all checks pass, render the protected content
     return <>{children}</>;
 };
 
