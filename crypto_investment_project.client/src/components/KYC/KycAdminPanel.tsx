@@ -1,10 +1,11 @@
 // crypto_investment_project.client/src/components/KYC/KycAdminPanel.tsx
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Card, Tag, Badge } from 'antd';
+import { Table, Button, Modal, Form, Input, Select, Card, Tag, Badge, Tabs } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined, QuestionCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 
 const { Option } = Select;
 const { TextArea } = Input;
+const { TabPane } = Tabs;
 
 // Define types for the KYC verification record
 interface KycVerification {
@@ -17,6 +18,7 @@ interface KycVerification {
     riskScore?: number;
     submittedAt?: string;
     lastCheckedAt?: string;
+    providerName?: string; // Added provider name
 }
 
 // Define types for status and verification level
@@ -36,11 +38,33 @@ const KycAdminPanel: React.FC = () => {
     const [pagination, setPagination] = useState<PaginationConfig>({ current: 1, pageSize: 10, total: 0 });
     const [modalVisible, setModalVisible] = useState<boolean>(false);
     const [currentRecord, setCurrentRecord] = useState<KycVerification | null>(null);
+    const [availableProviders, setAvailableProviders] = useState<string[]>([]);
+    const [activeProvider, setActiveProvider] = useState<string>('all');
     const [form] = Form.useForm();
 
     useEffect(() => {
+        fetchProviders();
         fetchPendingVerifications();
-    }, [pagination.current]);
+    }, [pagination.current, activeProvider]);
+
+    const fetchProviders = async (): Promise<void> => {
+        try {
+            const response = await fetch('/api/kyc/providers', {
+                headers: {
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                },
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch KYC providers');
+            }
+
+            const data = await response.json();
+            setAvailableProviders(data.providers);
+        } catch (err) {
+            console.error('Error fetching KYC providers:', err);
+        }
+    };
 
     const fetchPendingVerifications = async (): Promise<void> => {
         try {
@@ -56,7 +80,15 @@ const KycAdminPanel: React.FC = () => {
             }
 
             const data = await response.json();
-            setVerifications(data.items);
+
+            // If a provider filter is active, filter the results
+            let filteredItems = data.items;
+            if (activeProvider !== 'all') {
+                filteredItems = data.items.filter((item: KycVerification) =>
+                    item.providerName === activeProvider);
+            }
+
+            setVerifications(filteredItems);
             setPagination({
                 ...pagination,
                 total: data.totalCount,
@@ -148,6 +180,19 @@ const KycAdminPanel: React.FC = () => {
         }
     };
 
+    const getProviderTag = (providerName?: string): React.ReactNode => {
+        if (!providerName) return <Tag>Unknown</Tag>;
+
+        switch (providerName) {
+            case 'Onfido':
+                return <Tag color="blue">Onfido</Tag>;
+            case 'SumSub':
+                return <Tag color="green">SumSub</Tag>;
+            default:
+                return <Tag>{providerName}</Tag>;
+        }
+    };
+
     const getRiskBadge = (record: KycVerification): React.ReactNode => {
         if (record.isPoliticallyExposed) {
             return <Badge status="warning" text="PEP" className="mr-2" />;
@@ -170,6 +215,12 @@ const KycAdminPanel: React.FC = () => {
             dataIndex: 'status',
             key: 'status',
             render: (status: VerificationStatus) => getStatusTag(status),
+        },
+        {
+            title: 'Provider',
+            dataIndex: 'providerName',
+            key: 'providerName',
+            render: (providerName: string) => getProviderTag(providerName),
         },
         {
             title: 'Level',
@@ -209,8 +260,19 @@ const KycAdminPanel: React.FC = () => {
         },
     ];
 
+    const handleProviderChange = (provider: string) => {
+        setActiveProvider(provider);
+    };
+
     return (
         <Card title="KYC Verification Management" className="mb-5">
+            <Tabs defaultActiveKey="all" onChange={handleProviderChange}>
+                <TabPane tab="All Providers" key="all" />
+                {availableProviders.map(provider => (
+                    <TabPane tab={provider} key={provider} />
+                ))}
+            </Tabs>
+
             <Table
                 columns={columns}
                 dataSource={verifications}
@@ -233,6 +295,7 @@ const KycAdminPanel: React.FC = () => {
                             <p><strong>User ID:</strong> {currentRecord.userId}</p>
                             <p><strong>Current Status:</strong> {getStatusTag(currentRecord.status)}</p>
                             <p><strong>Verification Level:</strong> {currentRecord.verificationLevel}</p>
+                            <p><strong>Provider:</strong> {getProviderTag(currentRecord.providerName)}</p>
                             {currentRecord.isPoliticallyExposed && (
                                 <p><strong>PEP Status:</strong> <Tag color="warning">Politically Exposed Person</Tag></p>
                             )}

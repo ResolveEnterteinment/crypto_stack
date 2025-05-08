@@ -1,16 +1,16 @@
-﻿// Infrastructure/Services/KYC/OnfidoKycService.cs
+﻿// Infrastructure/Services/KYC/SumSubKycService.cs
 using Application.Interfaces.Base;
 using Application.Interfaces.Logging;
 using Domain.Models.KYC;
 
 namespace Infrastructure.Services.KYC
 {
-    public class OnfidoKycService : BaseKycService
+    public class SumSubKycService : BaseKycService
     {
-        public OnfidoKycService(
+        public SumSubKycService(
             ICrudRepository<KycData> repository,
             ILoggingService logger,
-            OnfidoKycProvider provider)
+            SumSubKycProvider provider)
             : base(repository, logger, provider)
         {
         }

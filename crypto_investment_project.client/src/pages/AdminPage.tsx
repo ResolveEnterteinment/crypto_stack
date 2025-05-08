@@ -4,6 +4,8 @@ import Navbar from "../components/Navbar";
 import AdminLogsPanel from "../components/Admin/AdminLogsPanel";
 import WithdrawalManagementPanel from "../components/Admin/WithdrawalManagement";
 import KycAdminPanel from "../components/KYC/KycAdminPanel";
+import KycProviderConfig from "../components/Admin/KycProviderConfig";
+import KycVerificationReports from "../components/KYC/KycVerificationReports";
 import { useAuth } from '../context/AuthContext';
 
 /**
@@ -12,7 +14,7 @@ import { useAuth } from '../context/AuthContext';
  */
 const AdminPage: React.FC = () => {
     const navigate = useNavigate();
-    const { user, logout } = useAuth();
+    const { logout } = useAuth();
     const [activeTab, setActiveTab] = useState('logs');
 
     // Navigation handlers
@@ -102,6 +104,24 @@ const AdminPage: React.FC = () => {
                                 KYC Management
                             </button>
                             <button
+                                onClick={() => setActiveTab('kyc-providers')}
+                                className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'kyc-providers'
+                                    ? 'border-blue-500 text-blue-600'
+                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                    }`}
+                            >
+                                KYC Providers
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('kyc-reports')}
+                                className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'kyc-reports'
+                                    ? 'border-blue-500 text-blue-600'
+                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                    }`}
+                            >
+                                KYC Reports
+                            </button>
+                            <button
                                 onClick={() => setActiveTab('withdrawal')}
                                 className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'withdrawal'
                                     ? 'border-blue-500 text-blue-600'
@@ -132,6 +152,8 @@ const AdminPage: React.FC = () => {
                             </div>
                         )}
                         {activeTab === 'kyc' && <KycAdminPanel />}
+                        {activeTab === 'kyc-providers' && <KycProviderConfig />}
+                        {activeTab === 'kyc-reports' && <KycVerificationReports />}
                         {activeTab === 'withdrawal' && <WithdrawalManagementPanel />}
                         {activeTab === 'settings' && (
                             <div className="bg-white shadow rounded-lg p-6">

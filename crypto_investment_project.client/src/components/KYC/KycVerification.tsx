@@ -1,18 +1,21 @@
-// crypto_investment_project.client/src/components/KYC/KycVerification.tsx
+// src/components/KYC/KycVerification.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { Card, Button, Alert, Form, Input, Steps } from 'antd';
-import { UserOutlined, IdcardOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Card, Button, Alert, Form, Input, Steps, Select, Row, Col } from 'antd';
+import { UserOutlined, IdcardOutlined, CheckCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { Spin } from 'antd';
+import { kycProviders, getKycProviderConfig } from '../../config/kycProviders';
 
 const { Step } = Steps;
+const { Option } = Select;
 
 // Define TypeScript interfaces for better type safety
 interface KycStatus {
     status: string;
     verificationLevel: string;
     verifiedAt: string;
+    providerName?: string;
 }
 
 interface FormData {
@@ -23,10 +26,12 @@ interface FormData {
     country: string;
     city: string;
     postalCode: string;
+    provider?: string;
 }
 
 interface AuthUser {
     id: string;
+    roles?: string[];
 }
 
 const KycVerification = () => {
@@ -44,12 +49,16 @@ const KycVerification = () => {
         country: '',
         city: '',
         postalCode: '',
+        provider: undefined
     });
     const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
+    const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
     useEffect(() => {
         fetchKycStatus();
-    }, []);
+        // Check if user is admin
+        setIsAdmin(user?.roles?.includes('ADMIN') || false);
+    }, [user]);
 
     const fetchKycStatus = async () => {
         try {
@@ -88,6 +97,10 @@ const KycVerification = () => {
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
+    const handleSelectChange = (name: string, value: string) => {
+        setFormData(prev => ({ ...prev, [name]: value }));
+    };
+
     const submitBasicInfo = async () => {
         try {
             setLoading(true);
@@ -107,7 +120,14 @@ const KycVerification = () => {
             }
 
             setLoading(true);
-            const response = await fetch('/api/kyc/verify', {
+
+            // Prepare the API URL - include provider if admin has selected one
+            let url = '/api/kyc/verify';
+            if (isAdmin && formData.provider) {
+                url += `?provider=${formData.provider}`;
+            }
+
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -226,36 +246,84 @@ const KycVerification = () => {
             <h3>ID Verification</h3>
             <p>Please verify your identity by uploading your ID documents.</p>
             <p>This helps us comply with KYC/AML regulations and protect your account.</p>
+
+            {isAdmin && (
+                <div className="mb-4">
+                    <h4>Select KYC Provider</h4>
+                    <Select
+                        style={{ width: '100%', maxWidth: '300px' }}
+                        placeholder="Select KYC Provider"
+                        onChange={(value) => handleSelectChange('provider', value)}
+                        value={formData.provider}
+                    >
+                        {kycProviders.map(provider => (
+                            <Option key={provider.name} value={provider.name}>
+                                {provider.displayName}
+                            </Option>
+                        ))}
+                    </Select>
+                </div>
+            )}
+
+            {/* Display provider cards */}
+            {!isAdmin && (
+                <Row gutter={16} className="mb-4">
+                    {kycProviders.map(provider => (
+                        <Col span={12} key={provider.name}>
+                            <Card hoverable className="text-center">
+                                <div className="flex justify-center mb-4">
+                                    <SafetyCertificateOutlined style={{ fontSize: 36, color: '#1890ff' }} />
+                                </div>
+                                <h4>{provider.displayName}</h4>
+                                <p className="text-sm">{provider.description}</p>
+                            </Card>
+                        </Col>
+                    ))}
+                </Row>
+            )}
+
             <Button type="primary" onClick={startVerification}>
                 Start ID Verification
             </Button>
         </div>
     );
 
-    const renderVerificationProcess = () => (
-        <div className="text-center">
-            <h3>Verification in Progress</h3>
-            {verificationUrl ? (
-                <div>
-                    <p>Please complete your verification by clicking the button below:</p>
-                    <Button type="primary" href={verificationUrl} target="_blank">
-                        Complete Verification
-                    </Button>
-                    <Button className="mt-3" onClick={fetchKycStatus}>
-                        I've Completed Verification
-                    </Button>
-                </div>
-            ) : (
-                <div>
-                    <p>Your verification is being processed. This may take some time.</p>
-                    <p>Current status: {kycStatus?.status}</p>
-                    <Button onClick={fetchKycStatus}>
-                        Check Status
-                    </Button>
-                </div>
-            )}
-        </div>
-    );
+    const renderVerificationProcess = () => {
+        // Determine which provider is being used
+        const providerName = kycStatus?.providerName || "Verification Service";
+        const providerConfig = getKycProviderConfig(kycStatus?.providerName || "");
+
+        return (
+            <div className="text-center">
+                <h3>Verification in Progress</h3>
+                {providerConfig && (
+                    <div className="mb-4">
+                        <p>Using {providerConfig.displayName} for verification</p>
+                    </div>
+                )}
+
+                {verificationUrl ? (
+                    <div>
+                        <p>Please complete your verification by clicking the button below:</p>
+                        <Button type="primary" href={verificationUrl} target="_blank">
+                            Complete Verification with {providerName}
+                        </Button>
+                        <Button className="mt-3" onClick={fetchKycStatus}>
+                            I've Completed Verification
+                        </Button>
+                    </div>
+                ) : (
+                    <div>
+                        <p>Your verification is being processed. This may take some time.</p>
+                        <p>Current status: {kycStatus?.status}</p>
+                        <Button onClick={fetchKycStatus}>
+                            Check Status
+                        </Button>
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     const renderVerificationComplete = () => (
         <div className="text-center">
@@ -264,6 +332,9 @@ const KycVerification = () => {
             <p className="mt-3">Your identity has been verified successfully.</p>
             <p>Verification level: {kycStatus?.verificationLevel}</p>
             <p>Verified on: {kycStatus?.verifiedAt ? new Date(kycStatus.verifiedAt).toLocaleDateString() : 'N/A'}</p>
+            {kycStatus?.providerName && (
+                <p>Verified via: {kycStatus.providerName}</p>
+            )}
             <Button type="primary" onClick={() => navigate('/dashboard')}>
                 Go to Dashboard
             </Button>

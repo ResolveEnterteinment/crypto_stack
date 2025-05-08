@@ -15,6 +15,7 @@ builder.Services
     .AddIdentityConfiguration(builder.Configuration)
     .AddAuthenticationServices(builder.Configuration)
     .AddCoreServices(builder.Environment)
+    .AddKycServices(builder.Configuration)
     .AddRateLimitingPolicies()
     .AddApiVersioningSupport()
     .AddHealthChecksServices(builder.Configuration)

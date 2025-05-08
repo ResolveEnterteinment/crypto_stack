@@ -1,23 +1,26 @@
+// First, let's update the WithdrawalManagement component to properly handle the API response
 import React, { useState, useEffect } from 'react';
 import { Table, Tag, Button, Modal, Form, Input, Select, Card, Tooltip, Alert, Skeleton } from 'antd';
 import { ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import type { TablePaginationConfig } from 'antd/es/table';
-import { Withdrawal } from '../../../src/types/withdrawal';
+import { Withdrawal } from '../../types/withdrawal';
 
 const { Option } = Select;
 const { TextArea } = Input;
 
-// Update PaginationType to match TablePaginationConfig
-interface PaginationType {
-    current: number;
+// Properly define the pagination interface
+interface PaginatedResult<T> {
+    items: T[];
+    totalCount: number;
     pageSize: number;
-    total: number;
+    currentPage: number;
+    totalPages: number;
 }
 
 const WithdrawalManagement: React.FC = () => {
     const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
-    const [pagination, setPagination] = useState<PaginationType>({
+    const [pagination, setPagination] = useState<TablePaginationConfig>({
         current: 1,
         pageSize: 10,
         total: 0
@@ -36,7 +39,7 @@ const WithdrawalManagement: React.FC = () => {
         try {
             setLoading(true);
             const response = await fetch(
-                `/api/withdrawal/admin/pending?page=${pagination.current}&pageSize=${pagination.pageSize}`,
+                `/api/withdrawal/admin/pending?page=${pagination.current || 1}&pageSize=${pagination.pageSize || 10}`,
                 {
                     headers: {
                         'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -45,29 +48,69 @@ const WithdrawalManagement: React.FC = () => {
             );
 
             if (!response.ok) {
-                throw new Error('Failed to fetch pending withdrawals');
+                const text = await response.text();
+                console.error('Error response:', text);
+                throw new Error(`Failed to fetch pending withdrawals: ${response.status} ${response.statusText}`);
             }
 
-            const data = await response.json();
-            setWithdrawals(data.items);
-            setPagination({
-                ...pagination,
-                total: data.totalCount,
-            });
+            // Safely parse JSON response
+            let data;
+            const responseText = await response.text();
+            try {
+                data = JSON.parse(responseText);
+            } catch (parseError) {
+                console.error('JSON parse error:', parseError, 'Response text:', responseText);
+                throw new Error('Invalid JSON response from server');
+            }
+
+            // Handle both direct array response or paginated response
+            if (Array.isArray(data)) {
+                setWithdrawals(data);
+                setPagination({
+                    ...pagination,
+                    total: data.length
+                });
+            } else if (data && typeof data === 'object') {
+                // Check if it's a paginated response
+                if (Array.isArray(data.items)) {
+                    setWithdrawals(data.items);
+                    setPagination({
+                        ...pagination,
+                        total: data.totalCount || data.items.length,
+                    });
+                } else {
+                    // If it's some other object structure, try to extract the data
+                    const items = data.data || data.result || data.withdrawals || data;
+                    if (Array.isArray(items)) {
+                        setWithdrawals(items);
+                        setPagination({
+                            ...pagination,
+                            total: items.length,
+                        });
+                    } else {
+                        console.error('Unexpected response structure:', data);
+                        throw new Error('Unexpected response structure from server');
+                    }
+                }
+            } else {
+                console.error('Unexpected response:', data);
+                throw new Error('Unexpected response from server');
+            }
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
             setError(errorMessage);
+            console.error('Error fetching pending withdrawals:', err);
         } finally {
             setLoading(false);
         }
     };
 
-    // Fix the table onChange handler with proper Ant Design typing
+    // Handle table pagination changes
     const handleTableChange = (newPagination: TablePaginationConfig): void => {
         setPagination({
-            ...pagination,
-            current: newPagination.current || 1,
-            pageSize: newPagination.pageSize || 10,
+            current: newPagination.current,
+            pageSize: newPagination.pageSize,
+            total: pagination.total
         });
     };
 
@@ -76,6 +119,7 @@ const WithdrawalManagement: React.FC = () => {
         form.setFieldsValue({
             status: '',
             comment: '',
+            transactionHash: withdrawal.transactionHash || ''
         });
         setModalVisible(true);
     };
@@ -90,21 +134,32 @@ const WithdrawalManagement: React.FC = () => {
             const values = await form.validateFields();
             setProcessing(true);
 
-            const response = await fetch(`/api/withdrawal/admin/${currentWithdrawal?.id}/update-status`, {
+            if (!currentWithdrawal) {
+                throw new Error('No withdrawal selected');
+            }
+
+            const payload = {
+                status: values.status,
+                comment: values.comment,
+            };
+
+            // Add transaction hash if provided
+            if (values.transactionHash) {
+                payload['transactionHash'] = values.transactionHash;
+            }
+
+            const response = await fetch(`/api/withdrawal/admin/${currentWithdrawal.id}/update-status`, {
                 method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${localStorage.getItem('token')}`,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    status: values.status,
-                    comment: values.comment,
-                }),
+                body: JSON.stringify(payload),
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'Failed to update withdrawal status');
+                const errorData = await response.json().catch(() => ({ message: 'Failed to parse error response' }));
+                throw new Error(errorData.message || `Failed to update withdrawal status: ${response.status} ${response.statusText}`);
             }
 
             setModalVisible(false);
@@ -112,6 +167,7 @@ const WithdrawalManagement: React.FC = () => {
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
             setError(errorMessage);
+            console.error('Error updating withdrawal status:', err);
         } finally {
             setProcessing(false);
         }
@@ -127,6 +183,10 @@ const WithdrawalManagement: React.FC = () => {
                 return <Tag icon={<CheckCircleOutlined />} color="success">Completed</Tag>;
             case 'REJECTED':
                 return <Tag icon={<CloseCircleOutlined />} color="error">Rejected</Tag>;
+            case 'CANCELLED':
+                return <Tag icon={<CloseCircleOutlined />} color="default">Cancelled</Tag>;
+            case 'FAILED':
+                return <Tag icon={<CloseCircleOutlined />} color="volcano">Failed</Tag>;
             default:
                 return <Tag>{status}</Tag>;
         }
@@ -137,18 +197,18 @@ const WithdrawalManagement: React.FC = () => {
             title: 'Date',
             dataIndex: 'createdAt',
             key: 'createdAt',
-            render: (text: string) => new Date(text).toLocaleString(),
+            render: (text: string) => text ? new Date(text).toLocaleString() : '-',
         },
         {
             title: 'User ID',
             dataIndex: 'userId',
             key: 'userId',
             ellipsis: true,
-            render: (text: string) => (
+            render: (text: string) => text ? (
                 <Tooltip title={text}>
-                    <span>{text?.substring(0, 8)}...</span>
+                    <span>{text.substring(0, 8)}...</span>
                 </Tooltip>
-            ),
+            ) : '-',
         },
         {
             title: 'Requested By',
@@ -159,11 +219,11 @@ const WithdrawalManagement: React.FC = () => {
         {
             title: 'Amount',
             key: 'amount',
-            render: (_: any, record: Withdrawal) => (
+            render: (_: any, record: Withdrawal) => record.amount ? (
                 <span>
                     {record.amount.toFixed(2)} {record.currency}
                 </span>
-            ),
+            ) : '-',
         },
         {
             title: 'Method',
@@ -175,8 +235,12 @@ const WithdrawalManagement: React.FC = () => {
                         return 'Crypto Transfer';
                     case 'BANK_TRANSFER':
                         return 'Bank Transfer';
+                    case 'PAYPAL':
+                        return 'PayPal';
+                    case 'CREDIT_CARD':
+                        return 'Credit Card';
                     default:
-                        return method;
+                        return method || '-';
                 }
             },
         },
@@ -184,12 +248,13 @@ const WithdrawalManagement: React.FC = () => {
             title: 'KYC Level',
             dataIndex: 'kycLevelAtTime',
             key: 'kycLevelAtTime',
+            render: (text: string) => text || '-',
         },
         {
             title: 'Status',
             dataIndex: 'status',
             key: 'status',
-            render: (status: string) => getStatusTag(status),
+            render: (status: string) => status ? getStatusTag(status) : '-',
         },
         {
             title: 'Actions',
@@ -198,20 +263,13 @@ const WithdrawalManagement: React.FC = () => {
                 <Button
                     type="primary"
                     onClick={() => showProcessModal(record)}
+                    disabled={record.status !== 'PENDING'}
                 >
                     Process
                 </Button>
             ),
         },
     ];
-
-    if (loading && withdrawals.length === 0) {
-        return (
-            <Card title="Withdrawal Management" className="mb-5">
-                <Skeleton active />
-            </Card>
-        );
-    }
 
     return (
         <Card title="Withdrawal Management" className="mb-5">
@@ -234,6 +292,7 @@ const WithdrawalManagement: React.FC = () => {
                 pagination={pagination}
                 loading={loading}
                 onChange={handleTableChange}
+                scroll={{ x: 'max-content' }}
             />
 
             <Modal
@@ -252,11 +311,11 @@ const WithdrawalManagement: React.FC = () => {
                                     <p><strong>User ID:</strong> {currentWithdrawal.userId}</p>
                                     <p><strong>Amount:</strong> {currentWithdrawal.amount} {currentWithdrawal.currency}</p>
                                     <p><strong>Requested By:</strong> {currentWithdrawal.requestedBy}</p>
-                                    <p><strong>Date:</strong> {new Date(currentWithdrawal.createdAt).toLocaleString()}</p>
+                                    <p><strong>Date:</strong> {currentWithdrawal.createdAt ? new Date(currentWithdrawal.createdAt).toLocaleString() : '-'}</p>
                                 </div>
                                 <div>
                                     <p><strong>Method:</strong> {currentWithdrawal.withdrawalMethod}</p>
-                                    <p><strong>KYC Level:</strong> {currentWithdrawal.kycLevelAtTime}</p>
+                                    <p><strong>KYC Level:</strong> {currentWithdrawal.kycLevelAtTime || '-'}</p>
                                     <p><strong>Withdrawal Address:</strong> {currentWithdrawal.withdrawalAddress}</p>
                                     <p><strong>Status:</strong> {getStatusTag(currentWithdrawal.status)}</p>
                                 </div>
@@ -265,10 +324,10 @@ const WithdrawalManagement: React.FC = () => {
                             {currentWithdrawal.withdrawalMethod === 'BANK_TRANSFER' && currentWithdrawal.additionalDetails && (
                                 <div className="mt-4 p-3 bg-gray-50 rounded">
                                     <p><strong>Bank Details:</strong></p>
-                                    <p>Bank Name: {currentWithdrawal.additionalDetails.bankName}</p>
-                                    <p>Account Holder: {currentWithdrawal.additionalDetails.accountHolder}</p>
-                                    <p>Account Number: {currentWithdrawal.additionalDetails.accountNumber}</p>
-                                    <p>Routing Number: {currentWithdrawal.additionalDetails.routingNumber}</p>
+                                    <p>Bank Name: {currentWithdrawal.additionalDetails.bankName || '-'}</p>
+                                    <p>Account Holder: {currentWithdrawal.additionalDetails.accountHolder || '-'}</p>
+                                    <p>Account Number: {currentWithdrawal.additionalDetails.accountNumber || '-'}</p>
+                                    <p>Routing Number: {currentWithdrawal.additionalDetails.routingNumber || '-'}</p>
                                 </div>
                             )}
                         </div>
