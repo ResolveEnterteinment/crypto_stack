@@ -3,10 +3,12 @@ using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Logging;
+using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Dashboard;
+using Domain.DTOs.Payment;
 using Domain.Events;
 using Domain.Events.Entity;
 using Domain.Exceptions;
@@ -25,6 +27,7 @@ namespace Infrastructure.Services
     {
         private readonly IExchangeService _exchangeService;
         private readonly ISubscriptionService _subscriptionService;
+        private readonly IPaymentService _paymentService;
         private readonly IAssetService _assetService;
         private readonly IBalanceService _balanceService;
         private readonly IHubContext<DashboardHub> _hubContext;
@@ -40,6 +43,7 @@ namespace Infrastructure.Services
             IEventService eventService,
             IExchangeService exchangeService,
             ISubscriptionService subscriptionService,
+            IPaymentService paymentService,
             IAssetService assetService,
             IBalanceService balanceService,
             IHubContext<DashboardHub> hubContext
@@ -59,6 +63,7 @@ namespace Infrastructure.Services
         )
         {
             _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
+            _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
@@ -167,6 +172,49 @@ namespace Infrastructure.Services
         {
             string key = string.Format(CACHE_KEY, userId);
             CacheService.Invalidate(key);
+        }
+
+        public async Task<ResultWrapper<SubscriptionPaymentStatusDto>> GetSubscriptionPaymentStatusAsync(Guid subscriptionId)
+        {
+            using var scope = Logger.BeginScope("DashboardService::GetSubscriptionPaymentStatusAsync", new Dictionary<string, object>
+            {
+                ["SubscriptionId"] = subscriptionId
+            });
+
+            try
+            {
+                // Get subscription
+                var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
+                if (!subscriptionResult.IsSuccess || subscriptionResult.Data == null)
+                {
+                    throw new KeyNotFoundException($"Subscription {subscriptionId} not found");
+                }
+
+                var subscription = subscriptionResult.Data;
+
+                // Get latest payment
+                var latestPaymentResult = await _paymentService.GetLatestPaymentAsync(subscriptionId);
+
+                // Get failed payment count
+                var failedPaymentCountResult = await _paymentService.GetFailedPaymentCountAsync(subscriptionId);
+
+                var paymentStatus = new SubscriptionPaymentStatusDto
+                {
+                    SubscriptionId = subscriptionId,
+                    Status = subscription.Status,
+                    FailedPaymentCount = failedPaymentCountResult.IsSuccess ? failedPaymentCountResult.Data : 0,
+                    LatestPayment = latestPaymentResult.IsSuccess && latestPaymentResult.Data != null
+                        ? new PaymentDto(latestPaymentResult.Data)
+                        : null
+                };
+
+                return ResultWrapper<SubscriptionPaymentStatusDto>.Success(paymentStatus);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error getting subscription payment status for {subscriptionId}: {ex.Message}");
+                return ResultWrapper<SubscriptionPaymentStatusDto>.FromException(ex);
+            }
         }
         private async Task InvalidateCacheAndPush(Guid userId)
         {

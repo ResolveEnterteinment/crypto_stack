@@ -19,6 +19,7 @@ namespace Infrastructure
         private bool _disposed = false;
 
         // Services
+        private readonly ISubscriptionRetryService _subscriptionRetryService;
         private readonly IAssetService _assetService;
         private readonly ISubscriptionService _subscriptionService;
         private readonly IBalanceService _balanceService;
@@ -40,6 +41,7 @@ namespace Infrastructure
             IPaymentService paymentService,
             ITransactionService transactionService,
             IExchangeService exchangeService,
+            ISubscriptionRetryService subscriptionRetryService,
             IEventService eventService,
             IOrderManagementService orderManagementService,
             IPaymentProcessingService paymentProcessingService,
@@ -55,6 +57,7 @@ namespace Infrastructure
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
             _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
+            _subscriptionRetryService = subscriptionRetryService ?? throw new ArgumentNullException(nameof(subscriptionRetryService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _orderManagementService = orderManagementService ?? throw new ArgumentNullException(nameof(orderManagementService));
             _paymentProcessingService = paymentProcessingService ?? throw new ArgumentNullException(nameof(paymentProcessingService));
@@ -69,6 +72,7 @@ namespace Infrastructure
         public IPaymentService Payments => _paymentService;
         public ITransactionService Transactions => _transactionService;
         public IExchangeService Exchanges => _exchangeService;
+        public ISubscriptionRetryService SubscriptionRetry => _subscriptionRetryService;
         public IEventService Events => _eventService;
         public IOrderManagementService OrderManagement => _orderManagementService;
         public IPaymentProcessingService PaymentProcessing => _paymentProcessingService;

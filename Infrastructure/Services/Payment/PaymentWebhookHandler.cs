@@ -1,4 +1,5 @@
-﻿using Application.Interfaces;
+﻿using Application.Contracts.Requests.Payment;
+using Application.Interfaces;
 using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
@@ -7,6 +8,7 @@ using Domain.Constants.Logging;
 using Domain.DTOs;
 using Domain.DTOs.Payment;
 using Domain.Exceptions;
+using Domain.Models.Subscription;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services.Payment
@@ -17,17 +19,20 @@ namespace Infrastructure.Services.Payment
     public class StripeWebhookHandler : IPaymentWebhookHandler
     {
         private readonly IPaymentService _paymentService;
+        private readonly IEventService _eventService;
         private readonly ISubscriptionService _subscriptionService;
         private readonly IIdempotencyService _idempotencyService;
         private readonly ILoggingService _logger;
 
         public StripeWebhookHandler(
             IPaymentService paymentService,
+            IEventService eventService,
             ISubscriptionService subscriptionService,
             IIdempotencyService idempotencyService,
             ILoggingService logger)
         {
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
+            _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -62,6 +67,12 @@ namespace Infrastructure.Services.Payment
                     case "invoice.paid":
                         handled = true;
                         return await HandleInvoicePaidAsync(stripeEvent);
+                    case "setup_intent.succeeded":
+                        handled = true;
+                        return await HandleSetupIntentSucceededAsync(stripeEvent);
+                    case "payment_intent.payment_failed":
+                        handled = true;
+                        return await HandlePaymentFailedAsync(stripeEvent);
                     case "customer.subscription.deleted":
                         handled = await HandleSubscriptionDeletedAsync(stripeEvent);
                         break;
@@ -245,7 +256,7 @@ namespace Infrastructure.Services.Payment
                 );
 
             // Find our subscription
-            var filter = Builders<Domain.Models.Subscription.SubscriptionData>.Filter.Eq(
+            var filter = Builders<SubscriptionData>.Filter.Eq(
                 s => s.ProviderSubscriptionId, stripeSubscription.Id);
 
             var subscriptionResult = await _subscriptionService.GetOneAsync(filter);
@@ -294,36 +305,149 @@ namespace Infrastructure.Services.Payment
             }
         }
 
-        /// <summary>
-        /// Maps a Stripe subscription status to our internal status
-        /// </summary>
-        private SubscriptionStatus StripeSubscriptionStatusToInternal(string stripeStatus)
+        private async Task<ResultWrapper> HandlePaymentFailedAsync(Stripe.Event stripeEvent)
         {
-            return stripeStatus switch
+            var paymentIntent = stripeEvent.Data.Object as Stripe.PaymentIntent;
+            if (paymentIntent == null)
             {
-                "active" => SubscriptionStatus.Active,
-                "canceled" => SubscriptionStatus.Canceled,
-                "unpaid" => SubscriptionStatus.Active,
-                "past_due" => SubscriptionStatus.Active,
-                "trialing" => SubscriptionStatus.Active,
-                "incomplete" => SubscriptionStatus.Pending,
-                "incomplete_expired" => SubscriptionStatus.Canceled,
-                _ => SubscriptionStatus.Pending
-            };
+                _logger.LogWarning("Invalid event data: Expected PaymentIntent object");
+                return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid event data: Expected PaymentIntent object");
+            }
+
+            using var Scope = _logger.BeginScope("StripeWebhookHandler::HandlePaymentFailed", new
+            {
+                PaymentProviderId = paymentIntent.Id,
+            });
+
+
+            using var PaymentIntentScope = _logger.EnrichScope(
+                ("PaymentIntentId", paymentIntent.Id)
+            );
+
+            var metadata = paymentIntent.Metadata;
+
+            // Extract subscription ID from metadata
+            if (metadata == null ||
+                !metadata.TryGetValue("subscriptionId", out var subscriptionId) ||
+                string.IsNullOrEmpty(subscriptionId) ||
+                !Guid.TryParse(subscriptionId, out var parsedSubscriptionId) ||
+                parsedSubscriptionId == Guid.Empty)
+            {
+                await _logger.LogTraceAsync("Missing or invalid subscriptionId in PaymentIntent metadata", "Extract subscription ID from metadata", LogLevel.Error, true);
+                return ResultWrapper.Failure(FailureReason.ValidationError, "Missing or invalid subscriptionId in PaymentIntent metadata");
+            }
+
+            // Extract user ID from metadata
+            if (!metadata.TryGetValue("userId", out var userId) ||
+                string.IsNullOrEmpty(userId) ||
+                !Guid.TryParse(userId, out var parsedUserId) ||
+                parsedUserId == Guid.Empty)
+            {
+                await _logger.LogTraceAsync("Missing or invalid userId in PaymentIntent metadata", "Extract user ID from metadata", LogLevel.Error, true);
+                return ResultWrapper.Failure(FailureReason.ValidationError, "Missing userId in PaymentIntent metadata");
+            }
+
+            using var MetadataScope = _logger.EnrichScope(
+                ("SubscriptionId", subscriptionId),
+                ("UserId", userId)
+            );
+
+            _logger.EnrichScope(new
+                ("UserId", userId),
+                ("SubsriptionId", subscriptionId)
+            );
+
+            try
+            {
+                var processResult = await _paymentService.ProcessPaymentFailedAsync(new PaymentIntentRequest
+                {
+                    UserId = parsedUserId.ToString(),
+                    SubscriptionId = parsedSubscriptionId.ToString(),
+                    Provider = "Stripe",
+                    InvoiceId = paymentIntent.InvoiceId,
+                    PaymentId = paymentIntent.Id,
+                    Currency = paymentIntent.Currency,
+                    Amount = paymentIntent.Amount,
+                    Status = paymentIntent.Status,
+                    LastPaymentError = paymentIntent.LastPaymentError.Message,
+                });
+
+                if (processResult == null || !processResult.IsSuccess)
+                {
+                    throw new PaymentApiException($"Failed to process payment.failed event: {processResult?.ErrorMessage ?? "Process result returned null"}",
+                        "Stripe",
+                        paymentIntent.Id);
+                }
+
+                _logger.LogInformation("Successfully processed subscription {SubscriptionId} due to Stripe deletion",
+                    subscriptionId);
+
+                return ResultWrapper.Success();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error handling payment.failed event: {ErrorMessage}", ex.Message);
+                return ResultWrapper.FromException(ex);
+            }
         }
-        /// <summary>
-        /// Maps a Stripe subscription status to our internal status
-        /// </summary>
-        private string StripeSubscriptionIntervalToInternal(string stripeInterval)
+        private async Task<ResultWrapper> HandleSetupIntentSucceededAsync(Stripe.Event stripeEvent)
         {
-            return stripeInterval switch
+            using var Scope = _logger.BeginScope("StripeWebhookHandler => HandleSetupIntentSucceededAsync");
+
+            var setupIntent = stripeEvent.Data.Object as Stripe.SetupIntent;
+            if (setupIntent == null)
             {
-                "day" => SubscriptionInterval.Daily,
-                "week" => SubscriptionInterval.Weekly,
-                "month" => SubscriptionInterval.Monthly,
-                "year" => SubscriptionInterval.Yearly,
-                _ => SubscriptionInterval.Monthly
-            };
+                _logger.LogWarning("Invalid event data: Expected SetupIntent object");
+                return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid event data: Expected SetupIntent object");
+            }
+
+            using var SetupIntentScope = _logger.EnrichScope(
+                ("SetupIntentId", setupIntent.Id)
+            );
+
+            var metadata = setupIntent.Metadata;
+
+            // Extract subscription ID from metadata
+            if (metadata == null ||
+                !metadata.TryGetValue("subscriptionId", out var subscriptionId) ||
+                string.IsNullOrEmpty(subscriptionId) ||
+                !Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
+            {
+                await _logger.LogTraceAsync("Missing or invalid subscriptionId in SetupIntent metadata", "Extract subscription ID from metadata", LogLevel.Error, true);
+                return ResultWrapper.Failure(FailureReason.ValidationError, "Missing or invalid subscriptionId in SetupIntent metadata");
+            }
+
+            // Extract user ID from metadata
+            if (!metadata.TryGetValue("userId", out var userId) ||
+                string.IsNullOrEmpty(userId))
+            {
+                await _logger.LogTraceAsync("Missing or invalid userId in SetupIntent metadata", "Extract user ID from metadata", LogLevel.Error, true);
+                return ResultWrapper.Failure(FailureReason.ValidationError, "Missing userId in SetupIntent metadata");
+            }
+
+            using var MetadataScope = _logger.EnrichScope(
+                ("SubscriptionId", subscriptionId),
+                ("UserId", userId)
+            );
+
+            try
+            {
+                var processResult = await _paymentService.ProcessSetupIntentSucceededAsync(parsedSubscriptionId);
+
+                if (processResult == null || !processResult.IsSuccess)
+                {
+                    throw new PaymentApiException($"Failed to process setup_intent.succeeded event: {processResult?.ErrorMessage ?? "Process result returned null"}",
+                        "Stripe",
+                        setupIntent.Id);
+                }
+
+                return ResultWrapper.Success();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error handling setup_intent.succeeded event: {ErrorMessage}", ex.Message);
+                return ResultWrapper.FromException(ex);
+            }
         }
     }
 }

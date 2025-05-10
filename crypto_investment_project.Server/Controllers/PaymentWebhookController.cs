@@ -85,7 +85,7 @@ namespace crypto_investment_project.Server.Controllers
 
                 if (await _idempotencyService.HasKeyAsync(idempotencyKey))
                 {
-                    await _logger.LogTraceAsync($"Duplicate Stripe event detected: {stripeEventId}", level: Domain.Constants.Logging.LogLevel.Warning);
+                    _logger.LogWarning($"Duplicate Stripe event detected: {stripeEventId}");
                     throw new IdempotencyException(idempotencyKey);
                 }
 

@@ -9,7 +9,9 @@ namespace Application.Interfaces.Base
         public IMongoClient Client { get; }
         Task<T?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
         Task<T?> GetOneAsync(FilterDefinition<T> filter, CancellationToken ct = default);
+        Task<T?> GetOneAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken ct = default);
         Task<List<T>> GetAllAsync(FilterDefinition<T>? filter = null, CancellationToken cancellationToken = default);
+        Task<List<T>> GetAllAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken cancellationToken = default);
         Task<CrudResult> InsertAsync(T entity, CancellationToken cancellationToken = default);
         Task<CrudResult> UpdateAsync(Guid id, object updatedFields, CancellationToken cancellationToken = default);
         Task<CrudResult> DeleteAsync(Guid id, CancellationToken cancellationToken = default);

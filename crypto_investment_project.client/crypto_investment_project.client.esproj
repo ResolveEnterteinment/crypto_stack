@@ -17,5 +17,6 @@
     <Folder Include="src\components\LandingPage\ui\" />
     <Folder Include="src\components\KYC\" />
     <Folder Include="src\components\Withdrawal\" />
+    <Folder Include="src\artifacts\" />
   </ItemGroup>
 </Project>

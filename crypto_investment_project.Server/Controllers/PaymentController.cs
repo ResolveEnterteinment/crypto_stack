@@ -7,10 +7,12 @@ using Domain.Constants.Payment;
 using Domain.DTOs.Error;
 using Domain.DTOs.Payment;
 using Domain.Exceptions;
+using Domain.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Diagnostics;
+using System.Security.Claims;
 
 namespace crypto_investment_project.Server.Controllers
 {
@@ -25,8 +27,10 @@ namespace crypto_investment_project.Server.Controllers
         private readonly IEventService _eventService;
         private readonly IConfiguration _configuration;
         private readonly ILoggingService Logger;
+        private readonly IUnitOfWork _unitOfWork;
 
         public PaymentController(
+            IUnitOfWork unitOfWork,
             ISubscriptionService subscriptionService,
             IPaymentService paymentService,
             IIdempotencyService idempotencyService,
@@ -34,6 +38,7 @@ namespace crypto_investment_project.Server.Controllers
             IConfiguration configuration,
             ILoggingService logger)
         {
+            _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
@@ -297,6 +302,59 @@ namespace crypto_investment_project.Server.Controllers
                     Code = "SERVER_ERROR",
                     TraceId = correlationId
                 });
+            }
+        }
+
+        /// <summary>
+        /// Gets payment history for a subscription
+        /// </summary>
+        /// <param name="subscriptionId">The subscription ID</param>
+        /// <returns>List of payments for the subscription</returns>
+        [HttpGet("subscription/{subscriptionId}")]
+        public async Task<IActionResult> GetSubscriptionPayments(string subscriptionId)
+        {
+            try
+            {
+                if (!Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
+                {
+                    return BadRequest("Invalid subscription ID format");
+                }
+
+                // Get the current user ID from claims
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized("User ID not found in claims");
+                }
+
+                // Verify that the subscription belongs to the user
+                var subscription = await _unitOfWork.Subscriptions.GetByIdAsync(parsedSubscriptionId);
+                if (!subscription.IsSuccess || subscription.Data == null)
+                {
+                    return NotFound($"Subscription {subscriptionId} not found");
+                }
+
+                if (subscription.Data.UserId.ToString() != userId && !User.IsInRole("ADMIN"))
+                {
+                    return Forbid("You don't have permission to view this subscription's payments");
+                }
+
+                // Get payments for the subscription
+                // We need to add this method to the PaymentService
+                var filter = MongoDB.Driver.Builders<Domain.Models.Payment.PaymentData>.Filter.Eq(p => p.SubscriptionId, parsedSubscriptionId);
+                var paymentsResult = await _unitOfWork.Payments.GetManyAsync(filter);
+
+                if (!paymentsResult.IsSuccess)
+                {
+                    return StatusCode(500, paymentsResult.ErrorMessage);
+                }
+
+                return Ok(new { data = paymentsResult.Data });
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error getting payments for subscription {subscriptionId}: {ex.Message}");
+                return StatusCode(500, "An error occurred while processing your request");
             }
         }
     }

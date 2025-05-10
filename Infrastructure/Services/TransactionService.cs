@@ -96,7 +96,7 @@ namespace Infrastructure.Services
                 async () =>
                 {
                     var filter = Builders<TransactionData>.Filter.Eq(t => t.SubscriptionId, subscriptionId);
-                    var dataResult = await Repository.GetAllAsync(filter);
+                    var dataResult = await _repository.GetAllAsync(filter);
                     if (dataResult == null)
                         throw new KeyNotFoundException($"Failed to fetch subscripiton transactions");
 

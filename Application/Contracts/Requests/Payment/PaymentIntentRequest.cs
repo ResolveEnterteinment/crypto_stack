@@ -10,5 +10,6 @@
         public required string Currency { get; set; }
         public required decimal Amount { get; set; }
         public required string Status { get; set; }
+        public string? LastPaymentError { get; set; }
     }
 }

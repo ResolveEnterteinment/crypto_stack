@@ -13,7 +13,7 @@ namespace Domain.DTOs.Subscription
         public required DateTime NextDueDate { get; set; }
         public required decimal TotalInvestments { get; set; } = 0;
         public DateTime? EndDate { get; set; } = null;
-        public required SubscriptionStatus Status { get; set; } = SubscriptionStatus.Pending;
+        public required string Status { get; set; } = SubscriptionStatus.Pending;
         public bool IsCancelled { get; set; } = false;
     }
 }

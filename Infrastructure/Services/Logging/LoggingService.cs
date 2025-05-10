@@ -112,11 +112,11 @@ namespace Infrastructure.Services.Logging
                     disposables.Add(LogContext.PushProperty(key, value));
                     activity?.SetTag(key, value.ToString());
 
-                    _currentContext.Value[key] = value; // <--- also update the context dictionary
+                    _currentContext.Value[key] = value;
                 }
             }
 
-            var scopeName = activity.DisplayName ?? $"{_httpAccessor.HttpContext.Request.RouteValues["controller"]}/{_httpAccessor.HttpContext.Request.RouteValues["action"]}";
+            var scopeName = activity?.DisplayName ?? $"{_httpAccessor.HttpContext?.Request.RouteValues["controller"]}/{_httpAccessor.HttpContext?.Request.RouteValues["action"]}";
             LogTraceAsync($"Enriching scope {scopeName} ", level: Domain.Constants.Logging.LogLevel.Trace).GetAwaiter().GetResult();
 
             return new DisposableCollection(disposables);

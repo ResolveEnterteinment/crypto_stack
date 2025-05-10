@@ -1,11 +1,12 @@
 ﻿using Application.Contracts.Requests.Payment;
+using Application.Interfaces.Base;
 using Domain.DTOs;
 using Domain.DTOs.Payment;
 using Domain.Models.Payment;
 
 namespace Application.Interfaces.Payment
 {
-    public interface IPaymentService
+    public interface IPaymentService : IBaseService<PaymentData>
     {
         public IReadOnlyDictionary<string, IPaymentProvider> Providers { get; }
 
@@ -40,6 +41,29 @@ namespace Application.Interfaces.Payment
         /// <returns>The result of the cancellation</returns>
         Task<ResultWrapper> CancelPaymentAsync(string paymentId);
 
-        public Task<ResultWrapper<PaymentData>> GetByProviderIdAsync(string paymentProviderId);
+        Task<ResultWrapper<PaymentData>> GetByProviderIdAsync(string paymentProviderId);
+
+        Task<(decimal total, decimal fee, decimal platform, decimal net)> CalculatePaymentAmounts(InvoiceRequest i);
+        Task<ResultWrapper> ProcessPaymentFailedAsync(PaymentIntentRequest paymentIntentRequest);
+
+        // Update Application/Interfaces/Payment/IPaymentService.cs to add:
+        Task<ResultWrapper> UpdatePaymentRetryInfoAsync(
+            Guid paymentId,
+            int attemptCount,
+            DateTime lastAttemptAt,
+            DateTime nextRetryAt,
+            string failureReason);
+
+        Task<ResultWrapper<IEnumerable<PaymentData>>> GetPendingRetriesAsync();
+
+        Task<ResultWrapper> RetryPaymentAsync(Guid paymentId);
+
+        Task<ResultWrapper<string>> CreateUpdatePaymentMethodSessionAsync(string userId, string subscriptionId);
+
+        Task<ResultWrapper> ProcessSetupIntentSucceededAsync(Guid subscriptionId);
+
+        Task<ResultWrapper<IEnumerable<PaymentData>>> GetPaymentsForSubscriptionAsync(Guid subscriptionId);
+        Task<ResultWrapper<int>> GetFailedPaymentCountAsync(Guid subscriptionId);
+        Task<ResultWrapper<PaymentData>> GetLatestPaymentAsync(Guid subscriptionId);
     }
 }

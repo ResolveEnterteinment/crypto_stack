@@ -13,13 +13,15 @@ namespace Infrastructure.Services.Base
 {
     public abstract class BaseService<T> : IBaseService<T> where T : BaseEntity
     {
-        protected readonly ICrudRepository<T> Repository;
+        public readonly ICrudRepository<T> _repository;
         protected readonly ICacheService<T> CacheService;
         protected readonly IMongoIndexService<T> IndexService;
         protected readonly ILoggingService Logger;
         protected readonly IEventService? EventService;
 
         private static readonly IReadOnlySet<string> _validPropertyNames;
+
+        ICrudRepository<T> IBaseService<T>.Repository => _repository;
 
         static BaseService()
         {
@@ -37,7 +39,7 @@ namespace Infrastructure.Services.Base
             IEventService? eventService = null,
             IEnumerable<CreateIndexModel<T>>? indexModels = null)
         {
-            Repository = repository;
+            _repository = repository;
             CacheService = cacheService;
             IndexService = indexService;
             Logger = logger;
@@ -57,7 +59,7 @@ namespace Infrastructure.Services.Base
 
             var result = await FetchCached(
                 CacheService.GetCacheKey(id),
-                () => Repository.GetByIdAsync(id, ct),
+                () => _repository.GetByIdAsync(id, ct),
                 TimeSpan.FromMinutes(5),
                 () => new ResourceNotFoundException(typeof(T).Name, id.ToString())
             );
@@ -80,7 +82,7 @@ namespace Infrastructure.Services.Base
 
             var result = await FetchCached(
                 CacheService.GetFilterCacheKey() + ":one:" + filter,
-                () => Repository.GetOneAsync(filter, ct),
+                () => _repository.GetOneAsync(filter, ct),
                 TimeSpan.FromMinutes(5),
                 () => new KeyNotFoundException($"{typeof(T).Name} not found with specified filter.")
             );
@@ -103,7 +105,7 @@ namespace Infrastructure.Services.Base
 
             var result = await FetchCached(
                 CacheService.GetFilterCacheKey() + ":many:" + filter,
-                () => Repository.GetAllAsync(filter, ct),
+                () => _repository.GetAllAsync(filter, ct),
                 TimeSpan.FromMinutes(5),
                 () => new KeyNotFoundException($"No {typeof(T).Name} entities found with specified filter.")
             );
@@ -125,7 +127,7 @@ namespace Infrastructure.Services.Base
 
             var result = await FetchCached(
                 CacheService.GetCollectionCacheKey(),
-                () => Repository.GetAllAsync(null, ct),
+                () => _repository.GetAllAsync(null, ct),
                 TimeSpan.FromMinutes(5),
                 () => new KeyNotFoundException($"{typeof(T).Name} collection is empty.")
             );
@@ -133,6 +135,31 @@ namespace Infrastructure.Services.Base
             if (result == null || !result.IsSuccess)
             {
                 await Logger.LogTraceAsync($"Entity not found: {result?.ErrorMessage ?? "Fetch result returned null"}");
+            }
+
+            return result;
+        }
+
+        public async Task<ResultWrapper<PaginatedResult<T>>> GetPaginatedAsync(FilterDefinition<T> filter, SortDefinition<T> sort, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default)
+        {
+            using var Scope = Logger.BeginScope("BaseService::GetPaginatedAsync", new
+            {
+                Filter = filter,
+                Sort = sort,
+                Page = page,
+                PageSize = pageSize,
+            });
+
+            var result = await FetchCached(
+                CacheService.GetFilterCacheKey() + ":filter:" + filter + ":sort:" + sort,
+                () => _repository.GetPaginatedAsync(filter, sort, page, pageSize, cancellationToken),
+                TimeSpan.FromMinutes(5),
+                () => new KeyNotFoundException($"{typeof(T).Name} collection is empty.")
+            );
+
+            if (result == null || !result.IsSuccess)
+            {
+                await Logger.LogTraceAsync($"Failed to fetch paginated records {result?.ErrorMessage ?? "Fetch result returned null"}");
             }
 
             return result;
@@ -149,7 +176,7 @@ namespace Infrastructure.Services.Base
             var result = await SafeExecute(async () =>
             {
                 CacheService.Invalidate(CacheService.GetCollectionCacheKey());
-                var crudResult = await Repository.InsertAsync(entity, ct);  // returns CrudResult with AffectedIds, etc.
+                var crudResult = await _repository.InsertAsync(entity, ct);  // returns CrudResult with AffectedIds, etc.
                 if (crudResult == null || !crudResult.IsSuccess)
                     throw new DatabaseException(crudResult!.ErrorMessage!);
 
@@ -183,14 +210,14 @@ namespace Infrastructure.Services.Base
                     CacheService.Invalidate(CacheService.GetCollectionCacheKey());
 
                     // ensure the entity exists (will throw if not)
-                    var toUpdate = await Repository.GetByIdAsync(id, ct)
+                    var toUpdate = await _repository.GetByIdAsync(id, ct)
                         ?? throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
 
-                    var crudResult = await Repository.UpdateAsync(id, fields, ct);
+                    var crudResult = await _repository.UpdateAsync(id, fields, ct);
                     if (!crudResult.IsSuccess)
                         throw new DatabaseException(crudResult.ErrorMessage!);
 
-                    var updated = await Repository.GetByIdAsync(id, ct);
+                    var updated = await _repository.GetByIdAsync(id, ct);
                     await EventService?.PublishAsync(new EntityUpdatedEvent<T>(id, updated!, Logger.Context));
                     return crudResult;
                 });
@@ -218,10 +245,10 @@ namespace Infrastructure.Services.Base
                 CacheService.Invalidate(CacheService.GetCollectionCacheKey());
 
                 // fetch so we can emit the deleted entity in the event
-                var toDelete = await Repository.GetByIdAsync(id, ct)
+                var toDelete = await _repository.GetByIdAsync(id, ct)
                     ?? throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
 
-                var crudResult = await Repository.DeleteAsync(id, ct);
+                var crudResult = await _repository.DeleteAsync(id, ct);
                 if (!crudResult.IsSuccess)
                 {
                     await Logger.LogTraceAsync($"Failed to delete record: {toDelete.Id}");
@@ -251,14 +278,14 @@ namespace Infrastructure.Services.Base
             var result = await SafeExecute(async () =>
             {
                 // invalidate all affected caches
-                var toDelete = await Repository.GetAllAsync(filter, ct)
+                var toDelete = await _repository.GetAllAsync(filter, ct)
                     ?? throw new ResourceNotFoundException(typeof(T).Name, filter.ToString());
                 foreach (var e in toDelete)
                     CacheService.Invalidate(CacheService.GetCacheKey(e.Id));
                 CacheService.Invalidate(CacheService.GetCollectionCacheKey());
                 CacheService.Invalidate(CacheService.GetFilterCacheKey());
 
-                var crudResult = await Repository.DeleteManyAsync(filter, ct);
+                var crudResult = await _repository.DeleteManyAsync(filter, ct);
                 if (!crudResult.IsSuccess)
                     throw new DatabaseException(crudResult.ErrorMessage!);
 
@@ -285,7 +312,7 @@ namespace Infrastructure.Services.Base
             {
                 if (CacheService.TryGetValue(CacheService.GetCacheKey(id), out T _))
                     return true;
-                return await Repository.CheckExistsAsync(id, cancellationToken);
+                return await _repository.CheckExistsAsync(id, cancellationToken);
             });
 
             if (result == null || !result.IsSuccess)
@@ -313,12 +340,12 @@ namespace Infrastructure.Services.Base
             {
                 page = Math.Max(1, page);
                 pageSize = Math.Clamp(pageSize, 1, 100);
-                var total = await Repository.CountAsync(filter, cancellationToken);
+                var total = await _repository.CountAsync(filter, cancellationToken);
                 SortDefinition<T> sortDef = !string.IsNullOrEmpty(sortField) && _validPropertyNames.Contains(sortField)
                     ? (sortAscending ? Builders<T>.Sort.Ascending(sortField) : Builders<T>.Sort.Descending(sortField))
                     : Builders<T>.Sort.Descending("Id");
                 var skip = (page - 1) * pageSize;
-                var items = await Repository.GetPaginatedAsync(filter, sortDef, page, pageSize, cancellationToken);
+                var items = await _repository.GetPaginatedAsync(filter, sortDef, page, pageSize, cancellationToken);
                 return items;
             });
 
@@ -334,7 +361,7 @@ namespace Infrastructure.Services.Base
             Func<IClientSessionHandle, Task<TResult>> action,
             CancellationToken cancellationToken = default)
         {
-            using var session = await Repository.Client.StartSessionAsync(cancellationToken: cancellationToken);
+            using var session = await _repository.Client.StartSessionAsync(cancellationToken: cancellationToken);
             session.StartTransaction();
             try
             {

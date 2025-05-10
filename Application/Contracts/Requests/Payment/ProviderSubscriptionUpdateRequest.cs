@@ -8,7 +8,7 @@ namespace Application.Contracts.Requests.Payment
         public required int Amount { get; set; } = 0;
         public required DateTime NextDueDate { get; set; }
         public DateTime? EndDate { get; set; } = null;
-        public required SubscriptionStatus Status { get; set; } = SubscriptionStatus.Pending;
+        public required string Status { get; set; } = SubscriptionStatus.Pending;
         public bool IsCancelled { get; set; } = false;
     }
 }

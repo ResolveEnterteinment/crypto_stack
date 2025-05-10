@@ -63,7 +63,7 @@ namespace Infrastructure.Services
 
             // Fetch from DB
             var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
-            var record = await Repository.GetOneAsync(filter);
+            var record = await _repository.GetOneAsync(filter);
             if (record == null || string.IsNullOrEmpty(record.ResultJson))
                 return (false, default);
 
@@ -90,13 +90,13 @@ namespace Infrastructure.Services
                 : null;
 
             var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
-            var existing = await Repository.GetOneAsync(filter);
+            var existing = await _repository.GetOneAsync(filter);
             var expireAt = DateTime.UtcNow.Add(expiration ?? DEFAULT_EXPIRATION);
 
             if (existing != null)
             {
                 // Update
-                await Repository.UpdateAsync(existing.Id, new { ResultJson = json, ExpiresAt = expireAt });
+                await _repository.UpdateAsync(existing.Id, new { ResultJson = json, ExpiresAt = expireAt });
             }
             else
             {
@@ -108,7 +108,7 @@ namespace Infrastructure.Services
                     CreatedAt = DateTime.UtcNow,
                     ExpiresAt = expireAt
                 };
-                await Repository.InsertAsync(record);
+                await _repository.InsertAsync(record);
             }
 
             // Cache
@@ -126,7 +126,7 @@ namespace Infrastructure.Services
                 return exists;
 
             var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
-            var record = await Repository.GetOneAsync(filter);
+            var record = await _repository.GetOneAsync(filter);
             exists = record != null;
             _memoryCache.Set(cacheKey, exists, CACHE_DURATION);
             return exists;
@@ -166,10 +166,10 @@ namespace Infrastructure.Services
                 throw new ArgumentNullException(nameof(key));
 
             var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
-            var existing = await Repository.GetOneAsync(filter);
+            var existing = await _repository.GetOneAsync(filter);
             if (existing == null) return false;
 
-            await Repository.DeleteAsync(existing.Id);
+            await _repository.DeleteAsync(existing.Id);
             _memoryCache.Remove(CACHE_PREFIX + key);
             _memoryCache.Remove(CACHE_PREFIX + "exists:" + key);
             return true;

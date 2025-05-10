@@ -43,9 +43,21 @@ namespace Infrastructure.Services.Base
         public Task<T?> GetOneAsync(FilterDefinition<T> filter, CancellationToken ct = default)
             => Collection.Find(filter).FirstOrDefaultAsync(ct);
 
+        public Task<T?> GetOneAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken ct = default)
+            => Collection.Find(filter)
+            .Sort(sort)
+            .FirstOrDefaultAsync(ct);
+
         public Task<List<T>> GetAllAsync(FilterDefinition<T>? filter = null, CancellationToken cancellationToken = default)
         {
             return Collection.Find(filter ?? Builders<T>.Filter.Empty).ToListAsync(cancellationToken);
+        }
+
+        public Task<List<T>> GetAllAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken cancellationToken = default)
+        {
+            return Collection.Find(filter)
+                .Sort(sort)
+                .ToListAsync(cancellationToken);
         }
 
         public async Task<CrudResult> InsertAsync(T entity, CancellationToken cancellationToken = default)

@@ -163,6 +163,7 @@ public static class CoreServicesExtensions
         services.AddScoped<IIdempotencyService, IdempotencyService>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IWithdrawalService, WithdrawalService>();
+        services.AddScoped<ISubscriptionRetryService, SubscriptionRetryService>();
 
         services.AddScoped<ITestService, TestService>();
     }

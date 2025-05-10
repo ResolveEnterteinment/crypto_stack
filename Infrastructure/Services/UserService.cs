@@ -46,7 +46,7 @@ namespace Infrastructure.Services
                 return true;
             }
 
-            var checkExists = await Repository.CheckExistsAsync(userId);
+            var checkExists = await _repository.CheckExistsAsync(userId);
             return checkExists;
         }
 

@@ -25,13 +25,6 @@ namespace Application.Interfaces
         Task<DateTime?> GetNextDueDate(string invoiceId);
 
         /// <summary>
-        /// Gets a subscription from the payment provider
-        /// </summary>
-        /// <param name="providerSubscriptionId">The provider-specific subscription ID</param>
-        /// <returns>The subscription details</returns>
-        Task<PaymentSubscriptionDto> GetSubscriptionAsync(string providerSubscriptionId);
-
-        /// <summary>
         /// Creates a checkout session for a subscription
         /// </summary>
         /// <param name="userId">The ID of the user</param>

@@ -103,7 +103,7 @@ namespace Infrastructure.Services.Asset
         public Task<ResultWrapper<AssetData>> GetByTickerAsync(string ticker) =>
             FetchCached(
                 string.Format(CACHE_KEY_ASSET_TICKER, ticker.ToLowerInvariant()),
-                () => Repository.GetOneAsync(Builders<AssetData>.Filter.Where(a => a.Ticker.Equals(ticker, StringComparison.OrdinalIgnoreCase))),
+                () => _repository.GetOneAsync(Builders<AssetData>.Filter.Where(a => a.Ticker.Equals(ticker, StringComparison.OrdinalIgnoreCase))),
                 TimeSpan.FromMinutes(30),
                 () => throw new ResourceNotFoundException("Asset", ticker)
             );
@@ -111,7 +111,7 @@ namespace Infrastructure.Services.Asset
         public Task<ResultWrapper<AssetData>> GetFromSymbolAsync(string symbol) =>
             FetchCached(
                 string.Format(CACHE_KEY_ASSET_SYMBOL, symbol.ToLowerInvariant()),
-                () => Repository.GetOneAsync(Builders<AssetData>.Filter.Where(a => symbol.StartsWith(a.Symbol, StringComparison.OrdinalIgnoreCase))),
+                () => _repository.GetOneAsync(Builders<AssetData>.Filter.Where(a => symbol.StartsWith(a.Symbol, StringComparison.OrdinalIgnoreCase))),
                 TimeSpan.FromMinutes(30),
                 () => throw new KeyNotFoundException($"No asset found for symbol {symbol}")
             );
@@ -119,7 +119,7 @@ namespace Infrastructure.Services.Asset
         public Task<ResultWrapper<IEnumerable<AssetDto>>> GetSupportedAssetsAsync() =>
             FetchCached(
                 CACHE_KEY_SUPPORTED_ASSETS,
-                 () => Repository.GetAllAsync(Builders<AssetData>.Filter.Eq(a => a.Type, AssetType.Exchange))
+                 () => _repository.GetAllAsync(Builders<AssetData>.Filter.Eq(a => a.Type, AssetType.Exchange))
                  .ContinueWith(t => t.Result?.Select(a => new AssetDto(a))),
                 TimeSpan.FromMinutes(30)
             );
@@ -127,7 +127,7 @@ namespace Infrastructure.Services.Asset
         public Task<ResultWrapper<IEnumerable<string>>> GetSupportedTickersAsync() =>
             FetchCached(
                 CACHE_KEY_SUPPORTED_TICKERS,
-                () => Repository.GetAllAsync().ContinueWith(t => t.Result?.Select(a => a.Ticker)),
+                () => _repository.GetAllAsync().ContinueWith(t => t.Result?.Select(a => a.Ticker)),
                 TimeSpan.FromMinutes(30)
             );
     }

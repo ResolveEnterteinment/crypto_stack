@@ -14,5 +14,10 @@
         public required string Currency { get; set; }
         public required string Status { get; set; }
         public int RetryCount { get; set; } = 0;
+
+        public int AttemptCount { get; set; } = 0;
+        public DateTime? LastAttemptAt { get; set; }
+        public DateTime? NextRetryAt { get; set; }
+        public string? FailureReason { get; set; }
     }
 }

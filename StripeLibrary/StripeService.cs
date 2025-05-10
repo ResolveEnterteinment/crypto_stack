@@ -21,6 +21,7 @@ namespace StripeLibrary
     /// </summary>
     public class StripeService : IPaymentProvider, IStripeService
     {
+        private readonly IOptions<StripeSettings> _settings;
         private readonly ChargeService _chargeService;
         private readonly PaymentIntentService _paymentIntentService;
         private readonly InvoiceService _invoiceService;
@@ -431,7 +432,7 @@ namespace StripeLibrary
 
                     // Step 6: Calculate the fee (converted from cents to decimal)
                     var chargeAmount = Math.Round(
-                        (decimal)(balanceTransaction.Fee / balanceTransaction.ExchangeRate),
+                        (decimal)(balanceTransaction.Fee / balanceTransaction.ExchangeRate!),
                         2,
                         MidpointRounding.AwayFromZero);
 
@@ -543,78 +544,7 @@ namespace StripeLibrary
             }
         }
 
-        /// <summary>
-        /// Retrieves a subscription from Stripe.
-        /// </summary>
-        /// <param name="subscriptionId">The ID of the subscription to retrieve.</param>
-        /// <returns>The subscription.</returns>
-        public async Task<PaymentSubscriptionDto> GetSubscriptionAsync(string subscriptionId)
-        {
-            if (string.IsNullOrEmpty(subscriptionId))
-            {
-                _logger.LogInformation("No subscription ID provided");
-                return new Domain.DTOs.Payment.PaymentSubscriptionDto()
-                {
-                    NextDueDate = DateTime.UtcNow
-                };
-            }
 
-            string cacheKey = $"{SubscriptionCacheKeyPrefix}{subscriptionId}";
-
-            // Try to get from cache first if caching is available
-            if (_cache != null && _cache.TryGetValue(cacheKey, out PaymentSubscriptionDto cachedSubscription))
-            {
-                return cachedSubscription;
-            }
-
-            try
-            {
-                _logger.LogInformation("Retrieving subscription {SubscriptionId}", subscriptionId);
-
-                return await _retryPolicy.ExecuteAsync(async (context) =>
-                {
-                    var subscription = await _subscriptionService.GetAsync(subscriptionId);
-
-                    var result = new PaymentSubscriptionDto()
-                    {
-                        // Use the subscription's CurrentPeriodEnd if available, otherwise use current time
-                        NextDueDate = subscription != null ? subscription.CurrentPeriodEnd : DateTime.UtcNow
-                    };
-
-                    // Cache the result if caching is available
-                    if (_cache != null && subscription != null)
-                    {
-                        var cacheOptions = new MemoryCacheEntryOptions()
-                            .SetAbsoluteExpiration(TimeSpan.FromMinutes(30))
-                            .SetPriority(CacheItemPriority.Normal);
-
-                        _cache.Set(cacheKey, result, cacheOptions);
-                    }
-
-                    return result;
-                }, new Context("GetSubscription"));
-            }
-            catch (StripeException ex)
-            {
-                _logger.LogError(ex, "Stripe error retrieving subscription {SubscriptionId}: {Message}",
-                    subscriptionId, ex.Message);
-                // Return default subscription instead of throwing to avoid breaking payment flow
-                return new Domain.DTOs.Payment.PaymentSubscriptionDto()
-                {
-                    NextDueDate = DateTime.UtcNow
-                };
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error retrieving subscription {SubscriptionId}",
-                    subscriptionId);
-                // Return default subscription instead of throwing to avoid breaking payment flow
-                return new Domain.DTOs.Payment.PaymentSubscriptionDto()
-                {
-                    NextDueDate = DateTime.UtcNow
-                };
-            }
-        }
 
         /// <summary>
         /// Retrieves a subscription by payment ID from Stripe.
@@ -838,6 +768,163 @@ namespace StripeLibrary
             }
         }
 
+        // Add to StripeLibrary/StripeService.cs
+        public async Task<ResultWrapper> RetryPaymentAsync(string paymentIntentId, string subscriptionId)
+        {
+            try
+            {
+                // Get Stripe subscription
+                var subscription = await GetSubscriptionAsync(subscriptionId);
+                if (subscription == null)
+                    throw new KeyNotFoundException($"Stripe subscription {subscriptionId} not found");
+
+                // Get default payment method
+                var paymentMethodId = subscription.DefaultPaymentMethod.Id;
+                if (string.IsNullOrEmpty(paymentMethodId))
+                    throw new PaymentApiException("No default payment method found for subscription", "Stripe");
+
+                // Create a new payment intent
+                var options = new PaymentIntentCreateOptions
+                {
+                    Amount = subscription.Items.Data[0].Price.UnitAmount ?? 0,
+                    Currency = subscription.Items.Data[0].Price.Currency,
+                    Customer = subscription.CustomerId,
+                    PaymentMethod = paymentMethodId,
+                    Confirm = true,
+                    OffSession = true,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["subscriptionId"] = subscription.Metadata.TryGetValue("subscriptionId", out var subId) ? subId : string.Empty,
+                        ["userId"] = subscription.Metadata.TryGetValue("userId", out var userId) ? userId : string.Empty
+                    }
+                };
+
+                var intent = await _paymentIntentService.CreateAsync(options);
+
+                return ResultWrapper.Success();
+            }
+            catch (StripeException ex)
+            {
+                // Handle specific Stripe errors
+                string errorMessage = ex.StripeError?.Message ?? "Stripe payment retry failed";
+                string errorCode = ex.StripeError?.Code ?? "unknown";
+
+                return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable, $"{errorMessage} (Code: {errorCode})");
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper.FromException(ex);
+            }
+        }
+
+        public async Task<ResultWrapper<SessionDto>> CreateUpdatePaymentMethodSessionAsync(
+            string subscriptionId,
+            Dictionary<string, string> metadata)
+        {
+            try
+            {
+                // Get Stripe subscription
+                var subscription = await GetSubscriptionAsync(subscriptionId);
+                if (subscription == null)
+                    throw new KeyNotFoundException($"Stripe subscription {subscriptionId} not found");
+
+                // Create session for updating the payment method
+                var options = new SessionCreateOptions
+                {
+                    Mode = "setup",
+                    Customer = subscription.CustomerId,
+                    SetupIntentData = new SessionSetupIntentDataOptions
+                    {
+                        Metadata = metadata
+                    },
+                    SuccessUrl = _settings.Value.PaymentUpdateSuccessUrl + "?session_id={CHECKOUT_SESSION_ID}",
+                    CancelUrl = _settings.Value.PaymentUpdateCancelUrl,
+                    PaymentMethodTypes = new List<string> { "card" },
+                    Metadata = metadata
+                };
+
+                var service = new Stripe.Checkout.SessionService();
+                var session = await service.CreateAsync(options);
+
+                return ResultWrapper<SessionDto>.Success(new SessionDto
+                {
+                    Id = session.Id,
+                    Provider = "Stripe",
+                    ClientSecret = session.ClientSecret,
+                    Url = session.Url,
+                    SubscriptionId = subscriptionId,
+                    Metadata = metadata,
+                    Status = session.Status
+                });
+            }
+            catch (StripeException ex)
+            {
+                string errorMessage = ex.StripeError?.Message ?? "Stripe error creating update payment session";
+                return ResultWrapper<SessionDto>.Failure(FailureReason.ThirdPartyServiceUnavailable, errorMessage);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<SessionDto>.FromException(ex);
+            }
+        }
+
+        /// <summary>
+        /// Retrieves a subscription from Stripe.
+        /// </summary>
+        /// <param name="subscriptionId">The ID of the subscription to retrieve.</param>
+        /// <returns>The subscription.</returns>
+        private async Task<Subscription?> GetSubscriptionAsync(string subscriptionId)
+        {
+            if (string.IsNullOrEmpty(subscriptionId))
+            {
+                throw new ArgumentNullException("No subscription ID provided");
+            }
+
+            string cacheKey = $"{SubscriptionCacheKeyPrefix}{subscriptionId}";
+
+            // Try to get from cache first if caching is available
+            if (_cache != null && _cache.TryGetValue(cacheKey, out Subscription cachedSubscription))
+            {
+                return cachedSubscription!;
+            }
+
+            try
+            {
+                _logger.LogInformation("Retrieving subscription {SubscriptionId}", subscriptionId);
+
+                return await _retryPolicy.ExecuteAsync(async (context) =>
+                {
+                    var subscription = await _subscriptionService.GetAsync(subscriptionId);
+
+                    // Cache the result if caching is available
+                    if (_cache != null && subscription != null)
+                    {
+                        var cacheOptions = new MemoryCacheEntryOptions()
+                            .SetAbsoluteExpiration(TimeSpan.FromMinutes(30))
+                            .SetPriority(CacheItemPriority.Normal);
+
+                        _cache.Set(cacheKey, subscription, cacheOptions);
+                    }
+
+                    return subscription;
+                }, new Context("GetSubscription"));
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error retrieving subscription {SubscriptionId}: {Message}",
+                    subscriptionId, ex.Message);
+                // Return default subscription instead of throwing to avoid breaking payment flow
+                return default;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error retrieving subscription {SubscriptionId}",
+                    subscriptionId);
+                // Return default subscription instead of throwing to avoid breaking payment flow
+                return default;
+            }
+        }
+
         // Helper method to convert your interval format to Stripe's format
         private string ConvertIntervalToStripeFormat(string interval)
         {
@@ -851,5 +938,6 @@ namespace StripeLibrary
                 _ => "month" // Default to month
             };
         }
+
     }
 }

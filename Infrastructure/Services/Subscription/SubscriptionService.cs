@@ -201,7 +201,7 @@ namespace Infrastructure.Services.Subscription
         /// <param name="subscriptionId">The ID of the subscription</param>
         /// <param name="status">The new status</param>
         /// <returns>The result of the update operation</returns>
-        public async Task<ResultWrapper<CrudResult>> UpdateSubscriptionStatusAsync(Guid subscriptionId, SubscriptionStatus status)
+        public async Task<ResultWrapper<CrudResult>> UpdateSubscriptionStatusAsync(Guid subscriptionId, string status)
         {
             // Leverage BaseService.UpdateOneAsync
             var fields = new Dictionary<string, object> { ["Status"] = status };
@@ -276,7 +276,7 @@ namespace Infrastructure.Services.Subscription
                 async () =>
                 {
                     var filter = Builders<SubscriptionData>.Filter.Eq(x => x.UserId, userId);
-                    var allWr = await Repository.GetAllAsync(filter);
+                    var allWr = await _repository.GetAllAsync(filter);
                     if (allWr == null)
                     {
                         throw new SubscriptionFetchException($"Failed to fetch subscriptions for user {userId}");
@@ -576,28 +576,52 @@ namespace Infrastructure.Services.Subscription
             }
         }
 
-        private SubscriptionStatus StripeSubscriptionStatusToInternal(string stripeStatus)
-            => stripeStatus switch
-            {
-                "active" => SubscriptionStatus.Active,
-                "canceled" => SubscriptionStatus.Canceled,
-                "unpaid" => SubscriptionStatus.Active,
-                "past_due" => SubscriptionStatus.Active,
-                "trialing" => SubscriptionStatus.Active,
-                "incomplete" => SubscriptionStatus.Pending,
-                "incomplete_expired" => SubscriptionStatus.Canceled,
-                _ => SubscriptionStatus.Pending
-            };
+        // Add to Infrastructure/Services/Subscription/SubscriptionService.cs
 
-        private string StripeSubscriptionIntervalToInternal(string stripeInterval)
-            => stripeInterval switch
+        public async Task<ResultWrapper> ReactivateSubscriptionAsync(Guid subscriptionId)
+        {
+            using var scope = Logger.BeginScope("SubscriptionService::ReactivateSubscription", new
             {
-                "day" => SubscriptionInterval.Daily,
-                "week" => SubscriptionInterval.Weekly,
-                "month" => SubscriptionInterval.Monthly,
-                "year" => SubscriptionInterval.Yearly,
-                _ => SubscriptionInterval.Monthly
-            };
+                SubscriptionId = subscriptionId
+            });
+
+            try
+            {
+                // Get subscription
+                var subscriptionResult = await GetByIdAsync(subscriptionId);
+                if (!subscriptionResult.IsSuccess || subscriptionResult.Data == null)
+                    throw new ResourceNotFoundException("Subscription", subscriptionId.ToString());
+
+                var subscription = subscriptionResult.Data;
+
+                // Check if subscription is suspended
+                if (subscription.Status != SubscriptionStatus.Suspended)
+                    throw new InvalidOperationException($"Cannot reactivate subscription with status {subscription.Status}");
+
+                // Update status to active
+                var updateResult = await UpdateSubscriptionStatusAsync(subscriptionId, SubscriptionStatus.Active);
+                if (!updateResult.IsSuccess)
+                    throw new DatabaseException(updateResult.ErrorMessage);
+
+                // Notify user
+                await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                {
+                    UserId = subscription.UserId.ToString(),
+                    Message = $"Your subscription has been reactivated.",
+                    IsRead = false
+                });
+
+                return ResultWrapper.Success();
+            }
+            catch (Exception ex)
+            {
+                await Logger.LogTraceAsync($"Failed to reactivate subscription {subscriptionId}: {ex.Message}",
+                    level: LogLevel.Critical,
+                    requiresResolution: true);
+
+                return ResultWrapper.FromException(ex);
+            }
+        }
 
         public async Task TestLog()
         {

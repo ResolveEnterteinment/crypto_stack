@@ -14,7 +14,7 @@ namespace Domain.Models.Subscription
         public DateTime? NextDueDate { get; set; }
         public decimal? TotalInvestments { get; set; } = 0m;
         public DateTime? EndDate { get; set; } = null;
-        public SubscriptionStatus Status { get; set; } = SubscriptionStatus.Pending;
+        public string Status { get; set; } = SubscriptionStatus.Pending;
         public bool IsCancelled { get; set; } = false;
     }
 }

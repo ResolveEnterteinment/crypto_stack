@@ -12,6 +12,8 @@ namespace Domain.Interfaces
     /// </summary>
     public interface IUnitOfWork : IDisposable
     {
+        ISubscriptionRetryService SubscriptionRetry { get; }
+
         /// <summary>
         /// Begins a new MongoDB transaction
         /// </summary>
