@@ -1,4 +1,3 @@
-// src/components/Withdrawal/WithdrawalForm.tsx
 import React, { useState, useEffect } from 'react';
 import { Form, Input, Select, Button, Card, Alert, InputNumber, Skeleton, Typography } from 'antd';
 import { useAuth } from '../../context/AuthContext';

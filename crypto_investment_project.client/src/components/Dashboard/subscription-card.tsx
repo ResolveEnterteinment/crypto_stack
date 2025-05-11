@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import IAllocation from '../../interfaces/IAllocation';
-import SubscriptionCardProps from '../../interfaces/SubscriptionCardProps';
+import { SubscriptionCardProps, Allocation } from '../../types/subscription';
+import { Modal } from 'antd';
+import SubscriptionPaymentManager from '../Subscription/SubscriptionPaymentManager';
 
 
 const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
@@ -10,6 +11,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
     onViewHistory
 }) => {
     const [isExpanded, setIsExpanded] = useState(false);
+    const [showPaymentModal, setShowPaymentModal] = useState(false);
 
     const assetColors: Record<string, string> = {
         BTC: '#F7931A',   // Bitcoin orange
@@ -126,7 +128,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
                     <div>
                         <p className="font-semibold mb-1">Allocations:</p>
                         <div className="mb-4 h-4 bg-gray-200 rounded-full overflow-hidden flex">
-                            {subscription.allocations?.map((alloc: IAllocation) => {
+                            {subscription.allocations?.map((alloc: Allocation) => {
                                 // Calculate percentage width for the bar
                                 const percentage = alloc.percentAmount;
                                 return (
@@ -134,25 +136,25 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
                                         key={alloc.assetId}
                                         style={{
                                             width: `${percentage}%`,
-                                            backgroundColor: assetColors[alloc.assetTicker] || '#6B7280'
+                                            backgroundColor: assetColors[alloc.ticker] || '#6B7280'
                                         }}
                                         className="h-full"
-                                        title={`${alloc.assetTicker}: ${percentage.toFixed(1)}%`}
+                                        title={`${alloc.ticker}: ${percentage.toFixed(1)}%`}
                                     />
                                 );
                             })}
                         </div>
                         {/* List of balances */}
                         <div className="space-y-3">
-                            {subscription.allocations.map((alloc: IAllocation) => (
+                            {subscription.allocations.map((alloc: Allocation) => (
                                 <div key={alloc.assetId} className="flex justify-between items-center">
                                     <div className="flex items-center">
                                         <div
                                             className="w-3 h-3 rounded-full mr-2"
-                                            style={{ backgroundColor: assetColors[alloc.assetTicker] || '#6B7280' }}
+                                            style={{ backgroundColor: assetColors[alloc.ticker] || '#6B7280' }}
                                         />
                                         <span className="font-medium">
-                                            {(alloc.assetName || alloc.assetTicker) && <span className="text-gray-500 ml-1">{alloc.assetName} ({alloc.assetTicker})</span>}
+                                            {(alloc.assetName || alloc.ticker) && <span className="text-gray-500 ml-1">{alloc.assetName} ({alloc.ticker})</span>}
                                         </span>
                                     </div>
                                     <div className="font-bold">{alloc.percentAmount}%</div>
@@ -166,6 +168,12 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
 
             {/* Action buttons */}
             <div className="flex space-x-2">
+                <button
+                    onClick={() => setShowPaymentModal(true)}
+                    className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                    View Payment Status
+                </button>
                 <button
                     onClick={() => onEdit(subscription.id)}
                     className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 px-4 rounded-md text-sm font-medium transition-colors"
@@ -188,6 +196,15 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
                     History
                 </button>
             </div>
+            <Modal
+                title="Payment Status"
+                visible={showPaymentModal}
+                onCancel={() => setShowPaymentModal(false)}
+                footer={null}
+                width={600}
+            >
+                <SubscriptionPaymentManager subscription={subscription} />
+            </Modal>
         </div>
     );
 };

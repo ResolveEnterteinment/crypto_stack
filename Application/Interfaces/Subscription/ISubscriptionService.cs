@@ -13,7 +13,9 @@ namespace Application.Interfaces.Subscription
         INotificationHandler<PaymentReceivedEvent>,
         INotificationHandler<PaymentCancelledEvent>,
         INotificationHandler<SubscriptionCreatedEvent>,
-        INotificationHandler<CheckoutSessionCompletedEvent>
+        INotificationHandler<CheckoutSessionCompletedEvent>,
+        INotificationHandler<PaymentMethodUpdatedEvent>,
+        INotificationHandler<SubscriptionReactivationRequestedEvent>
     {
         Task<ResultWrapper<CrudResult>> CreateAsync(SubscriptionCreateRequest request);
         Task<ResultWrapper> UpdateAsync(Guid id, SubscriptionUpdateRequest request);

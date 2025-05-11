@@ -28,7 +28,6 @@ namespace Infrastructure.Services
         private readonly IExchangeService _exchangeService;
         private readonly ISubscriptionService _subscriptionService;
         private readonly IPaymentService _paymentService;
-        private readonly IAssetService _assetService;
         private readonly IBalanceService _balanceService;
         private readonly IHubContext<DashboardHub> _hubContext;
 
@@ -65,7 +64,6 @@ namespace Infrastructure.Services
             _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
-            _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
         }
@@ -113,7 +111,15 @@ namespace Infrastructure.Services
                     if (asset.Type != filterType) continue;
                     var rate = await _exchangeService.Exchanges[asset.Exchange].GetAssetPrice(asset.Ticker);
                     decimal val = rate.IsSuccess ? b.Total * rate.Data : 0;
-                    list.Add(new AssetHoldingsDto { Name = asset.Name, Ticker = asset.Ticker, Total = b.Total, Value = val });
+                    list.Add(new AssetHoldingsDto
+                    {
+                        Id = asset.Id.ToString(),
+                        Name = asset.Name,
+                        Symbol = asset.Symbol,
+                        Ticker = asset.Ticker,
+                        Total = b.Total,
+                        Value = val
+                    });
                 }
                 return ResultWrapper<IEnumerable<AssetHoldingsDto>>.Success(list);
             }

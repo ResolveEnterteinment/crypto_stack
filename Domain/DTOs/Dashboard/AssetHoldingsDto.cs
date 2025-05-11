@@ -2,6 +2,7 @@
 {
     public class AssetHoldingsDto
     {
+        public string Id { get; set; }
         public string Name { get; set; }
         public string Ticker { get; set; }
         public string Symbol { get; set; }

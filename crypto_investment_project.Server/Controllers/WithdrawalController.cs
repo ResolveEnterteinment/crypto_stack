@@ -1,4 +1,5 @@
 // crypto_investment_project.Server/Controllers/WithdrawalController.cs
+using Application.Contracts.Requests.Withdrawal;
 using Application.Interfaces.Withdrawal;
 using Domain.Constants.Withdrawal;
 using Domain.DTOs.Withdrawal;
@@ -257,11 +258,5 @@ namespace crypto_investment_project.Server.Controllers
                 return StatusCode(500, new { message = "An error occurred while updating withdrawal status" });
             }
         }
-    }
-
-    public class WithdrawalStatusUpdateRequest
-    {
-        public string Status { get; set; }
-        public string Comment { get; set; }
     }
 }

@@ -2,8 +2,8 @@
 import api from "./api";
 
 export interface IBalance {
-    assetId?: string;
-    name?: string;
+    id: string;
+    name: string;
     ticker: string;
     symbol?: string;
     available: number;

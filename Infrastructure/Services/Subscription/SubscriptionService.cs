@@ -332,11 +332,11 @@ namespace Infrastructure.Services.Subscription
                     subscriptionId);
 
                 // Update our subscription with the active status
-                var updatedFields = new Dictionary<string, object>
+                var updatedFields = new
                 {
-                    ["Provider"] = notification.Session.Provider,
-                    ["ProviderSubscriptionId"] = notification.Session.SubscriptionId,
-                    ["Status"] = SubscriptionStatus.Active
+                    Provider = notification.Session.Provider,
+                    ProviderSubscriptionId = notification.Session.SubscriptionId,
+                    Status = SubscriptionStatus.Active
                 };
 
                 var updateResult = await UpdateAsync(subscriptionId, updatedFields);
@@ -576,7 +576,56 @@ namespace Infrastructure.Services.Subscription
             }
         }
 
-        // Add to Infrastructure/Services/Subscription/SubscriptionService.cs
+        public async Task Handle(PaymentMethodUpdatedEvent notification, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var subscriptionId = notification.SubscriptionId;
+
+                // Get subscription
+                var subscriptionResult = await GetByIdAsync(subscriptionId);
+                if (!subscriptionResult.IsSuccess || subscriptionResult.Data == null)
+                {
+                    Logger.LogWarning("Subscription {SubscriptionId} not found", subscriptionId);
+                    return;
+                }
+
+                var subscription = subscriptionResult.Data;
+
+                // Check if subscription is suspended - if so, reactivate it
+                if (subscription.Status == SubscriptionStatus.Suspended)
+                {
+                    await ReactivateSubscriptionAsync(subscriptionId);
+                    Logger.LogInformation("Reactivated suspended subscription {SubscriptionId}", subscriptionId);
+                }
+
+                // Notify user of successful payment method update
+                await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                {
+                    UserId = subscription.UserId.ToString(),
+                    Message = "Your payment method has been successfully updated.",
+                    IsRead = false
+                });
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Error handling payment method updated event: {ErrorMessage}", ex.Message);
+                // Don't rethrow to avoid disrupting the event pipeline
+            }
+        }
+
+        public async Task Handle(SubscriptionReactivationRequestedEvent notification, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await ReactivateSubscriptionAsync(notification.SubscriptionId);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Error handling subscription reactivation request: {ErrorMessage}", ex.Message);
+                // Don't rethrow to avoid disrupting the event pipeline
+            }
+        }
 
         public async Task<ResultWrapper> ReactivateSubscriptionAsync(Guid subscriptionId)
         {

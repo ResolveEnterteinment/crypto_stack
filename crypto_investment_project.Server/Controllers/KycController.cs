@@ -37,7 +37,7 @@ namespace crypto_investment_project.Server.Controllers
                     return BadRequest(new { message = "Invalid user ID" });
                 }
 
-                var kycService = _kycServiceFactory.GetKycServiceByUserId(userId.Value);
+                var kycService = _kycServiceFactory.GetKycService();
                 var result = await kycService.GetUserKycStatusAsync(userId.Value);
 
                 if (!result.IsSuccess)
@@ -45,7 +45,7 @@ namespace crypto_investment_project.Server.Controllers
                     return BadRequest(new { message = result.ErrorMessage });
                 }
 
-                return Ok(result.Data);
+                return Ok(new { data = result.Data });
             }
             catch (Exception ex)
             {
@@ -88,7 +88,7 @@ namespace crypto_investment_project.Server.Controllers
                 }
                 else
                 {
-                    kycService = _kycServiceFactory.GetKycServiceByUserId(userId.Value);
+                    kycService = _kycServiceFactory.GetKycService();
                 }
 
                 var result = await kycService.InitiateKycVerificationAsync(request);
@@ -201,7 +201,7 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 // Get the appropriate KYC service
-                var kycService = _kycServiceFactory.GetKycServiceByUserId(parsedUserId);
+                var kycService = _kycServiceFactory.GetKycService();
                 var result = await kycService.UpdateKycStatusAsync(
                     parsedUserId,
                     request.Status,
@@ -234,7 +234,7 @@ namespace crypto_investment_project.Server.Controllers
                     return BadRequest(new { message = "Invalid user ID" });
                 }
 
-                var kycService = _kycServiceFactory.GetKycServiceByUserId(userId.Value);
+                var kycService = _kycServiceFactory.GetKycService();
                 var result = await kycService.IsUserEligibleForTrading(userId.Value);
 
                 if (!result.IsSuccess)

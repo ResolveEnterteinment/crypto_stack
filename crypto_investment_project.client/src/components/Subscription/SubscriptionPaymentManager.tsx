@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { PaymentData } from "../../types/payment";
-import { SubscriptionData } from '../../types/subscription';
+import { Subscription } from '../../types/subscription';
 import { AlertTriangle, Check, AlertCircle, Clock, CreditCard } from 'lucide-react';
+import api from '../../services/api'; // Import the API service
 
 interface ApiResponse<T> {
     data: T | null;
@@ -12,7 +13,7 @@ const PaymentStatusCard = ({
     subscription,
     onUpdatePaymentMethod
 }: {
-    subscription: SubscriptionData | null;
+    subscription: Subscription | null;
     onUpdatePaymentMethod: (subscriptionId: string) => void;
 }) => {
     const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -28,17 +29,22 @@ const PaymentStatusCard = ({
     const fetchPaymentData = async () => {
         setIsLoading(true);
         try {
-            const response = await fetch(`/api/payments/subscription/${subscription?.id}`);
-            if (!response.ok) {
-                throw new Error('Failed to fetch payment data');
-            }
-            const data: ApiResponse<PaymentData[]> = await response.json();
+            // Use the api service instead of fetch
+            const response = await api.get<ApiResponse<PaymentData[]>>(`/payment/subscription/${subscription?.id}`);
+
+            const data = response.data;
             setPayments(data.data || []);
             setError(null);
-        } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
+        } catch (err: any) {
+            // The api service provides better error messages
+            const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch payment data';
             setError(errorMessage);
             console.error('Error fetching payment data:', err);
+
+            // Handle authentication errors
+            if (err.response?.status === 401) {
+                setError('Authentication failed. Please login again.');
+            }
         } finally {
             setIsLoading(false);
         }
@@ -200,7 +206,7 @@ const PaymentStatusCard = ({
 };
 
 // Main component that handles payment update flow
-const SubscriptionPaymentManager = ({ subscription }: { subscription: SubscriptionData | null }) => {
+const SubscriptionPaymentManager = ({ subscription }: { subscription: Subscription | null }) => {
     const [updateUrl, setUpdateUrl] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -210,18 +216,9 @@ const SubscriptionPaymentManager = ({ subscription }: { subscription: Subscripti
         setError(null);
 
         try {
-            const response = await fetch(`/api/payment-methods/update/${subscriptionId}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to create payment update session');
-            }
-
-            const data = await response.json();
+            // Use the api service
+            const response = await api.post(`/payment-methods/update/${subscriptionId}`);
+            const data = response.data;
 
             if (data.url) {
                 setUpdateUrl(data.url);
@@ -229,8 +226,8 @@ const SubscriptionPaymentManager = ({ subscription }: { subscription: Subscripti
             } else {
                 throw new Error('No redirect URL returned');
             }
-        } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
+        } catch (err: any) {
+            const errorMessage = err.response?.data?.message || err.message || 'Failed to create payment update session';
             setError(errorMessage);
             console.error('Error creating payment update session:', err);
         } finally {
@@ -243,22 +240,13 @@ const SubscriptionPaymentManager = ({ subscription }: { subscription: Subscripti
         setError(null);
 
         try {
-            const response = await fetch(`/api/subscription-management/reactivate/${subscriptionId}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'Failed to reactivate subscription');
-            }
+            // Use the api service
+            await api.post(`/subscription-management/reactivate/${subscriptionId}`);
 
             // Refresh the page to update status
             window.location.reload();
-        } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
+        } catch (err: any) {
+            const errorMessage = err.response?.data?.message || err.message || 'Failed to reactivate subscription';
             setError(errorMessage);
             console.error('Error reactivating subscription:', err);
         } finally {

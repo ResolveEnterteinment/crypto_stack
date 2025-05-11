@@ -99,10 +99,8 @@ namespace Infrastructure.Services
                         Builders<NotificationData>.Filter.Eq(n => n.IsRead, false)
                     );
 
-                    var notificationsResult = await GetManyAsync(filter);
-                    if (notificationsResult == null || !notificationsResult.IsSuccess)
+                    var notifications = await _repository.GetAllAsync(filter) ??
                         throw new KeyNotFoundException("Failed to fetch");
-                    var notifications = notificationsResult.Data;
                     Logger.LogInformation("Retrieved {Count} unread notifications for user {UserId}", notifications?.Count ?? 0, userId);
 
                     return notifications;
@@ -188,15 +186,11 @@ namespace Infrastructure.Services
             {
                 try
                 {
-                    var notifWrapper = await GetByIdAsync(notificationId);
-                    if (notifWrapper == null || !notifWrapper.IsSuccess)
-                        throw new KeyNotFoundException($"Notification not found: {notifWrapper?.ErrorMessage ?? "Fetch notificiation returned null"}");
+                    var notification = await _repository.GetByIdAsync(notificationId) ??
+                        throw new KeyNotFoundException($"Notification not found: Fetch notificiation returned null");
 
-                    var notification = notifWrapper.Data;
-
-                    var result = await UpdateAsync(notificationId, new { IsRead = true });
-                    if (result == null || !result.IsSuccess)
-                        throw new DatabaseException($"Failed to update notification: {result?.ErrorMessage ?? "Update result returned null."}");
+                    var result = await _repository.UpdateAsync(notificationId, new { IsRead = true }) ??
+                        throw new DatabaseException($"Failed to update notification: Update result returned null.");
 
                     var cacheKey = string.Format(CACHE_KEY_USER_NOTIFICATIONS, notification!.UserId);
                     CacheService.Invalidate(cacheKey);

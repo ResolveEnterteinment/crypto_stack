@@ -219,6 +219,7 @@ namespace Infrastructure.Services.Payment
                     PaymentIntentId = invoice.PaymentIntentId,
                     UserId = userId,
                     SubscriptionId = subscriptionId,
+                    ProviderSubscripitonId = invoice.SubscriptionId,
                     Amount = invoice.AmountPaid,
                     Currency = invoice.Currency,
                     Status = invoice.Status

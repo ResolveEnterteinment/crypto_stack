@@ -6,6 +6,7 @@ import { Card, Button, Alert, Form, Input, Steps, Select, Row, Col } from 'antd'
 import { UserOutlined, IdcardOutlined, CheckCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { Spin } from 'antd';
 import { kycProviders, getKycProviderConfig } from '../../config/kycProviders';
+import api from '../../services/api';
 
 const { Step } = Steps;
 const { Option } = Select;
@@ -61,19 +62,16 @@ const KycVerification = () => {
     }, [user]);
 
     const fetchKycStatus = async () => {
-        try {
             setLoading(true);
-            const response = await fetch('/api/kyc/status', {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
-                },
-            });
+        try {
+            const response = await api.safeRequest('get','/kyc/status');
 
-            if (!response.ok) {
+            if (!response.success) {
+                console.log("fetchKycStatus => response: ", response);
                 throw new Error('Failed to fetch KYC status');
             }
 
-            const data = await response.json();
+            const data = await response.data;
             setKycStatus(data);
 
             // Set current step based on status
@@ -121,30 +119,39 @@ const KycVerification = () => {
 
             setLoading(true);
 
+            // Prepare the request data
+            const requestData = {
+                userId: user.id,
+                verificationLevel: "STANDARD",
+                redirectAfterVerification: true,
+                redirectUrl: `${window.location.origin}/kyc-callback`,
+                locale: "en",
+                userData: {
+                    firstName: formData.firstName,
+                    lastName: formData.lastName,
+                    dateOfBirth: formData.dateOfBirth,
+                    address: formData.address,
+                    country: formData.country,
+                    city: formData.city,
+                    postalCode: formData.postalCode
+                }
+            };
+
             // Prepare the API URL - include provider if admin has selected one
-            let url = '/api/kyc/verify';
+            let url = '/kyc/verify';
             if (isAdmin && formData.provider) {
                 url += `?provider=${formData.provider}`;
             }
 
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    userId: user.id,
-                    verificationLevel: 'STANDARD',
-                    userData: formData,
-                }),
-            });
+            // Send the request with data
+            const response = await api.safeRequest('post', url, requestData);
 
-            if (!response.ok) {
+            if (!response.success) {
                 throw new Error('Failed to initiate verification');
             }
 
-            const data = await response.json();
+            const data = await response.data;
+
             setVerificationUrl(data.verificationUrl);
             setCurrentStep(2);
             await fetchKycStatus(); // Refresh status

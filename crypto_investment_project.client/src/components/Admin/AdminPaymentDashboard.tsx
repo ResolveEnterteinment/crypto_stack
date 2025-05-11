@@ -8,6 +8,7 @@ import {
     Filter,
     Download
 } from 'lucide-react';
+import api from '../../services/api';
 
 interface PaginatedResponse<T> {
     items: T[];
@@ -39,11 +40,11 @@ const AdminPaymentDashboard = () => {
     const fetchPayments = async () => {
         setIsLoading(true);
         try {
-            const response = await fetch(`/api/admin/payments?status=${filter}&page=${page}&pageSize=${pageSize}&search=${searchQuery}`);
-            if (!response.ok) {
+            const response = await api.safeRequest('get', `/admin/payments?status=${filter}&page=${page}&pageSize=${pageSize}&search=${searchQuery}`);
+            if (!response.success) {
                 throw new Error('Failed to fetch payments');
             }
-            const data: ApiResponse<PaginatedResponse<PaymentData>> = await response.json();
+            const data: ApiResponse<PaginatedResponse<PaymentData>> = await response.data;
             setPayments(data.data.items || []);
             setTotalPages(Math.ceil(data.data.totalCount / pageSize));
             setError(null);

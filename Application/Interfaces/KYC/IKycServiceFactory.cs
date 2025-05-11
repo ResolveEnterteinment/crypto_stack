@@ -5,6 +5,5 @@ namespace Application.Interfaces.KYC
     {
         IKycService GetKycService();
         IKycService GetKycService(string providerName);
-        IKycService GetKycServiceByUserId(Guid userId);
     }
 }

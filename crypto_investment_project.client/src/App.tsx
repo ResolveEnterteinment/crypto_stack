@@ -8,6 +8,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import SubscriptionCreationPage from "./pages/SubscriptionCreationPage";
 import AdminPage from "./pages/AdminPage";
 import KycVerification from "./components/KYC/KycVerification";
+import WithdrawalForm from "./components/Withdrawal/WithdrawalForm";
 
 const App: React.FC = () => {
     return (
@@ -25,8 +26,15 @@ const App: React.FC = () => {
 
             {/* Standard subscription requires KYC */}
             <Route path="/subscription/new" element={
-                <ProtectedRoute requiredKycLevel="BASIC">
+                <ProtectedRoute>
                     <SubscriptionCreationPage />
+                </ProtectedRoute>
+            } />
+
+            {/* Standard subscription requires KYC */}
+            <Route path="/withdraw" element={
+                <ProtectedRoute requiredKycLevel="BASIC">
+                    <WithdrawalForm />
                 </ProtectedRoute>
             } />
 

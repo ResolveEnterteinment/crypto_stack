@@ -217,8 +217,10 @@ namespace Infrastructure.Services.Base
                     if (!crudResult.IsSuccess)
                         throw new DatabaseException(crudResult.ErrorMessage!);
 
-                    var updated = await _repository.GetByIdAsync(id, ct);
-                    await EventService?.PublishAsync(new EntityUpdatedEvent<T>(id, updated!, Logger.Context));
+                    var updatedResult = await GetByIdAsync(id, ct);
+                    if (updatedResult == null || !updatedResult.IsSuccess)
+                        throw new DatabaseException($"Failed to fetch updated {typeof(T).Name} entity: {updatedResult?.ErrorMessage ?? "Fetch result returned null"}");
+                    await EventService?.PublishAsync(new EntityUpdatedEvent<T>(id, updatedResult.Data!, Logger.Context));
                     return crudResult;
                 });
 

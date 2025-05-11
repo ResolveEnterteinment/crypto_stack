@@ -21,11 +21,7 @@ namespace crypto_investment_project.Server.Middleware
         public async Task InvokeAsync(HttpContext context, IKycService kycService, IWithdrawalService withdrawalService)
         {
             // Skip for non-API requests or paths that don't require KYC
-            if (!context.Request.Path.StartsWithSegments("/api") ||
-                context.Request.Path.StartsWithSegments("/api/auth") ||
-                context.Request.Path.StartsWithSegments("/api/kyc") ||
-                context.Request.Path.StartsWithSegments("/health") ||
-                context.Request.Method == "OPTIONS")
+            if (!context.Request.Path.StartsWithSegments("/api/withdrawal"))
             {
                 await _next(context);
                 return;

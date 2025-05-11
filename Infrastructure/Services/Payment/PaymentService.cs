@@ -4,7 +4,6 @@ using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
 using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
-using Application.Interfaces.Subscription;
 using Domain.Constants;
 using Domain.Constants.Logging;
 using Domain.Constants.Payment;
@@ -26,7 +25,6 @@ namespace Infrastructure.Services
     {
         private readonly Dictionary<string, IPaymentProvider> _providers = new(StringComparer.OrdinalIgnoreCase);
         private readonly IPaymentProvider _defaultProvider;
-        private readonly ISubscriptionService _subscriptionService;
         private readonly IStripeService _stripeService;
         private readonly IAssetService _assetService;
         private readonly IUserService _userService;
@@ -45,7 +43,6 @@ namespace Infrastructure.Services
             IMongoIndexService<PaymentData> indexService,
             ILoggingService logger,
             IEventService eventService,
-            ISubscriptionService subscriptionService,
             IOptions<PaymentServiceSettings> paymentSettings,
             IOptions<StripeSettings> stripeSettings,
             IAssetService assetService,
@@ -58,7 +55,6 @@ namespace Infrastructure.Services
             _userService = userService ?? throw new ArgumentNullException(nameof(userService));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
-            _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _stripeService = new StripeService(stripeSettings);
             _providers.Add("Stripe", _stripeService as IPaymentProvider);
             _defaultProvider = _providers[
@@ -102,6 +98,7 @@ namespace Infrastructure.Services
                 {
                     UserId = Guid.Parse(invoice.UserId),
                     SubscriptionId = Guid.Parse(invoice.SubscriptionId),
+                    ProviderSubscriptionId = invoice.ProviderSubscripitonId,
                     Provider = invoice.Provider,
                     PaymentProviderId = invoice.PaymentIntentId,
                     InvoiceId = invoice.Id,
@@ -426,24 +423,15 @@ namespace Infrastructure.Services
 
                 var payment = paymentResult.Data;
 
-                // Get subscription details
-                var subscriptionResult = await _subscriptionService.GetByIdAsync(payment.SubscriptionId);
-                if (!subscriptionResult.IsSuccess || subscriptionResult.Data == null)
-                    throw new KeyNotFoundException($"Subscription {payment.SubscriptionId} not found");
-
-                var subscription = subscriptionResult.Data;
-
-                // Attempt to retry charge with stripe
+                // We already have the subscription ID in the payment data
+                // We don't need to fetch the subscription anymore
                 var provider = GetProvider(payment.Provider);
 
-                // This is where you'd use the provider to retry the payment
-                // For Stripe, you might try to use the customer's default payment method
-                // or create a new PaymentIntent
-
-                // For this implementation, we'll simulate by calling webhook handler's endpoint:
+                // Just retry the payment using the stored provider information
+                // You might need to store the provider subscription ID in the PaymentData model
                 var retryResult = await _stripeService.RetryPaymentAsync(
                     payment.PaymentProviderId,
-                    subscription.ProviderSubscriptionId);
+                    payment.ProviderSubscriptionId); // You'll need to add this field to PaymentData
 
                 if (!retryResult.IsSuccess)
                     throw new PaymentApiException(retryResult.ErrorMessage ?? "Payment retry failed", provider.Name);
@@ -562,31 +550,10 @@ namespace Infrastructure.Services
 
             try
             {
-                // Get subscription
-                var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
-                if (!subscriptionResult.IsSuccess || subscriptionResult.Data == null)
-                {
-                    Logger.LogWarning("Subscription {SubscriptionId} not found", subscriptionId);
-                    return ResultWrapper.Failure(FailureReason.ResourceNotFound, $"Subscription {subscriptionId} not found");
-                }
+                // Instead of directly checking subscription status, publish an event
+                await EventService.PublishAsync(new PaymentMethodUpdatedEvent(subscriptionId, "", Logger.Context));
 
-                var subscription = subscriptionResult.Data;
-
-                // Check if subscription is suspended - if so, reactivate it
-                if (subscription.Status == SubscriptionStatus.Suspended)
-                {
-                    await _subscriptionService.ReactivateSubscriptionAsync(subscriptionId);
-                    Logger.LogInformation("Reactivated suspended subscription {SubscriptionId}", subscriptionId);
-                }
-
-                // Notify user of successful payment method update
-                await _notificationService.CreateAndSendNotificationAsync(new NotificationData
-                {
-                    UserId = subscription.UserId.ToString(),
-                    Message = "Your payment method has been successfully updated.",
-                    IsRead = false
-                });
-
+                // The rest is handled by event handlers in SubscriptionService
                 return ResultWrapper.Success();
             }
             catch (Exception ex)
@@ -609,30 +576,39 @@ namespace Infrastructure.Services
                 if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out _))
                     throw new ArgumentException("Invalid userId", nameof(userId));
 
-                if (string.IsNullOrEmpty(subscriptionId) || !Guid.TryParse(subscriptionId, out _))
+                if (string.IsNullOrEmpty(subscriptionId) || !Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
                     throw new ArgumentException("Invalid subscriptionId", nameof(subscriptionId));
 
-                // Get subscription
-                var subscription = await _subscriptionService.GetByIdAsync(Guid.Parse(subscriptionId));
-                if (!subscription.IsSuccess || subscription.Data == null)
-                    throw new KeyNotFoundException($"Subscription {subscriptionId} not found");
+                // Get the payment data for this subscription to find the provider subscription ID
+                var filter = Builders<PaymentData>.Filter.Eq(p => p.SubscriptionId, parsedSubscriptionId);
+                var paymentResult = await GetLatestPaymentAsync(parsedSubscriptionId);
 
-                if (string.IsNullOrEmpty(subscription.Data.ProviderSubscriptionId))
+                if (!paymentResult.IsSuccess || paymentResult.Data == null)
+                    throw new KeyNotFoundException($"No payment found for subscription {subscriptionId}");
+
+                var payment = paymentResult.Data;
+
+                if (string.IsNullOrEmpty(payment.ProviderSubscriptionId))
                     throw new InvalidOperationException("No provider subscription ID found");
 
                 // Create checkout session for updating payment method
-                var session = await (_stripeService as IStripeService)!.CreateUpdatePaymentMethodSessionAsync(
-                    subscription.Data.ProviderSubscriptionId,
+                var sessionResult = await _stripeService.CreateUpdatePaymentMethodSessionAsync(
+                    payment.ProviderSubscriptionId,
                     new Dictionary<string, string>
                     {
                         ["userId"] = userId,
                         ["subscriptionId"] = subscriptionId
                     });
 
-                if (!session.IsSuccess || string.IsNullOrEmpty(session.Data?.Url))
+                if (sessionResult == null || !sessionResult.IsSuccess || string.IsNullOrEmpty(sessionResult.Data?.Url))
+                {
+                    await Logger.LogTraceAsync($"Failed to create update payment method session: {sessionResult.ErrorMessage ?? "Session result returned null"}",
+                        level: LogLevel.Error,
+                        requiresResolution: true);
                     throw new PaymentApiException("Failed to create update payment method session", "Stripe");
+                }
 
-                return ResultWrapper<string>.Success(session.Data.Url);
+                return ResultWrapper<string>.Success(sessionResult.Data.Url);
             }
             catch (Exception ex)
             {

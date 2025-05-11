@@ -1,13 +1,13 @@
 // src/components/Subscription/SubscriptionSummary.tsx
 import React from 'react';
-import IAllocation from '../../interfaces/IAllocation';
+import { Allocation } from '../../types/subscription';
 
 interface SubscriptionSummaryProps {
     interval: string;
     amount: number;
     currency: string;
     endDate: Date | null;
-    allocations: Omit<IAllocation, 'id'>[];
+    allocations: Omit<Allocation, 'id'>[];
 }
 
 const SubscriptionSummary: React.FC<SubscriptionSummaryProps> = ({
@@ -92,7 +92,7 @@ const SubscriptionSummary: React.FC<SubscriptionSummaryProps> = ({
                     {allocations.map(allocation => (
                         <div key={allocation.assetId} className="flex justify-between items-center">
                             <div className="flex items-center">
-                                <span className="font-medium">{allocation.assetName} ({allocation.assetTicker})</span>
+                                <span className="font-medium">{allocation.assetName} ({allocation.ticker})</span>
                             </div>
                             <div className="flex items-center">
                                 <span className="font-medium">{allocation.percentAmount}%</span>
@@ -112,3 +112,7 @@ const SubscriptionSummary: React.FC<SubscriptionSummaryProps> = ({
                 <p className="text-sm">Platform fee: <span className="font-medium">1.0%</span></p>
             </div>
         </div>
+    );
+}
+
+module.exports = { SubscriptionSummary };

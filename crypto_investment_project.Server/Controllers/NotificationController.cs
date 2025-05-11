@@ -1,7 +1,6 @@
 using Application.Interfaces.Logging;
 using Domain.Exceptions;
 using Microsoft.AspNetCore.Mvc;
-using System.Diagnostics;
 
 namespace crypto_investment_project.Server.Controllers
 {
@@ -40,8 +39,6 @@ namespace crypto_investment_project.Server.Controllers
                 return BadRequest("User ID is required");
             }
 
-            var requestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-
             try
             {
                 var notificationsResult = await _notificationService.GetUserNotificationsAsync(
@@ -54,10 +51,9 @@ namespace crypto_investment_project.Server.Controllers
 
                 var notifications = notificationsResult.Data;
                 _logger.LogInformation(
-                    "Retrieved {Count} notifications for user {UserId} (RequestID: {RequestId})",
+                    "Retrieved {Count} notifications for user {UserId})",
                     notifications?.Count() ?? 0,
-                    userId,
-                    requestId
+                    userId
                 );
 
                 return Ok(notifications);
@@ -65,9 +61,9 @@ namespace crypto_investment_project.Server.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(
-                    "Error retrieving notifications for user {UserId} (RequestID: {RequestId})",
+                    "Error retrieving notifications for user {UserId}: {ErrorMessavge}",
                     userId,
-                    requestId
+                    ex.Message
                 );
 
                 return StatusCode(500, new { message = "An error occurred while retrieving notifications" });
@@ -83,17 +79,15 @@ namespace crypto_investment_project.Server.Controllers
         //[IgnoreAntiforgeryToken]
         public async Task<IActionResult> MarkAsRead(string notificationId)
         {
-            using (_logger.BeginScope(new Dictionary<string, object>
+            using (_logger.BeginScope(new
             {
-                ["NotificationId"] = notificationId,
+                NotificationId = notificationId,
             }))
             {
                 if (string.IsNullOrEmpty(notificationId) || !Guid.TryParse(notificationId, out var notificationGuid))
                 {
                     return BadRequest("Valid notification ID is required");
                 }
-
-                var requestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
                 try
                 {
@@ -115,9 +109,8 @@ namespace crypto_investment_project.Server.Controllers
                 catch (Exception ex)
                 {
                     _logger.LogError(
-                        "Error marking notification {NotificationId} as read (RequestID: {RequestId}): {ErrorMessage}",
+                        "Error marking notification {NotificationId} as read: {ErrorMessage}",
                         notificationId,
-                        requestId,
                         ex.Message
                     );
 

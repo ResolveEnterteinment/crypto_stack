@@ -1,12 +1,15 @@
 // src/components/Dashboard/asset-balance-card.tsx
 import React from 'react';
 import { IBalance } from '../../services/dashboard';
+import { useNavigate } from "react-router-dom";
 
 interface AssetBalanceCardProps {
     balances: IBalance[];
 }
 
 const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
+    const navigate = useNavigate();
+
     // Define colors for different cryptocurrencies
     const assetColors: Record<string, string> = {
         BTC: '#F7931A',   // Bitcoin orange
@@ -34,6 +37,13 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
     };
 
     const totalValue = calculateTotal();
+
+    // Handle withdraw click
+    const handleWithdraw = (assetId: string | undefined) => {
+        if (assetId == null || assetId == undefined)
+            console.error("Invalid asset id");
+        navigate(`/withdraw`);
+    };
 
     // Format number with appropriate precision
     const formatAmount = (amount: number): string => {
@@ -67,7 +77,7 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
                             const percentage = (balance.value / totalValue) * 100;
                             return (
                                 <div
-                                    key={balance.assetId}
+                                    key={balance.id}
                                     style={{
                                         width: `${percentage}%`,
                                         backgroundColor: getAssetColor(balance.ticker)
@@ -82,7 +92,7 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
                     {/* List of balances */}
                     <div className="space-y-3">
                         {balances.map((balance) => (
-                            <div key={balance.ticker} className="flex justify-between items-center">
+                            <div key={balance.id} className="flex justify-between items-center">
                                 <div className="flex items-center">
                                     <div
                                         className="w-3 h-3 rounded-full mr-2"
@@ -96,6 +106,14 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
                                 </div>
                                 <div className="font-bold">{formatAmount(balance.total)}</div>
                                 <div className="font-bold">${balance.value.toFixed(2)}</div>
+                                <div className="font-bold">
+                                    <button
+                                        onClick={() => handleWithdraw(balance.id)}
+                                        className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 px-4 rounded-md text-sm font-medium transition-colors"
+                                    >
+                                        Withdraw
+                                    </button>
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -105,6 +123,11 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
                         <div className="flex justify-between items-center">
                             <span className="font-medium">Total Assets</span>
                             <span className="font-bold">{balances.length} tokens</span>
+                        </div>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-gray-200">
+                        <div className="flex justify-between items-center">
+                            <span className="font-medium">Actions</span>
                         </div>
                     </div>
                 </>

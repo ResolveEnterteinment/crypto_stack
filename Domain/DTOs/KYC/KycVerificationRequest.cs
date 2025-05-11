@@ -1,5 +1,4 @@
-﻿// Domain/DTOs/KYC/KycVerificationRequest.cs
-namespace Domain.DTOs.KYC
+﻿namespace Domain.DTOs.KYC
 {
     public class KycVerificationRequest
     {

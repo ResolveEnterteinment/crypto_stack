@@ -311,6 +311,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <param name="subscriptionId">The subscription ID</param>
         /// <returns>List of payments for the subscription</returns>
         [HttpGet("subscription/{subscriptionId}")]
+        [Authorize]
         public async Task<IActionResult> GetSubscriptionPayments(string subscriptionId)
         {
             try

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Navbar from "../components/Navbar";
 import AdminLogsPanel from "../components/Admin/AdminLogsPanel";
 import WithdrawalManagementPanel from "../components/Admin/WithdrawalManagement";
+import AdminPaymentDashboard from "../components/Admin/AdminPaymentDashboard";
 import KycAdminPanel from "../components/KYC/KycAdminPanel";
 import KycProviderConfig from "../components/Admin/KycProviderConfig";
 import KycVerificationReports from "../components/KYC/KycVerificationReports";
@@ -14,7 +15,7 @@ import { useAuth } from '../context/AuthContext';
  */
 const AdminPage: React.FC = () => {
     const navigate = useNavigate();
-    const { logout } = useAuth();
+    const { user, logout } = useAuth();
     const [activeTab, setActiveTab] = useState('logs');
 
     // Navigation handlers
@@ -26,7 +27,7 @@ const AdminPage: React.FC = () => {
     };
 
     // Ensure user has admin privileges
-    if (/*!user?.roles?.includes('ADMIN')*/false) {
+    if (user?.roles?.includes('Admin')) {
         return (
             <>
                 <Navbar
@@ -95,6 +96,15 @@ const AdminPage: React.FC = () => {
                                 User Management
                             </button>
                             <button
+                                onClick={() => setActiveTab('payments')}
+                                className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'payments'
+                                    ? 'border-blue-500 text-blue-600'
+                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                    }`}
+                            >
+                                Payments Management
+                            </button>
+                            <button
                                 onClick={() => setActiveTab('kyc')}
                                 className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'kyc'
                                     ? 'border-blue-500 text-blue-600'
@@ -151,6 +161,7 @@ const AdminPage: React.FC = () => {
                                 <p className="text-gray-500">User management functionality coming soon...</p>
                             </div>
                         )}
+                        {activeTab === 'payments' && <AdminPaymentDashboard />}
                         {activeTab === 'kyc' && <KycAdminPanel />}
                         {activeTab === 'kyc-providers' && <KycProviderConfig />}
                         {activeTab === 'kyc-reports' && <KycVerificationReports />}

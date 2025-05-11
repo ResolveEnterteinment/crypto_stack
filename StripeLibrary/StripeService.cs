@@ -56,6 +56,7 @@ namespace StripeLibrary
             // Configure Stripe API with the secret key
             StripeConfiguration.ApiKey = stripeSettings.Value.ApiSecret;
 
+            _settings = stripeSettings;
             _chargeService = new ChargeService();
             _paymentIntentService = new PaymentIntentService();
             _invoiceService = new InvoiceService();
