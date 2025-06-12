@@ -11,6 +11,8 @@ import WithdrawalPage from "./pages/WithdrawalPage";
 import KycPage from "./pages/KycPage";
 import EmailConfirmation from './pages/EmailConfirmation';
 import Navbar from "./components/Navbar";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 
 const App: React.FC = () => {
     return (
@@ -53,6 +55,8 @@ const App: React.FC = () => {
 
             {/* Email confirmation routes */}
             <Route path="/confirm-email" element={<EmailConfirmation />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
 
             {/* Redirect all other routes to auth page */}
             <Route path="*" element={<AuthPage />} />

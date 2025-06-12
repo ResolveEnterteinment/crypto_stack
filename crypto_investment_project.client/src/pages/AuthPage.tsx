@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import api from "../services/api";
 
 const AuthPage: React.FC = () => {
@@ -481,9 +481,9 @@ const AuthPage: React.FC = () => {
                                     </div>
                                 )}
 
-                                {isLogin && (
+                                        {isLogin && (
                                     <div className="mt-2 text-right">
-                                        <a href="#" className="text-sm text-blue-600 hover:text-blue-800">Forgot password?</a>
+                                        <Link to="/forgot-password" className="text-sm text-blue-600 hover:text-blue-800">Forgot password?</Link>
                                     </div>
                                 )}
                             </div>

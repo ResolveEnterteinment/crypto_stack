@@ -558,6 +558,141 @@ namespace Infrastructure.Services
             }
         }
 
+        public async Task<BaseResponse> ForgotPasswordAsync(ForgotPasswordRequest request)
+        {
+            try
+            {
+                // Add tracing for security auditing
+                using var logScope = _logger.BeginScope(new Dictionary<string, object>
+                {
+                    ["EmailHash"] = ComputeSHA256Hash(request.Email),
+                    ["IPAddress"] = GetUserIPAddress(),
+                    ["Action"] = "ForgotPassword"
+                });
+
+                // Find the user by email
+                var user = await _userManager.FindByEmailAsync(request.Email);
+
+                if (user == null)
+                {
+                    // For security reasons, don't reveal if the email exists or not
+                    _logger.LogWarning("Password reset requested for non-existent email: {EmailHash}",
+                        ComputeSHA256Hash(request.Email));
+                    
+                    return new BaseResponse
+                    {
+                        Success = true,
+                        Message = "If your email exists in our system, you will receive a password reset link shortly."
+                    };
+                }
+
+                // Check if the email is confirmed
+                if (!user.EmailConfirmed)
+                {
+                    _logger.LogInformation("Password reset requested for unconfirmed email: {EmailHash}",
+                        ComputeSHA256Hash(request.Email));
+                    
+                    return new BaseResponse
+                    {
+                        Success = false,
+                        Message = "Your email is not confirmed. Please check your inbox for the confirmation link or request a new one."
+                    };
+                }
+
+                // Generate password reset token
+                var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+
+                // Send the reset email
+                await _emailService.SendPasswordResetMailAsync(user, token);
+
+                _logger.LogInformation("Password reset email sent successfully for user: {UserId}", user.Id);
+
+                return new BaseResponse
+                {
+                    Success = true,
+                    Message = "Password reset instructions have been sent to your email."
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during password reset request for email hash: {EmailHash}",
+                    ComputeSHA256Hash(request.Email));
+
+                return new BaseResponse
+                {
+                    Success = false,
+                    Message = "Failed to process password reset request. Please try again later."
+                };
+            }
+        }
+
+        public async Task<BaseResponse> ResetPasswordAsync(ResetPasswordRequest request)
+        {
+            try
+            {
+                // Add tracing for security auditing
+                using var logScope = _logger.BeginScope(new Dictionary<string, object>
+                {
+                    ["EmailHash"] = ComputeSHA256Hash(request.Email),
+                    ["IPAddress"] = GetUserIPAddress(),
+                    ["Action"] = "ResetPassword"
+                });
+
+                // Find the user by email
+                var user = await _userManager.FindByEmailAsync(request.Email);
+
+                if (user == null)
+                {
+                    _logger.LogWarning("Password reset attempted for non-existent email: {EmailHash}",
+                        ComputeSHA256Hash(request.Email));
+                    
+                    return new BaseResponse
+                    {
+                        Success = false,
+                        Message = "Invalid request. Please request a new password reset link."
+                    };
+                }
+
+                // Reset the password
+                var result = await _userManager.ResetPasswordAsync(user, request.Token, request.NewPassword);
+
+                if (!result.Succeeded)
+                {
+                    string errorMessage = string.Join(", ", result.Errors.Select(e => e.Description));
+                    _logger.LogWarning("Password reset failed for user {UserId}: {Errors}",
+                        user.Id, errorMessage);
+                    
+                    return new BaseResponse
+                    {
+                        Success = false,
+                        Message = $"Password reset failed: {errorMessage}"
+                    };
+                }
+
+                // Reset failed login attempts on successful password reset
+                await _userManager.ResetAccessFailedCountAsync(user);
+
+                _logger.LogInformation("Password reset successfully for user {UserId}", user.Id);
+
+                return new BaseResponse
+                {
+                    Success = true,
+                    Message = "Your password has been reset successfully. You can now log in with your new password."
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during password reset for email hash: {EmailHash}",
+                    ComputeSHA256Hash(request.Email));
+
+                return new BaseResponse
+                {
+                    Success = false,
+                    Message = "Failed to reset password. Please try again later."
+                };
+            }
+        }
+
         public async Task<bool> UserHasRole(string userId, string roleName)
         {
             var user = await _userManager.FindByIdAsync(userId);

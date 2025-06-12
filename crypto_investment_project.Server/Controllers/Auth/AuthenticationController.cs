@@ -368,6 +368,38 @@ namespace crypto_investment_project.Server.Controllers.Auth
             }
         }
 
+        [HttpPost("forgot-password")]
+        [EnableRateLimiting("AuthEndpoints")]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(new { success = false, message = "Invalid input", validationErrors = ModelState });
+            }
+
+            var result = await _authenticationService.ForgotPasswordAsync(request);
+
+            return result.Success
+                ? Ok(new { success = true, message = result.Message })
+                : BadRequest(new { success = false, message = result.Message });
+        }
+
+        [HttpPost("reset-password")]
+        [EnableRateLimiting("AuthEndpoints")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(new { success = false, message = "Invalid input", validationErrors = ModelState });
+            }
+
+            var result = await _authenticationService.ResetPasswordAsync(request);
+
+            return result.Success
+                ? Ok(new { success = true, message = result.Message })
+                : BadRequest(new { success = false, message = result.Message });
+        }
+
         /// <summary>
         /// Refreshes the access token using a refresh token
         /// </summary>
