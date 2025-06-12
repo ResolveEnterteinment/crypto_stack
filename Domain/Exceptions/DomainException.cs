@@ -51,10 +51,7 @@ namespace Domain.Exceptions
         /// <returns>This exception instance for method chaining.</returns>
         public DomainException AddContext(string key, object value)
         {
-            if (Context == null)
-            {
-                Context = new Dictionary<string, object>();
-            }
+            Context ??= new Dictionary<string, object>();
 
             Context[key] = value;
             return this;
@@ -75,6 +72,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -107,7 +105,7 @@ namespace Domain.Exceptions
         public ValidationException(string message, Dictionary<string, string[]> validationErrors)
             : base(message, "VALIDATION_ERROR")
         {
-            ValidationErrors = validationErrors ?? new Dictionary<string, string[]>();
+            ValidationErrors = validationErrors ?? [];
         }
 
         /// <summary>
@@ -125,6 +123,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -163,8 +162,8 @@ namespace Domain.Exceptions
         {
             ResourceType = resourceType;
             ResourceId = resourceId;
-            AddContext("ResourceType", resourceType);
-            AddContext("ResourceId", resourceId);
+            _ = AddContext("ResourceType", resourceType);
+            _ = AddContext("ResourceId", resourceId);
         }
 
         /// <summary>
@@ -182,6 +181,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -239,10 +239,10 @@ namespace Domain.Exceptions
             AvailableBalance = availableBalance;
             RequiredAmount = requiredAmount;
 
-            AddContext("AssetTicker", assetTicker);
-            AddContext("AvailableBalance", availableBalance);
-            AddContext("RequiredAmount", requiredAmount);
-            AddContext("Deficit", requiredAmount - availableBalance);
+            _ = AddContext("AssetTicker", assetTicker);
+            _ = AddContext("AvailableBalance", availableBalance);
+            _ = AddContext("RequiredAmount", requiredAmount);
+            _ = AddContext("Deficit", requiredAmount - availableBalance);
         }
 
         /// <summary>
@@ -261,6 +261,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -297,16 +298,16 @@ namespace Domain.Exceptions
         /// <param name="message">The error message.</param>
         /// <param name="exchange">The exchange.</param>
         /// <param name="orderId">The order ID.</param>
-        public OrderExecutionException(string message, string exchange, string orderId = null)
+        public OrderExecutionException(string message, string exchange, string? orderId = null)
             : base(message, "ORDER_EXECUTION_FAILED")
         {
             OrderId = orderId;
             Exchange = exchange;
 
-            AddContext("Exchange", exchange);
+            _ = AddContext("Exchange", exchange);
             if (!string.IsNullOrEmpty(orderId))
             {
-                AddContext("OrderId", orderId);
+                _ = AddContext("OrderId", orderId);
             }
         }
 
@@ -325,6 +326,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -363,7 +365,7 @@ namespace Domain.Exceptions
             : base(message, "EXCHANGE_API_ERROR")
         {
             Exchange = exchange;
-            AddContext("Exchange", exchange);
+            _ = AddContext("Exchange", exchange);
         }
 
         /// <summary>
@@ -376,7 +378,7 @@ namespace Domain.Exceptions
             : base(message, "EXCHANGE_API_ERROR", innerException)
         {
             Exchange = exchange;
-            AddContext("Exchange", exchange);
+            _ = AddContext("Exchange", exchange);
         }
 
         /// <summary>
@@ -392,8 +394,8 @@ namespace Domain.Exceptions
             Exchange = exchange;
             ApiEndpoint = apiEndpoint;
 
-            AddContext("Exchange", exchange);
-            AddContext("ApiEndpoint", apiEndpoint);
+            _ = AddContext("Exchange", exchange);
+            _ = AddContext("ApiEndpoint", apiEndpoint);
         }
 
         /// <summary>
@@ -411,6 +413,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -447,6 +450,8 @@ namespace Domain.Exceptions
     [Serializable]
     public class AssetFetchException : DomainException
     {
+        public AssetFetchException()
+            : base("Failed to fetch asset", "ASSET_FETCH_ERROR") { }
         public AssetFetchException(string message)
             : base(message, "ASSET_FETCH_ERROR") { }
 
@@ -496,16 +501,16 @@ namespace Domain.Exceptions
         /// <param name="message">The error message.</param>
         /// <param name="paymentProvider">The payment provider.</param>
         /// <param name="paymentId">The payment ID.</param>
-        public PaymentApiException(string message, string paymentProvider, string paymentId = null)
+        public PaymentApiException(string message, string paymentProvider, string? paymentId = null)
             : base(message, "PAYMENT_PROCESSING_ERROR")
         {
             PaymentProvider = paymentProvider;
             PaymentId = paymentId;
 
-            AddContext("PaymentProvider", paymentProvider);
+            _ = AddContext("PaymentProvider", paymentProvider);
             if (!string.IsNullOrEmpty(paymentId))
             {
-                AddContext("PaymentId", paymentId);
+                _ = AddContext("PaymentId", paymentId);
             }
         }
 
@@ -522,10 +527,10 @@ namespace Domain.Exceptions
             PaymentProvider = paymentProvider;
             PaymentId = paymentId;
 
-            AddContext("PaymentProvider", paymentProvider);
+            _ = AddContext("PaymentProvider", paymentProvider);
             if (!string.IsNullOrEmpty(paymentId))
             {
-                AddContext("PaymentId", paymentId);
+                _ = AddContext("PaymentId", paymentId);
             }
         }
 
@@ -544,6 +549,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -578,11 +584,11 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="serviceName">The service name.</param>
         /// <param name="message">The error message.</param>
-        public ServiceUnavailableException(string serviceName, string message = null)
+        public ServiceUnavailableException(string serviceName, string? message = null)
             : base(message ?? $"Service {serviceName} is currently unavailable", "SERVICE_UNAVAILABLE")
         {
             ServiceName = serviceName;
-            AddContext("ServiceName", serviceName);
+            _ = AddContext("ServiceName", serviceName);
         }
 
         /// <summary>
@@ -593,7 +599,7 @@ namespace Domain.Exceptions
         public ServiceUnavailableException WithRetryAfter(int seconds)
         {
             RetryAfterSeconds = seconds;
-            AddContext("RetryAfterSeconds", seconds);
+            _ = AddContext("RetryAfterSeconds", seconds);
             return this;
         }
 
@@ -612,6 +618,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -673,8 +680,8 @@ namespace Domain.Exceptions
             CollectionName = collectionName;
             OperationType = operationType;
 
-            AddContext("CollectionName", collectionName);
-            AddContext("OperationType", operationType);
+            _ = AddContext("CollectionName", collectionName);
+            _ = AddContext("OperationType", operationType);
         }
 
         /// <summary>
@@ -692,6 +699,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -726,7 +734,7 @@ namespace Domain.Exceptions
         {
             ResourceType = resourceType;
 
-            AddContext("ResourceType", resourceType);
+            _ = AddContext("ResourceType", resourceType);
         }
 
         /// <summary>
@@ -743,6 +751,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -775,7 +784,7 @@ namespace Domain.Exceptions
         {
             IdempotencyKey = idempotencyKey;
 
-            AddContext("ıdempotencyKey", idempotencyKey);
+            _ = AddContext("ıdempotencyKey", idempotencyKey);
         }
 
         /// <summary>
@@ -792,6 +801,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -832,18 +842,18 @@ namespace Domain.Exceptions
         /// <param name="eventType">The event type.</param>
         /// <param name="provider">The provider.</param>
         /// <param name="eventId">The event ID.</param>
-        public PaymentEventException(string message, string eventType, string provider, string eventId = null)
+        public PaymentEventException(string message, string eventType, string provider, string? eventId = null)
             : base(message, "PAYMENT_EVENT_ERROR")
         {
             EventType = eventType;
             Provider = provider;
             EventId = eventId;
 
-            AddContext("EventType", eventType);
-            AddContext("Provider", provider);
+            _ = AddContext("EventType", eventType);
+            _ = AddContext("Provider", provider);
             if (!string.IsNullOrEmpty(eventId))
             {
-                AddContext("EventId", eventId);
+                _ = AddContext("EventId", eventId);
             }
         }
 
@@ -863,6 +873,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)
@@ -897,7 +908,7 @@ namespace Domain.Exceptions
             : base(message, "SECURITY_ERROR")
         {
             OperationType = operationType;
-            AddContext("OperationType", operationType);
+            _ = AddContext("OperationType", operationType);
         }
 
         /// <summary>
@@ -914,6 +925,7 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="info">The serialization info.</param>
         /// <param name="context">The streaming context.</param>
+        [Obsolete]
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             if (info == null)

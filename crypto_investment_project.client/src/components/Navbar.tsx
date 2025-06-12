@@ -1,7 +1,7 @@
 ﻿import { Disclosure, DisclosureButton, DisclosurePanel, Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import NotificationPanel from "./Notification/NotificationPanel";
 
@@ -18,16 +18,20 @@ const navigation: NavItem[] = [
     { name: 'Market', href: '/market' },
 ];
 
-interface NavbarProps {
-    showProfile: () => void;
-    showSettings: () => void;
-    logout: () => void;
-}
-
-const Navbar: React.FC<NavbarProps> = ({ showProfile, showSettings, logout }) => {
-    const { user } = useAuth();
+const Navbar: React.FC = () => {
     const location = useLocation();
     const [scrolled, setScrolled] = useState(false);
+
+    const navigate = useNavigate();
+    const { user, logout } = useAuth();
+
+    // Navigation handlers
+    const showProfile = () => navigate('/profile');
+    const showSettings = () => navigate('/settings');
+    const handleLogout = () => {
+        logout();
+        navigate('/auth');
+    };
 
     // Handle scroll effect for navbar
     useEffect(() => {
@@ -164,7 +168,7 @@ const Navbar: React.FC<NavbarProps> = ({ showProfile, showSettings, logout }) =>
                                         <MenuItem>
                                             {({ active }) => (
                                                 <button
-                                                    onClick={logout}
+                                                    onClick={handleLogout}
                                                     className={`block px-4 py-2 text-sm text-gray-700 w-full text-left ${active ? "bg-gray-100" : ""}`}
                                                 >
                                                     Sign out

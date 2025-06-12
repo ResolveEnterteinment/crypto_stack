@@ -1,0 +1,196 @@
+@startuml "KYC Verification Process"
+
+!define KYC_COLOR #FFDAB9
+!define USER_COLOR #F0FFF0
+!define API_COLOR #E6E6FA
+!define ERROR_COLOR #FFE4E1
+
+skinparam class {
+  BackgroundColor white
+  ArrowColor black
+  BorderColor black
+}
+
+package "Core Entities" {
+  class UserData {
+    +Id: Guid
+    +Email: string
+    +FullName: string
+    +IsKycVerified: bool
+    +KycLevel: string
+  }
+  
+  class KycData {
+    +UserId: Guid
+    +Status: string
+    +VerificationLevel: string
+    +VerificationData: Dictionary<string, object>
+    +CreatedAt: DateTime
+    +UpdatedAt: DateTime
+    +VerifiedAt: DateTime?
+  }
+  
+  class KycSessionData {
+    +Id: Guid
+    +UserId: Guid
+    +Status: string
+    +VerificationLevel: string
+    +ExpiresAt: DateTime
+    +SessionId: string
+  }
+}
+
+package "DTOs" {
+  class KycVerificationRequest {
+    +UserId: Guid
+    +SessionId: Guid
+    +VerificationLevel: string
+    +Data: Dictionary<string, object>
+  }
+}
+
+package "Services" {
+  interface IKycService {
+    +GetUserKycStatusAsync(userId: Guid): Task<ResultWrapper<KycData>>
+    +GetOrCreateUserSessionAsync(userId: Guid, level: string): Task<ResultWrapper<KycSessionData>>
+    +VerifyAsync(request: KycVerificationRequest): Task<ResultWrapper<KycData>>
+    +UpdateKycStatusAsync(userId: Guid, status: string): Task<ResultWrapper>
+    +IsUserVerifiedAsync(userId: Guid, requiredLevel: string): Task<ResultWrapper<bool>>
+    +GetPendingVerificationsAsync(page, pageSize): Task<ResultWrapper<PaginatedResult<KycData>>>
+    +PerformAmlCheckAsync(userId: Guid): Task<ResultWrapper>
+    +IsUserEligibleForTrading(userId: Guid): Task<ResultWrapper<bool>>
+  }
+  
+  class KycService {
+    -_repository: ICrudRepository<KycData>
+    -_sessionRepository: ICrudRepository<KycSessionData>
+    -_userService: IUserService
+    -_eventService: IEventService
+    -_logger: ILoggingService
+    -_notificationService: INotificationService
+    +VerifyAsync(request): Task<ResultWrapper<KycData>>
+    -ValidateVerificationData(data, level): bool
+    -PerformIdentityCheck(userData, verificationData): Task<bool>
+    -PerformDocumentValidation(documents): Task<bool>
+  }
+  
+  interface IUserService {
+    +CheckUserExists(userId: Guid): Task<bool>
+    +GetAsync(id: Guid): Task<UserData>
+    +UpdateAsync(id: Guid, data: UserUpdateDTO): Task
+  }
+}
+
+package "Middleware" {
+  class KycRequirementMiddleware {
+    +InvokeAsync(context, kycService, withdrawalService): Task
+    -GetRequiredKycLevelForPath(path): string
+    -CheckWithdrawalLimits(context, kycService, withdrawalService): Task
+  }
+}
+
+' Relationships
+UserData "1" -- "1" KycData : has
+KycData "1" -- "*" KycSessionData : creates
+KycVerificationRequest --> KycSessionData : references
+IKycService <|.. KycService : implements
+KycService --> IUserService : uses
+KycRequirementMiddleware --> IKycService : uses
+
+' Process flows
+note right of KycService #KYC_COLOR
+  **KYC Verification Process**
+  1. Create verification session for user
+  2. User submits identity documents 
+  3. Validate documents and perform checks
+  4. Update user's KYC status
+  5. Allow/restrict features based on KYC level
+endnote
+
+note right of KycRequirementMiddleware #API_COLOR
+  **KYC Middleware Flow**
+  1. Check if request requires KYC
+  2. Determine required KYC level for path
+  3. Verify user has appropriate KYC level
+  4. For withdrawals, check limits based on KYC
+  5. Allow/block request based on verification
+endnote
+
+' Sequence diagram for KYC flow
+newpage KYC Verification Sequence
+
+actor User
+participant "Client App" as Client
+participant "API Gateway" as API
+participant "KycController" as KycCtrl
+participant "KycService" as KycSvc
+participant "UserService" as UserSvc
+participant "Database" as DB
+participant "External KYC Provider" as KycProvider
+
+== Session Creation ==
+
+User -> Client : Request KYC verification
+Client -> API : GET /api/kyc/session?level=STANDARD
+API -> KycCtrl : CreateSession(level)
+activate KycCtrl
+KycCtrl -> KycSvc : GetOrCreateUserSessionAsync(userId, level)
+activate KycSvc
+KycSvc -> UserSvc : CheckUserExists(userId)
+UserSvc --> KycSvc : User exists
+KycSvc -> DB : Fetch existing sessions
+DB --> KycSvc : Current sessions (if any)
+KycSvc -> KycSvc : Check for valid session
+KycSvc -> DB : Create new session
+DB --> KycSvc : Session created
+KycSvc --> KycCtrl : Session details (id, expiry)
+deactivate KycSvc
+KycCtrl --> API : Session information
+API --> Client : KYC session details
+Client -> User : Show KYC verification form
+
+== Document Submission ==
+
+User -> Client : Submit identification documents
+Client -> API : POST /api/kyc/verify
+API -> KycCtrl : Verify(kycRequest)
+activate KycCtrl
+KycCtrl -> KycSvc : VerifyAsync(request)
+activate KycSvc
+KycSvc -> DB : Fetch session
+DB --> KycSvc : Session data
+KycSvc -> KycSvc : Validate session (expiry, status)
+KycSvc -> KycProvider : Submit identity documents
+KycProvider --> KycSvc : Verification result
+KycSvc -> DB : Update KYC status
+KycSvc -> UserSvc : UpdateAsync (KYC status)
+KycSvc --> KycCtrl : Verification result
+deactivate KycSvc
+KycCtrl --> API : Verification response
+API --> Client : Success/failure message
+Client -> User : Show verification result
+
+== KYC Status Check (used by other services) ==
+
+API -> KycRequirementMiddleware : Request for protected resource
+activate KycRequirementMiddleware
+KycRequirementMiddleware -> KycRequirementMiddleware : GetRequiredKycLevelForPath()
+KycRequirementMiddleware -> KycSvc : IsUserVerifiedAsync(userId, requiredLevel)
+activate KycSvc
+KycSvc -> DB : Fetch user KYC data
+DB --> KycSvc : KYC data
+KycSvc -> KycSvc : Check level against requirement
+KycSvc --> KycRequirementMiddleware : Verification result
+deactivate KycSvc
+
+alt KYC Verified
+  KycRequirementMiddleware -> API : Allow request
+  API --> Client : Protected resource
+else KYC Not Verified
+  KycRequirementMiddleware --> API : 403 Forbidden (KYC_REQUIRED)
+  API --> Client : KYC required error
+  Client -> User : Prompt for KYC verification
+end
+deactivate KycRequirementMiddleware
+
+@enduml

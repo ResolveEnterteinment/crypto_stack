@@ -1,6 +1,7 @@
-// crypto_investment_project.Server/Controllers/KycController.cs
 using Application.Interfaces.KYC;
+using Domain.DTOs;
 using Domain.DTOs.KYC;
+using Domain.Models.KYC;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -10,287 +11,118 @@ namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Produces("application/json")]
     public class KycController : ControllerBase
     {
-        private readonly IKycServiceFactory _kycServiceFactory;
+        private readonly IKycService _kycService;
         private readonly ILogger<KycController> _logger;
 
         public KycController(
-            IKycServiceFactory kycServiceFactory,
+            IKycService kycService,
             ILogger<KycController> logger)
         {
-            _kycServiceFactory = kycServiceFactory ?? throw new ArgumentNullException(nameof(kycServiceFactory));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        }
-
-        [HttpGet("status")]
-        [Authorize]
-        [EnableRateLimiting("standard")]
-        public async Task<IActionResult> GetUserKycStatus()
-        {
-            try
-            {
-                var userId = GetUserId();
-                if (!userId.HasValue)
-                {
-                    return BadRequest(new { message = "Invalid user ID" });
-                }
-
-                var kycService = _kycServiceFactory.GetKycService();
-                var result = await kycService.GetUserKycStatusAsync(userId.Value);
-
-                if (!result.IsSuccess)
-                {
-                    return BadRequest(new { message = result.ErrorMessage });
-                }
-
-                return Ok(new { data = result.Data });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting KYC status");
-                return StatusCode(500, new { message = "An error occurred while retrieving KYC status" });
-            }
+            _kycService = kycService;
+            _logger = logger;
         }
 
         [HttpPost("verify")]
         [Authorize]
         [EnableRateLimiting("standard")]
-        public async Task<IActionResult> InitiateVerification([FromBody] KycVerificationRequest request, [FromQuery] string provider = null)
+        public async Task<IActionResult> ProcessVerification([FromBody] VerificationRequest request)
         {
             try
             {
-                var userId = GetUserId();
+                Guid? userId = GetUserId();
                 if (!userId.HasValue)
                 {
-                    return BadRequest(new { message = "Invalid user ID" });
+                    return BadRequest(new { success = false, message = "Invalid user ID" });
                 }
 
                 // Ensure the requested verification is for the current user
-                if (request.UserId != userId.Value && !User.IsInRole("ADMIN"))
+                if (request.UserId != userId.Value.ToString() && !User.IsInRole("ADMIN"))
                 {
                     return Forbid();
                 }
 
-                // Get the appropriate KYC service based on the provider parameter or user ID
-                IKycService kycService;
-                if (!string.IsNullOrEmpty(provider) && User.IsInRole("ADMIN"))
+                ResultWrapper<KycData> result = await _kycService.VerifyAsync(new KycVerificationRequest
                 {
-                    try
-                    {
-                        kycService = _kycServiceFactory.GetKycService(provider);
-                    }
-                    catch (ArgumentException)
-                    {
-                        return BadRequest(new { message = $"Invalid KYC provider: {provider}" });
-                    }
-                }
-                else
-                {
-                    kycService = _kycServiceFactory.GetKycService();
-                }
-
-                var result = await kycService.InitiateKycVerificationAsync(request);
-                if (!result.IsSuccess)
-                {
-                    return BadRequest(new { message = result.ErrorMessage });
-                }
-
-                return Ok(result.Data);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error initiating KYC verification");
-                return StatusCode(500, new { message = "An error occurred while initiating KYC verification" });
-            }
-        }
-
-        [HttpPost("callback/{provider}")]
-        [IgnoreAntiforgeryToken]
-        [EnableRateLimiting("webhook")]
-        public async Task<IActionResult> HandleKycCallback([FromRoute] string provider, [FromBody] KycCallbackRequest callback)
-        {
-            try
-            {
-                // Get the provider-specific KYC service
-                IKycService kycService;
-                try
-                {
-                    kycService = _kycServiceFactory.GetKycService(provider);
-                }
-                catch (ArgumentException)
-                {
-                    return BadRequest(new { message = $"Invalid KYC provider: {provider}" });
-                }
-
-                // Validate the callback signature
-                if (Request.Headers.TryGetValue("X-Signature", out var signature))
-                {
-                    var payload = await ReadRequestBodyAsync();
-                    var validationResult = await ((IKycProvider)kycService).ValidateCallbackSignature(signature, payload);
-
-                    if (!validationResult.IsSuccess || !validationResult.Data)
-                    {
-                        return Unauthorized(new { message = "Invalid webhook signature" });
-                    }
-                }
-                else
-                {
-                    return Unauthorized(new { message = "Missing webhook signature" });
-                }
-
-                // Process the callback
-                var result = await kycService.ProcessKycCallbackAsync(callback);
-                if (!result.IsSuccess)
-                {
-                    _logger.LogWarning($"KYC callback processing failed: {result.ErrorMessage}");
-                    return BadRequest(new { message = result.ErrorMessage });
-                }
-
-                // After KYC verification, perform AML check
-                var userId = result.Data.UserId;
-                await kycService.PerformAmlCheckAsync(userId);
-
-                return Ok(new { message = "Callback processed successfully" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error processing KYC callback");
-                return StatusCode(500, new { message = "An error occurred while processing KYC callback" });
-            }
-        }
-
-        [HttpGet("pending")]
-        [Authorize(Roles = "ADMIN")]
-        [EnableRateLimiting("standard")]
-        public async Task<IActionResult> GetPendingVerifications([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-        {
-            try
-            {
-                // Use the default KYC service for admin operations
-                var kycService = _kycServiceFactory.GetKycService();
-                var result = await kycService.GetPendingVerificationsAsync(page, pageSize);
+                    UserId = Guid.Parse(request.UserId),
+                    SessionId = Guid.Parse(request.SessionId),
+                    VerificationLevel = request.VerificationLevel,
+                    Data = request.Data
+                });
 
                 if (!result.IsSuccess)
                 {
-                    return BadRequest(new { message = result.ErrorMessage });
+                    return BadRequest(new { success = false, message = result.ErrorMessage });
                 }
 
-                return Ok(result.Data);
+                // Perform AML check
+                _ = await _kycService.PerformAmlCheckAsync(userId.Value);
+
+
+                return Ok(new { success = true, message = "Verification processed successfully" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error getting pending KYC verifications");
-                return StatusCode(500, new { message = "An error occurred while retrieving pending verifications" });
+                _logger.LogError(ex, "Error processing minimal verification");
+                return StatusCode(500, new { success = false, message = "An error occurred during verification" });
             }
         }
 
-        [HttpPost("admin/update/{userId}")]
-        [Authorize(Roles = "ADMIN")]
-        [EnableRateLimiting("standard")]
-        public async Task<IActionResult> UpdateKycStatus(
-            string userId,
-            [FromBody] KycStatusUpdateRequest request)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var parsedUserId))
-                {
-                    return BadRequest(new { message = "Invalid user ID" });
-                }
-
-                // Get the appropriate KYC service
-                var kycService = _kycServiceFactory.GetKycService();
-                var result = await kycService.UpdateKycStatusAsync(
-                    parsedUserId,
-                    request.Status,
-                    request.Comment);
-
-                if (!result.IsSuccess)
-                {
-                    return BadRequest(new { message = result.ErrorMessage });
-                }
-
-                return Ok(new { message = "KYC status updated successfully" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error updating KYC status");
-                return StatusCode(500, new { message = "An error occurred while updating KYC status" });
-            }
-        }
-
-        [HttpGet("check-eligibility")]
+        [HttpPost("session")]
         [Authorize]
         [EnableRateLimiting("standard")]
-        public async Task<IActionResult> CheckTradingEligibility()
+        public async Task<IActionResult> CreateSession([FromBody] SessionRequest request)
         {
             try
             {
-                var userId = GetUserId();
+                Guid? userId = GetUserId();
                 if (!userId.HasValue)
                 {
-                    return BadRequest(new { message = "Invalid user ID" });
+                    return BadRequest(new { success = false, message = "Invalid user ID" });
                 }
 
-                var kycService = _kycServiceFactory.GetKycService();
-                var result = await kycService.IsUserEligibleForTrading(userId.Value);
+                ResultWrapper<KycSessionData> result = await _kycService.GetOrCreateUserSessionAsync(
+                    userId.Value,
+                    request.VerificationLevel);
 
                 if (!result.IsSuccess)
                 {
-                    return BadRequest(new { message = result.ErrorMessage });
+                    return BadRequest(new { success = false, message = result.ErrorMessage });
                 }
 
-                return Ok(new { isEligible = result.Data });
+                return Ok(new
+                {
+                    success = true,
+                    data = result.Data.Id
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error checking trading eligibility");
-                return StatusCode(500, new { message = "An error occurred while checking trading eligibility" });
-            }
-        }
-
-        [HttpGet("providers")]
-        [Authorize(Roles = "ADMIN")]
-        public IActionResult GetAvailableProviders()
-        {
-            try
-            {
-                return Ok(new { providers = new[] { "Onfido", "SumSub" } });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting available KYC providers");
-                return StatusCode(500, new { message = "An error occurred while retrieving KYC providers" });
+                _logger.LogError(ex, "Error creating KYC session");
+                return StatusCode(500, new { success = false, message = "An error occurred creating KYC session" });
             }
         }
 
         private Guid? GetUserId()
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var parsedUserId))
-            {
-                return null;
-            }
-            return parsedUserId;
-        }
-
-        private async Task<string> ReadRequestBodyAsync()
-        {
-            using var reader = new StreamReader(Request.Body, leaveOpen: true);
-            var body = await reader.ReadToEndAsync();
-
-            // Reset the request body position for potential future reads
-            Request.Body.Position = 0;
-
-            return body;
+            string? userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            return string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out Guid parsedUserId)
+                ? null
+                : parsedUserId;
         }
     }
 
-    public class KycStatusUpdateRequest
+    public class VerificationRequest
     {
-        public string Status { get; set; }
-        public string Comment { get; set; }
+        public required string UserId { get; set; }
+        public required string SessionId { get; set; }
+        public required string VerificationLevel { get; set; }
+        public required Dictionary<string, object> Data { get; set; }
+    }
+
+    public class SessionRequest
+    {
+        public string VerificationLevel { get; set; } = "STANDARD";
     }
 }

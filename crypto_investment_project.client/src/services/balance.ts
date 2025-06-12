@@ -1,15 +1,19 @@
-﻿import api from "./api";
+﻿import { Balance } from "../types/balanceTypes";
+import api from "./api";
 
-export interface IBalance {
-    userId: string;
-    assetId: string;
-    ticker: string;
-    available: number;
-    locked: number;
-    total: number;
-}
+export const getBalance = async (ticker: string): Promise<Balance | null> => {
+    if (!ticker) {
+        console.error("getBalances called with undefined ticker");
+        return null;
+    }
+    const response = await api.safeRequest('get', `/Balance/asset/${ticker}`);
+    console.log("BalanceService::getBalance => response: ", response);
+    if (response == null || response.data == null || response.success != true)
+        throw `Failed to get balance for ${ticker}`;
+    return response.data;
+};
 
-export const getBalances = async (userId: string) => {
+export const getBalances = async (userId: string): Promise<Balance[] | []>  => {
     if (!userId) {
         console.error("getBalances called with undefined userId");
         return [];

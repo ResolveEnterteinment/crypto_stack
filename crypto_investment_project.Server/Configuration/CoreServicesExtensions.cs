@@ -4,6 +4,7 @@ using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Logging;
+using Application.Interfaces.Network;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Application.Interfaces.Withdrawal;
@@ -18,6 +19,7 @@ using Infrastructure.Services.Event;
 using Infrastructure.Services.Exchange;
 using Infrastructure.Services.Index;
 using Infrastructure.Services.Logging;
+using Infrastructure.Services.Network;
 using Infrastructure.Services.Payment;
 using Infrastructure.Services.Subscription;
 using Infrastructure.Services.Withdrawal;
@@ -35,13 +37,13 @@ public static class CoreServicesExtensions
     public static IServiceCollection AddCoreServices(this IServiceCollection services, IWebHostEnvironment environment)
     {
         // Register additional dependencies
-        services.AddDataProtection();
-        services.AddSingleton(TimeProvider.System);
-        services.AddHttpClient();
-        services.AddMemoryCache();
+        _ = services.AddDataProtection();
+        _ = services.AddSingleton(TimeProvider.System);
+        _ = services.AddHttpClient();
+        _ = services.AddMemoryCache();
 
         // Configure MongoDB client with connection pooling
-        services.AddSingleton<IMongoClient>(provider =>
+        _ = services.AddSingleton<IMongoClient>(provider =>
         {
             var settings = provider.GetRequiredService<IConfiguration>().GetSection("MongoDB").Get<MongoDbSettings>();
             if (settings == null || string.IsNullOrEmpty(settings.ConnectionString))
@@ -75,12 +77,12 @@ public static class CoreServicesExtensions
             .CreateLogger();
 
         // Register Fluent Validation
-        services.AddFluentValidators(
+        _ = services.AddFluentValidators(
             typeof(CoreServicesExtensions).Assembly,
             typeof(FluentValidators).Assembly);
 
         // Configure SignalR
-        services.AddSignalR(options =>
+        _ = services.AddSignalR(options =>
         {
             options.EnableDetailedErrors = environment.IsDevelopment();
             options.MaximumReceiveMessageSize = 102400; // 100 KB
@@ -93,16 +95,16 @@ public static class CoreServicesExtensions
             });
 
         // Add MediatR
-        services.AddMediatR(cfg =>
+        _ = services.AddMediatR(cfg =>
         {
-            cfg.RegisterServicesFromAssembly(typeof(EventService).Assembly);
-            cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+            _ = cfg.RegisterServicesFromAssembly(typeof(EventService).Assembly);
+            _ = cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
         });
 
-        services.AddOpenTelemetry()
+        _ = services.AddOpenTelemetry()
         .WithTracing(tracerProviderBuilder =>
         {
-            tracerProviderBuilder
+            _ = tracerProviderBuilder
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddSource("StackFi") // ActivitySource name
@@ -132,39 +134,41 @@ public static class CoreServicesExtensions
     private static void RegisterApplicationServices(IServiceCollection services)
     {
         // 1) Generic plumbing for all BaseService<T> consumers:
-        services.AddScoped(typeof(ICrudRepository<>), typeof(Repository<>));
-        services.AddScoped(typeof(ICacheService<>), typeof(CacheService<>));
-        services.AddScoped(typeof(IMongoIndexService<>), typeof(MongoIndexService<>));
+        _ = services.AddScoped(typeof(ICrudRepository<>), typeof(Repository<>));
+        _ = services.AddScoped(typeof(ICacheService<>), typeof(CacheService<>));
+        _ = services.AddScoped(typeof(IMongoIndexService<>), typeof(MongoIndexService<>));
 
         // Register services with appropriate lifecycles
-        services.AddSingleton(typeof(IMongoIndexService<>), typeof(MongoIndexService<>));
-        services.AddScoped<IEncryptionService, Encryption.Services.EncryptionService>();
+        _ = services.AddSingleton(typeof(IMongoIndexService<>), typeof(MongoIndexService<>));
+        _ = services.AddScoped<IEmailService, EmailService>();
+        _ = services.AddScoped<IEncryptionService, Encryption.Services.EncryptionService>();
 
-        services.AddScoped<ILoggingService, LoggingService>();
+        _ = services.AddScoped<ILoggingService, LoggingService>();
 
         // 2) Your existing registrations
-        services.AddScoped<IExchangeService, ExchangeService>();
-        services.AddScoped<IPaymentProcessingService, PaymentProcessingService>();
-        services.AddScoped<IOrderManagementService, OrderManagementService>();
-        services.AddScoped<IBalanceManagementService, BalanceManagementService>();
-        services.AddScoped<IOrderReconciliationService, OrderReconciliationService>();
-        services.AddScoped<IPaymentService, PaymentService>();
-        services.AddScoped<IPaymentWebhookHandler, StripeWebhookHandler>();
-        services.AddScoped<ISubscriptionService, SubscriptionService>();
-        services.AddScoped<IAssetService, AssetService>();
-        services.AddScoped<IBalanceService, BalanceService>();
-        services.AddScoped<ITransactionService, TransactionService>();
-        services.AddScoped<IEventService, EventService>();
-        services.AddScoped<IDashboardService, DashboardService>();
-        services.AddScoped<IAuthenticationService, AuthenticationService>();
-        services.AddScoped<IUserService, UserService>();
-        services.AddScoped<ILogExplorerService, LogExplorerService>();
-        services.AddScoped<INotificationService, NotificationService>();
-        services.AddScoped<IIdempotencyService, IdempotencyService>();
-        services.AddScoped<IUnitOfWork, UnitOfWork>();
-        services.AddScoped<IWithdrawalService, WithdrawalService>();
-        services.AddScoped<ISubscriptionRetryService, SubscriptionRetryService>();
+        _ = services.AddScoped<IExchangeService, ExchangeService>();
+        _ = services.AddScoped<IPaymentProcessingService, PaymentProcessingService>();
+        _ = services.AddScoped<IOrderManagementService, OrderManagementService>();
+        _ = services.AddScoped<IBalanceManagementService, BalanceManagementService>();
+        _ = services.AddScoped<IOrderReconciliationService, OrderReconciliationService>();
+        _ = services.AddScoped<IPaymentService, PaymentService>();
+        _ = services.AddScoped<IPaymentWebhookHandler, StripeWebhookHandler>();
+        _ = services.AddScoped<ISubscriptionService, SubscriptionService>();
+        _ = services.AddScoped<IAssetService, AssetService>();
+        _ = services.AddScoped<INetworkService, NetworkService>();
+        _ = services.AddScoped<IBalanceService, BalanceService>();
+        _ = services.AddScoped<ITransactionService, TransactionService>();
+        _ = services.AddScoped<IEventService, EventService>();
+        _ = services.AddScoped<IDashboardService, DashboardService>();
+        _ = services.AddScoped<IAuthenticationService, AuthenticationService>();
+        _ = services.AddScoped<IUserService, UserService>();
+        _ = services.AddScoped<ILogExplorerService, LogExplorerService>();
+        _ = services.AddScoped<INotificationService, NotificationService>();
+        _ = services.AddScoped<IIdempotencyService, IdempotencyService>();
+        _ = services.AddScoped<IUnitOfWork, UnitOfWork>();
+        _ = services.AddScoped<IWithdrawalService, WithdrawalService>();
+        _ = services.AddScoped<ISubscriptionRetryService, SubscriptionRetryService>();
 
-        services.AddScoped<ITestService, TestService>();
+        _ = services.AddScoped<ITestService, TestService>();
     }
 }

@@ -3,10 +3,8 @@
     public class KycVerificationRequest
     {
         public Guid UserId { get; set; }
+        public Guid SessionId { get; set; }
         public string VerificationLevel { get; set; } = "STANDARD";
-        public bool RedirectAfterVerification { get; set; } = true;
-        public string RedirectUrl { get; set; }
-        public string Locale { get; set; } = "en";
-        public Dictionary<string, object> UserData { get; set; } = new Dictionary<string, object>();
+        public Dictionary<string, object> Data { get; set; } = [];
     }
 }

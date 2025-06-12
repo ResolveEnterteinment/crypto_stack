@@ -1,40 +1,25 @@
 ﻿import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Navbar from "../components/Navbar";
 import AdminLogsPanel from "../components/Admin/AdminLogsPanel";
 import WithdrawalManagementPanel from "../components/Admin/WithdrawalManagement";
 import AdminPaymentDashboard from "../components/Admin/AdminPaymentDashboard";
 import KycAdminPanel from "../components/KYC/KycAdminPanel";
-import KycProviderConfig from "../components/Admin/KycProviderConfig";
 import KycVerificationReports from "../components/KYC/KycVerificationReports";
 import { useAuth } from '../context/AuthContext';
+import Navbar from '../components/Navbar';
 
 /**
  * AdminPage Component
  * Main admin interface with tabs for different administrative functions
  */
-const AdminPage: React.FC = () => {
+const AdminPageContent: React.FC = () => {
     const navigate = useNavigate();
-    const { user, logout } = useAuth();
+    const { user } = useAuth();
     const [activeTab, setActiveTab] = useState('logs');
-
-    // Navigation handlers
-    const showProfile = () => navigate('/profile');
-    const showSettings = () => navigate('/settings');
-    const handleLogout = () => {
-        logout();
-        navigate('/auth');
-    };
 
     // Ensure user has admin privileges
     if (user?.roles?.includes('Admin')) {
         return (
-            <>
-                <Navbar
-                    showProfile={showProfile}
-                    showSettings={showSettings}
-                    logout={handleLogout}
-                />
                 <div className="min-h-screen bg-gray-50 flex justify-center items-center p-4">
                     <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full text-center">
                         <div className="text-red-500 text-6xl mb-4">
@@ -54,17 +39,10 @@ const AdminPage: React.FC = () => {
                         </button>
                     </div>
                 </div>
-            </>
         );
     }
 
     return (
-        <>
-            <Navbar
-                showProfile={showProfile}
-                showSettings={showSettings}
-                logout={handleLogout}
-            />
             <div className="min-h-screen bg-gray-50 pt-20 pb-12 px-4">
                 <div className="max-w-6xl mx-auto">
                     <header className="mb-8">
@@ -163,7 +141,6 @@ const AdminPage: React.FC = () => {
                         )}
                         {activeTab === 'payments' && <AdminPaymentDashboard />}
                         {activeTab === 'kyc' && <KycAdminPanel />}
-                        {activeTab === 'kyc-providers' && <KycProviderConfig />}
                         {activeTab === 'kyc-reports' && <KycVerificationReports />}
                         {activeTab === 'withdrawal' && <WithdrawalManagementPanel />}
                         {activeTab === 'settings' && (
@@ -175,6 +152,14 @@ const AdminPage: React.FC = () => {
                     </div>
                 </div>
             </div>
+    );
+};
+
+const AdminPage: React.FC = () => {
+    return (
+        <>
+            <Navbar />
+            <AdminPageContent />
         </>
     );
 };

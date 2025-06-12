@@ -1,6 +1,7 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Base;
 using Application.Interfaces.Logging;
+using Domain.DTOs.User;
 using Domain.Exceptions;
 using Domain.Models.User;
 using Infrastructure.Services.Base;
@@ -40,12 +41,6 @@ namespace Infrastructure.Services
             if (userId == Guid.Empty)
                 return false;
 
-            var cacheKey = USER_EXISTS_CACHE_PREFIX + userId;
-            if (CacheService.TryGetValue<UserData>(cacheKey, out _))
-            {
-                return true;
-            }
-
             var checkExists = await _repository.CheckExistsAsync(userId);
             return checkExists;
         }
@@ -81,14 +76,11 @@ namespace Infrastructure.Services
             if (!insertResult.IsSuccess)
                 throw new DatabaseException("Failed to insert new user.");
 
-            // Invalidate exists cache
-            var cacheKey = USER_EXISTS_CACHE_PREFIX + newUserData.Id;
-            CacheService.Invalidate(cacheKey);
             Logger.LogInformation("Created user {UserId} with email {Email}", newUserData.Id, newUserData.Email);
             return newUserData;
         }
 
-        public async Task UpdateAsync(Guid id, UserData updatedUserData)
+        public async Task UpdateAsync(Guid id, UserUpdateDTO updatedUserData)
         {
             if (id == Guid.Empty)
                 throw new ArgumentException("Invalid user ID", nameof(id));
@@ -99,8 +91,6 @@ namespace Infrastructure.Services
             if (!updateResult.IsSuccess)
                 throw new DatabaseException($"Failed to update user {id}: {updateResult.ErrorMessage}");
 
-            // Invalidate exists cache
-            CacheService.Invalidate(USER_EXISTS_CACHE_PREFIX + id);
             Logger.LogInformation("Updated user {UserId}", id);
         }
 
@@ -113,8 +103,6 @@ namespace Infrastructure.Services
             if (!deleteResult.IsSuccess)
                 throw new DatabaseException($"Failed to remove user {id}: {deleteResult.ErrorMessage}");
 
-            // Invalidate caches
-            CacheService.Invalidate(USER_EXISTS_CACHE_PREFIX + id);
             Logger.LogInformation("Removed user {UserId}", id);
         }
     }

@@ -2,15 +2,15 @@
 import { useNavigate } from 'react-router-dom';
 
 // Import enhanced components
-import Navbar from "../components/LandingPage/Navbar";
 import HeroSection from "../components/LandingPage/HeroSection";
 import Placeholder from "../components/LandingPage/ui/Placeholder";
 import TestimonialCarousel from "../components/LandingPage/TestimonialCarousel";
 import FaqAccordion from "../components/LandingPage/FaqAccordion";
 import CtaSection from "../components/LandingPage/CtaSection";
+import Navbar from '../components/LandingPage/Navbar';
 
 // Components for our landing page
-const LandingPage = () => {
+const LandingPageContent = () => {
     const navigate = useNavigate();
     const [isLoading, setIsLoading] = useState(true);
 
@@ -69,7 +69,6 @@ const LandingPage = () => {
 
     return (
         <div className="bg-gray-50 min-h-screen">
-            <Navbar />
             {/* Hero Section */}
             <HeroSection />
 
@@ -486,6 +485,14 @@ const LandingPage = () => {
                   `
             }} />
         </div>
+    );
+}
+const LandingPage: React.FC = () => {
+    return (
+        <>
+            <Navbar/>
+            <LandingPageContent />
+        </>
     );
 }
 export default LandingPage;

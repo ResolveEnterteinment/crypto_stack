@@ -1,5 +1,4 @@
-﻿using Application.Contracts.Requests;
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace Application.Contracts.Requests.Auth
 {

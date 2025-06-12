@@ -25,4 +25,8 @@
     <ProjectReference Include="..\Domain\Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Contracts\Responses\KYC\OCR\" />
+  </ItemGroup>
+
 </Project>

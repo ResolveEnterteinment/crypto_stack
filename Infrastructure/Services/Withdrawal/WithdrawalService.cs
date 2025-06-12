@@ -1,13 +1,20 @@
 ﻿// Infrastructure/Services/WithdrawalService.cs
 using Application.Interfaces;
+using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
 using Application.Interfaces.KYC;
 using Application.Interfaces.Logging;
+using Application.Interfaces.Network;
 using Application.Interfaces.Withdrawal;
 using Domain.Constants.KYC;
 using Domain.Constants.Withdrawal;
 using Domain.DTOs;
+using Domain.DTOs.Network;
 using Domain.DTOs.Withdrawal;
+using Domain.Events;
+using Domain.Exceptions;
+using Domain.Models.Balance;
+using Domain.Models.Transaction;
 using Domain.Models.Withdrawal;
 using Infrastructure.Services.Base;
 using MongoDB.Driver;
@@ -19,6 +26,10 @@ namespace Infrastructure.Services.Withdrawal
         private readonly IKycService _kycService;
         private readonly IUserService _userService;
         private readonly INotificationService _notificationService;
+        private readonly INetworkService _networkService;
+        private readonly IAssetService _assetService;
+        private readonly IBalanceService _balanceService;
+        private readonly ITransactionService _transactionService;
 
         public WithdrawalService(
             ICrudRepository<WithdrawalData> repository,
@@ -28,6 +39,10 @@ namespace Infrastructure.Services.Withdrawal
             IEventService eventService,
             IKycService kycService,
             IUserService userService,
+            INetworkService networkService,
+            IAssetService assetService,
+            IBalanceService balanceService,
+            ITransactionService transactionService,
             INotificationService notificationService
         ) : base(
             repository,
@@ -55,6 +70,10 @@ namespace Infrastructure.Services.Withdrawal
             _kycService = kycService ?? throw new ArgumentNullException(nameof(kycService));
             _userService = userService ?? throw new ArgumentNullException(nameof(userService));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _networkService = networkService ?? throw new ArgumentNullException(nameof(networkService));
+            _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
+            _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
+            _transactionService = transactionService ?? throw new ArgumentNullException(nameof(balanceService));
         }
 
         public async Task<ResultWrapper<WithdrawalLimitDto>> GetUserWithdrawalLimitsAsync(Guid userId)
@@ -62,7 +81,7 @@ namespace Infrastructure.Services.Withdrawal
             try
             {
                 // Get user's KYC status
-                var kycResult = await _kycService.GetUserKycStatusAsync(userId);
+                var kycResult = await _kycService.GetUserKycStatusAsync(userId, KycStatus.Approved);
                 if (!kycResult.IsSuccess)
                 {
                     return ResultWrapper<WithdrawalLimitDto>.Failure(
@@ -75,11 +94,11 @@ namespace Infrastructure.Services.Withdrawal
                 // Set limits based on KYC level
                 var limitsDto = new WithdrawalLimitDto
                 {
-                    KycLevel = kycData.VerificationLevel
+                    KycLevel = kycData.VerificationLevel.ToUpperInvariant()
                 };
 
                 // Set daily and monthly limits based on KYC level
-                switch (kycData.VerificationLevel)
+                switch (kycData.VerificationLevel.ToUpperInvariant())
                 {
                     case KycLevel.None:
                         limitsDto.DailyLimit = WithdrawalLimits.NONE_DAILY_LIMIT;
@@ -161,6 +180,29 @@ namespace Infrastructure.Services.Withdrawal
                 Logger.LogError($"Error getting withdrawal limits: {ex.Message}");
                 return ResultWrapper<WithdrawalLimitDto>.FromException(ex);
             }
+        }
+
+        public async Task<ResultWrapper<List<NetworkDto>>> GetSupportedNetworksAsync(string assetTicker)
+        {
+            try
+            {
+                return string.IsNullOrWhiteSpace(assetTicker)
+                    ? ResultWrapper<List<NetworkDto>>.Failure(
+                        Domain.Constants.FailureReason.ValidationError,
+                        "Asset ticker is required")
+                    : await _networkService.GetNetworksByAssetAsync(assetTicker);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error getting supported networks: {ex.Message}");
+                return ResultWrapper<List<NetworkDto>>.FromException(ex);
+            }
+        }
+
+        // Add this helper method for address validation
+        public async Task<ResultWrapper<bool>> ValidateWithdrawalAddressAsync(string network, string address)
+        {
+            return await _networkService.IsAddressValidAsync(network, address);
         }
 
         public async Task<ResultWrapper<WithdrawalRequestDto>> RequestWithdrawalAsync(WithdrawalRequest request)
@@ -251,7 +293,7 @@ namespace Infrastructure.Services.Withdrawal
                 }
 
                 // Notify user
-                await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                _ = await _notificationService.CreateAndSendNotificationAsync(new NotificationData
                 {
                     UserId = request.UserId.ToString(),
                     Message = $"Your withdrawal request for {request.Amount} {request.Currency} has been received and is pending approval."
@@ -280,26 +322,17 @@ namespace Infrastructure.Services.Withdrawal
 
         public async Task<ResultWrapper<List<WithdrawalData>>> GetUserWithdrawalHistoryAsync(Guid userId)
         {
-            try
-            {
-                var filter = Builders<WithdrawalData>.Filter.Eq(w => w.UserId, userId);
-                var sort = Builders<WithdrawalData>.Sort.Descending(w => w.CreatedAt);
-
-                var result = await GetManyAsync(filter);
-                if (!result.IsSuccess)
+            return await SafeExecute<List<WithdrawalData>>(
+                async () =>
                 {
-                    return ResultWrapper<List<WithdrawalData>>.Failure(
-                        result.Reason,
-                        $"Failed to get withdrawal history: {result.ErrorMessage}");
-                }
+                    var filter = Builders<WithdrawalData>.Filter.Eq(w => w.UserId, userId);
+                    var sort = Builders<WithdrawalData>.Sort.Descending(w => w.CreatedAt);
 
-                return ResultWrapper<List<WithdrawalData>>.Success(result.Data?.OrderByDescending(w => w.CreatedAt).ToList());
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError($"Error getting withdrawal history: {ex.Message}");
-                return ResultWrapper<List<WithdrawalData>>.FromException(ex);
-            }
+                    var result = await _repository.GetAllAsync(filter) ??
+                        throw new KeyNotFoundException("Failed to fetch user withdrawals");
+                    return result;
+                }
+            );
         }
 
         public async Task<ResultWrapper<WithdrawalData>> GetWithdrawalDetailsAsync(Guid withdrawalId)
@@ -307,14 +340,11 @@ namespace Infrastructure.Services.Withdrawal
             try
             {
                 var result = await GetByIdAsync(withdrawalId);
-                if (!result.IsSuccess || result.Data == null)
-                {
-                    return ResultWrapper<WithdrawalData>.Failure(
+                return !result.IsSuccess || result.Data == null
+                    ? ResultWrapper<WithdrawalData>.Failure(
                         Domain.Constants.FailureReason.ResourceNotFound,
-                        $"Withdrawal with ID {withdrawalId} not found.");
-                }
-
-                return ResultWrapper<WithdrawalData>.Success(result.Data);
+                        $"Withdrawal with ID {withdrawalId} not found.")
+                    : ResultWrapper<WithdrawalData>.Success(result.Data);
             }
             catch (Exception ex)
             {
@@ -323,10 +353,24 @@ namespace Infrastructure.Services.Withdrawal
             }
         }
 
-        public async Task<ResultWrapper> UpdateWithdrawalStatusAsync(Guid withdrawalId, string status, string comment = null)
+        public async Task<ResultWrapper> UpdateWithdrawalStatusAsync(Guid withdrawalId, string status, Guid processedBy, string? comment = null, string? transactionHash = null)
         {
+            using var scope = Logger.BeginScope(new
+            {
+                WithdrawalId = withdrawalId,
+                Status = status,
+                ProcessedBy = processedBy,
+                Comment = comment
+            });
             try
             {
+                if (string.IsNullOrWhiteSpace(status) || !WithdrawalStatus.AllValues.Contains(status.ToUpperInvariant()))
+                {
+                    return ResultWrapper.Failure(
+                        Domain.Constants.FailureReason.ValidationError,
+                        $"Invalid status. Must be one of: {string.Join(", ", WithdrawalStatus.AllValues)}");
+                }
+
                 var result = await GetByIdAsync(withdrawalId);
                 if (!result.IsSuccess || result.Data == null)
                 {
@@ -338,8 +382,8 @@ namespace Infrastructure.Services.Withdrawal
                 var withdrawal = result.Data;
 
                 // Don't allow updating already completed withdrawals
-                if (withdrawal.Status == WithdrawalStatus.Completed ||
-                    withdrawal.Status == WithdrawalStatus.Cancelled)
+                if (withdrawal.Status is WithdrawalStatus.Completed or
+                    WithdrawalStatus.Cancelled)
                 {
                     return ResultWrapper.Failure(
                         Domain.Constants.FailureReason.ValidationError,
@@ -348,15 +392,15 @@ namespace Infrastructure.Services.Withdrawal
 
                 var updateFields = new Dictionary<string, object>
                 {
-                    ["Status"] = status
+                    ["Status"] = status.ToUpperInvariant()
                 };
 
-                if (status == WithdrawalStatus.Approved ||
-                    status == WithdrawalStatus.Completed ||
-                    status == WithdrawalStatus.Rejected)
+                if (status is WithdrawalStatus.Approved or
+                    WithdrawalStatus.Completed or
+                    WithdrawalStatus.Rejected)
                 {
                     updateFields["ProcessedAt"] = DateTime.UtcNow;
-                    updateFields["ProcessedBy"] = "ADMIN"; // In real app, use admin's user ID
+                    updateFields["ProcessedBy"] = processedBy;
                 }
 
                 if (!string.IsNullOrEmpty(comment))
@@ -364,14 +408,20 @@ namespace Infrastructure.Services.Withdrawal
                     updateFields["Comments"] = comment;
                 }
 
+                if (!string.IsNullOrEmpty(transactionHash))
+                {
+                    updateFields["TransactionHash"] = transactionHash;
+                }
+
                 // Update audit trail
-                var auditTrail = withdrawal.AuditTrail ?? new Dictionary<string, object>();
-                auditTrail[$"StatusChange_{DateTime.UtcNow.Ticks}"] = new
+                var auditTrail = withdrawal.AuditTrail ?? [];
+                auditTrail[$"StatusChange_{DateTime.UtcNow.Ticks}"] = new WithdrawalAuditTrail
                 {
                     OldStatus = withdrawal.Status,
                     NewStatus = status,
                     Timestamp = DateTime.UtcNow,
-                    Comment = comment
+                    Comment = comment,
+                    ProcessedBy = processedBy
                 };
                 updateFields["AuditTrail"] = auditTrail;
 
@@ -393,11 +443,21 @@ namespace Infrastructure.Services.Withdrawal
                     _ => $"Your withdrawal request status has been updated to: {status}"
                 };
 
-                await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                _ = await _notificationService.CreateAndSendNotificationAsync(new NotificationData
                 {
                     UserId = withdrawal.UserId.ToString(),
                     Message = message
                 });
+
+                switch (status)
+                {
+                    case WithdrawalStatus.Approved:
+                        await HandleWithdrawalApproved(withdrawal);
+                        break;
+
+                    default:
+                        break;
+                }
 
                 return ResultWrapper.Success();
             }
@@ -405,6 +465,77 @@ namespace Infrastructure.Services.Withdrawal
             {
                 Logger.LogError($"Error updating withdrawal status: {ex.Message}");
                 return ResultWrapper.FromException(ex);
+            }
+        }
+
+        private async Task HandleWithdrawalApproved(WithdrawalData withdrawal)
+        {
+            using var scope = Logger.BeginScope(new
+            {
+                WithdrawalId = withdrawal.Id,
+            });
+
+            try
+            {
+                var assetResult = await _assetService.GetByTickerAsync(withdrawal.Currency);
+                if (assetResult is null || !assetResult.IsSuccess)
+                {
+                    throw new AssetFetchException();
+                }
+
+                var asset = assetResult.Data;
+                // Update user's balance
+                var balanceUpdate = new BalanceData
+                {
+                    UserId = withdrawal.UserId,
+                    AssetId = asset.Id,
+                    Ticker = asset.Ticker,
+                    Available = -withdrawal.Amount,
+                    LastUpdated = DateTime.UtcNow
+                };
+
+                var updateBalanceResult = await _balanceService.UpsertBalanceAsync(
+                    withdrawal.UserId, balanceUpdate);
+
+                if (updateBalanceResult is null || !updateBalanceResult.IsSuccess || updateBalanceResult.Data is null)
+                {
+                    throw new DatabaseException(
+                        $"Failed to update balances: {updateBalanceResult?.ErrorMessage ?? "Unknown error"}");
+                }
+
+                var balance = updateBalanceResult.Data;
+
+                _ = Logger.EnrichScope(
+                    ("BalanceId", balance.Id)
+                    );
+
+                // Record the transaction
+                var transaction = new TransactionData
+                {
+                    UserId = withdrawal.UserId,
+                    BalanceId = balance.Id,
+                    SourceName = "Platform",
+                    SourceId = withdrawal.Id.ToString(),
+                    Action = $"Withdrawal",
+                    Quantity = withdrawal.Amount
+                };
+
+                var insertTransactionResult = await _transactionService.InsertAsync(transaction);
+                if (insertTransactionResult == null || !insertTransactionResult.IsSuccess)
+                {
+                    throw new DatabaseException(
+                        $"Failed to create transaction record: {insertTransactionResult?.ErrorMessage ?? "Unknown error"}");
+                }
+                var TransactionScope = Logger.EnrichScope(
+                    ("TransactionId", transaction.Id)
+                    );
+
+                await EventService!.PublishAsync(new WithdrawalApprovedEvent(withdrawal)
+                );
+            }
+            catch (Exception ex)
+            {
+                await Logger.LogTraceAsync(ex.Message, "HandleWithdrawalApproved", Domain.Constants.Logging.LogLevel.Critical, true);
             }
         }
 
@@ -416,14 +547,11 @@ namespace Infrastructure.Services.Withdrawal
                 //var sort = Builders<WithdrawalData>.Sort.Ascending(w => w.CreatedAt);
 
                 var result = await GetPaginatedAsync(filter, page, pageSize, "CreatedAt");
-                if (!result.IsSuccess)
-                {
-                    return ResultWrapper<PaginatedResult<WithdrawalData>>.Failure(
+                return !result.IsSuccess
+                    ? ResultWrapper<PaginatedResult<WithdrawalData>>.Failure(
                         result.Reason,
-                        $"Failed to get pending withdrawals: {result.ErrorMessage}");
-                }
-
-                return ResultWrapper<PaginatedResult<WithdrawalData>>.Success(result.Data);
+                        $"Failed to get pending withdrawals: {result.ErrorMessage}")
+                    : ResultWrapper<PaginatedResult<WithdrawalData>>.Success(result.Data);
             }
             catch (Exception ex)
             {
@@ -465,6 +593,32 @@ namespace Infrastructure.Services.Withdrawal
             }
         }
 
+        public async Task<ResultWrapper<decimal>> GetUserPendingTotalsAsync(Guid userId, string assetTicker)
+        {
+            try
+            {
+                var filter = Builders<WithdrawalData>.Filter.And(
+                    Builders<WithdrawalData>.Filter.Eq(w => w.UserId, userId),
+                    Builders<WithdrawalData>.Filter.Eq(w => w.Currency, assetTicker),
+                    Builders<WithdrawalData>.Filter.Eq(w => w.Status, WithdrawalStatus.Pending)
+                );
+
+                var result = await _repository.GetAllAsync(filter);
+                if (result is null)
+                {
+                    throw new DatabaseException("Failed to get withdrawal totals");
+                }
+
+                var total = result?.Sum(w => w.Amount) ?? 0m;
+                return ResultWrapper<decimal>.Success(total);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error getting withdrawal totals: {ex.Message}");
+                return ResultWrapper<decimal>.FromException(ex);
+            }
+        }
+
         public async Task<ResultWrapper<bool>> CanUserWithdrawAsync(Guid userId, decimal amount)
         {
             try
@@ -481,19 +635,13 @@ namespace Infrastructure.Services.Withdrawal
                 var limits = limitsResult.Data;
 
                 // Check if the amount exceeds any limits
-                if (amount > limits.DailyRemaining)
-                {
-                    return ResultWrapper<bool>.Success(false,
-                        $"Daily withdrawal limit exceeded. Remaining: {limits.DailyRemaining}");
-                }
-
-                if (amount > limits.MonthlyRemaining)
-                {
-                    return ResultWrapper<bool>.Success(false,
-                        $"Monthly withdrawal limit exceeded. Remaining: {limits.MonthlyRemaining}");
-                }
-
-                return ResultWrapper<bool>.Success(true);
+                return amount > limits.DailyRemaining
+                    ? ResultWrapper<bool>.Success(false,
+                        $"Daily withdrawal limit exceeded. Remaining: {limits.DailyRemaining}")
+                    : amount > limits.MonthlyRemaining
+                    ? ResultWrapper<bool>.Success(false,
+                        $"Monthly withdrawal limit exceeded. Remaining: {limits.MonthlyRemaining}")
+                    : ResultWrapper<bool>.Success(true);
             }
             catch (Exception ex)
             {

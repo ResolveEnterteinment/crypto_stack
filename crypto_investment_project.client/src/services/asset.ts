@@ -1,6 +1,6 @@
 // src/services/asset.ts
 import api from "./api";
-import IAsset from "../interfaces/IAsset";
+import { Asset } from "../types/assetTypes";
 
 let apiFailureCount = 0;
 const MAX_API_FAILURES = 3;
@@ -12,7 +12,7 @@ const API_RETRY_TIMEOUT = 30000; // 30 seconds
  * @returns Promise with array of asset objects
  */
 
-export const getSupportedAssets = async (): Promise<IAsset[]> => {
+export const getSupportedAssets = async (): Promise<Asset[]> => {
     // If we've failed too many times, use mock data without trying the API
     if (useApiDisabled) {
         console.warn('API calls temporarily disabled due to repeated failures');
@@ -25,14 +25,49 @@ export const getSupportedAssets = async (): Promise<IAsset[]> => {
         apiFailureCount = 0;
 
         // Process and validate response
-        const assets: IAsset[] = Array.isArray(response.data) ? response.data.map((asset: IAsset) => ({
-            id: asset.id,
-            name: asset.name,
-            ticker: asset.ticker,
-            symbol: asset.symbol,
-            precision: asset.precision,
-            subunitName: asset.subunitName
-        })) : [];
+        const assets: Asset[] = Array.isArray(response.data) ? response.data : [];
+
+        return assets;
+    } catch (error: any) {
+        // Handle error but add circuit breaker logic
+        apiFailureCount++;
+
+        if (apiFailureCount >= MAX_API_FAILURES) {
+            useApiDisabled = true;
+
+            // Re-enable API calls after a timeout
+            setTimeout(() => {
+                useApiDisabled = false;
+                apiFailureCount = 0;
+                console.info('Re-enabling API calls after timeout');
+            }, API_RETRY_TIMEOUT);
+        }
+
+        // Log error and return mock data
+        console.error('Error fetching available assets:', error);
+        throw error;
+    }
+};
+
+/**
+ * Fetches assets by user
+ * @returns Promise with array of asset objects
+ */
+
+export const getUserAssets = async (): Promise<Asset[]> => {
+    // If we've failed too many times, use mock data without trying the API
+    if (useApiDisabled) {
+        console.warn('API calls temporarily disabled due to repeated failures');
+    }
+
+    try {
+        const response = await api.get('/Asset/user/current');
+
+        // Reset failure counter on success
+        apiFailureCount = 0;
+
+        // Process and validate response
+        const assets: Asset[] = Array.isArray(response.data) ? response.data : [];
 
         return assets;
     } catch (error: any) {
@@ -60,7 +95,7 @@ export const getSupportedAssets = async (): Promise<IAsset[]> => {
  * @param assetId The ID of the asset
  * @returns Promise with the asset object
  */
-export const getAssetById = async (assetId: string): Promise<IAsset> => {
+export const getAssetById = async (assetId: string): Promise<Asset> => {
     if (!assetId) {
         return Promise.reject(new Error('Asset ID is required'));
     }
@@ -69,13 +104,14 @@ export const getAssetById = async (assetId: string): Promise<IAsset> => {
         const { data } = await api.get(`/Asset/${assetId}`);
 
         // Process and validate response
-        const asset: IAsset = {
+        const asset: Asset = {
             id: data.id,
             name: data.name || 'Unknown Asset',
             ticker: data.ticker || 'N/A',
             symbol: data.symbol,
             precision: data.precision || 18,
-            subunitName: data.subunitName || null
+            subunitName: data.subunitName || null,
+            class: data.class || 'N/A'
         };
 
         return asset;

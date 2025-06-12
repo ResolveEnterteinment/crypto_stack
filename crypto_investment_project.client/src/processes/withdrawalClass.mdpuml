@@ -1,0 +1,137 @@
+@startuml "Withdrawal Process Class Diagram"
+
+skinparam class {
+  BackgroundColor white
+  ArrowColor black
+  BorderColor black
+}
+
+skinparam note {
+  BackgroundColor #FFFACD
+  BorderColor black
+}
+
+package "Core Entities" {
+  class WithdrawalData {
+    +Id: Guid
+    +UserId: Guid
+    +RequestedBy: string
+    +Amount: decimal
+    +Currency: string
+    +WithdrawalMethod: string
+    +WithdrawalAddress: string
+    +Status: string
+    +ReasonCode: string
+    +TransactionHash: string
+    +ProcessedAt: DateTime?
+    +ProcessedBy: string
+    +Comments: string
+    +KycLevelAtTime: string
+    +AuditTrail: Dictionary<string, WithdrawalAuditTrail>
+  }
+  
+  class WithdrawalLimitDto {
+    +KycLevel: string
+    +DailyLimit: decimal
+    +MonthlyLimit: decimal
+    +DailyRemaining: decimal
+    +MonthlyRemaining: decimal
+    +DailyUsed: decimal
+    +MonthlyUsed: decimal
+    +PeriodResetDate: DateTime
+  }
+  
+  class WithdrawalRequest {
+    +UserId: string
+    +Amount: decimal
+    +Currency: string
+    +WithdrawalMethod: string
+    +WithdrawalAddress: string
+    +AdditionalDetails: Dictionary<string, object>
+  }
+}
+
+package "Services" {
+  interface IWithdrawalService {
+    +GetUserWithdrawalLimitsAsync(userId: Guid): Task<ResultWrapper<WithdrawalLimitDto>>
+    +GetSupportedNetworksAsync(assetTicker: string): Task<ResultWrapper<List<NetworkDto>>>
+    +ValidateWithdrawalAddressAsync(network, address): Task<ResultWrapper<bool>>
+    +RequestWithdrawalAsync(request: WithdrawalRequest): Task<ResultWrapper<WithdrawalRequestDto>>
+    +GetUserWithdrawalHistoryAsync(userId: Guid): Task<ResultWrapper<List<WithdrawalData>>>
+    +GetWithdrawalDetailsAsync(withdrawalId: Guid): Task<ResultWrapper<WithdrawalData>>
+    +UpdateWithdrawalStatusAsync(withdrawalId, status, processedBy): Task<ResultWrapper>
+    +GetPendingWithdrawalsAsync(page, pageSize): Task<ResultWrapper<PaginatedResult<WithdrawalData>>>
+    +GetUserWithdrawalTotalsAsync(userId, startDate, endDate): Task<ResultWrapper<decimal>>
+    +CanUserWithdrawAsync(userId: Guid, amount: decimal): Task<ResultWrapper<bool>>
+  }
+  
+  class WithdrawalService {
+    -_kycService: IKycService
+    -_userService: IUserService
+    -_balanceService: IBalanceService
+    -_networkService: INetworkService
+    -_assetService: IAssetService
+    -_transactionService: ITransactionService
+    -_notificationService: INotificationService
+    -CACHE_KEY_USER_WITHDRAWALS: string
+    +GetUserWithdrawalLimitsAsync(userId): Task<ResultWrapper<WithdrawalLimitDto>>
+    +RequestWithdrawalAsync(request): Task<ResultWrapper<WithdrawalRequestDto>>
+    -HandleWithdrawalApproved(withdrawal): Task
+  }
+  
+  interface IKycService {
+    +IsUserVerifiedAsync(userId: Guid, requiredLevel: string): Task<ResultWrapper<bool>>
+    +GetUserKycStatusAsync(userId: Guid): Task<ResultWrapper<KycData>>
+  }
+}
+
+package "Middleware" {
+  class KycRequirementMiddleware {
+    +InvokeAsync(context, kycService, withdrawalService): Task
+    -CheckWithdrawalLimits(context, kycService, withdrawalService): Task
+  }
+}
+
+package "Controllers" {
+  class WithdrawalController {
+    -_withdrawalService: IWithdrawalService
+    -_logger: ILogger<WithdrawalController>
+    +GetWithdrawalLimits(): Task<IActionResult>
+    +GetSupportedNetworks(assetTicker): Task<IActionResult>
+    +RequestWithdrawal(request): Task<IActionResult>
+    +GetWithdrawalHistory(): Task<IActionResult>
+    +GetWithdrawalDetails(withdrawalId): Task<IActionResult>
+    +CancelWithdrawal(withdrawalId): Task<IActionResult>
+    +GetPendingWithdrawals(page, pageSize): Task<IActionResult>
+    +UpdateWithdrawalStatus(withdrawalId, request): Task<IActionResult>
+  }
+}
+
+WithdrawalData --> WithdrawalRequest : "created from"
+IWithdrawalService <|.. WithdrawalService : "implements"
+WithdrawalService --> IKycService : "uses"
+WithdrawalController --> IWithdrawalService : "uses"
+KycRequirementMiddleware --> IWithdrawalService : "uses"
+
+note top of WithdrawalService
+**Withdrawal Process**
+1. Validate user KYC status and level
+2. Check available balance  
+3. Verify withdrawal limits (daily/monthly)
+4. Validate withdrawal address
+5. Create withdrawal request
+6. Process withdrawal (admin approval)
+7. Update user balance when approved
+end note
+
+note top of KycRequirementMiddleware
+**Withdrawal KYC Requirements**
+1. Standard KYC required for all withdrawals
+2. Different limits based on KYC level:
+   - Basic: Lower daily/monthly limits
+   - Standard: Medium limits  
+   - Advanced: Higher limits
+3. Block withdrawals if KYC insufficient
+end note
+
+@enduml

@@ -90,8 +90,7 @@ namespace Infrastructure.Services
         }
 
         public async Task<ResultWrapper<IEnumerable<NotificationData>>> GetUserNotificationsAsync(string userId)
-            => await FetchCached<IEnumerable<NotificationData>>(
-                string.Format(CACHE_KEY_USER_NOTIFICATIONS, userId),
+            => await SafeExecute<IEnumerable<NotificationData>>(
                 async () =>
                 {
                     var filter = Builders<NotificationData>.Filter.And(
@@ -103,10 +102,8 @@ namespace Infrastructure.Services
                         throw new KeyNotFoundException("Failed to fetch");
                     Logger.LogInformation("Retrieved {Count} unread notifications for user {UserId}", notifications?.Count ?? 0, userId);
 
-                    return notifications;
-                },
-                TimeSpan.FromMinutes(1),
-                () => new KeyNotFoundException("Failed to fetch user notifications")
+                    return notifications!;
+                }
             );
 
         public async Task<ResultWrapper> CreateAndSendNotificationAsync(NotificationData notification)
@@ -135,9 +132,6 @@ namespace Infrastructure.Services
 
                 if (insertResult == null || !insertResult.IsSuccess || !insertResult.Data.IsSuccess)
                     throw new MongoException("Failed to create notification");
-
-                var cacheKey = string.Format(CACHE_KEY_USER_NOTIFICATIONS, notification.UserId);
-                CacheService.Invalidate(cacheKey);
 
                 try
                 {
@@ -191,9 +185,6 @@ namespace Infrastructure.Services
 
                     var result = await _repository.UpdateAsync(notificationId, new { IsRead = true }) ??
                         throw new DatabaseException($"Failed to update notification: Update result returned null.");
-
-                    var cacheKey = string.Format(CACHE_KEY_USER_NOTIFICATIONS, notification!.UserId);
-                    CacheService.Invalidate(cacheKey);
 
                     Logger.LogInformation("Marked notification {NotificationId} as read", notificationId);
                     return ResultWrapper.Success("Marked notification {NotificationId} as read");

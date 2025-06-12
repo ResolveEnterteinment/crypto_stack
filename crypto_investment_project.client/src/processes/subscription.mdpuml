@@ -1,0 +1,290 @@
+@startuml "Subscription Process Flow"
+
+!define TRANSACTION_COLOR #FFEBCD
+!define PAYMENT_COLOR #E0FFFF
+!define SUBSCRIPTION_COLOR #E6E6FA
+!define KYC_COLOR #FFDAB9
+!define USER_COLOR #F0FFF0
+!define ERROR_COLOR #FFE4E1
+
+skinparam class {
+  BackgroundColor white
+  ArrowColor black
+  BorderColor black
+}
+
+package "Core Entities" {
+  class UserData {
+    +Id: Guid
+    +Email: string
+    +FullName: string
+    +IsKycVerified: bool
+    +KycLevel: string
+  }
+
+  class SubscriptionData {
+    +Id: Guid
+    +UserId: Guid
+    +Allocations: List<AllocationData>
+    +Interval: string
+    +Amount: decimal
+    +Currency: string
+    +NextDueDate: DateTime
+    +Status: string
+    +TotalInvestments: decimal
+    +ProviderSubscriptionId: string
+  }
+  
+  class PaymentData {
+    +Id: Guid
+    +UserId: Guid
+    +SubscriptionId: Guid
+    +Amount: decimal
+    +Currency: string
+    +Status: string
+    +ProviderPaymentId: string
+    +TransactionId: string
+    +AttemptCount: int
+    +NextRetryAt: DateTime?
+  }
+  
+  class TransactionData {
+    +Id: Guid
+    +UserId: Guid
+    +BalanceId: Guid
+    +SourceName: string
+    +SourceId: string
+    +Action: string
+    +Quantity: decimal
+  }
+  
+  class KycData {
+    +UserId: Guid
+    +Status: string
+    +VerificationLevel: string
+    +VerificationData: Dictionary<string, object>
+  }
+}
+
+package "Services" {
+  class SubscriptionService <<Service>> {
+    +CreateAsync(request: SubscriptionCreateRequest): Task<ResultWrapper<CrudResult>>
+    +UpdateAsync(id: Guid, request: SubscriptionUpdateRequest): Task<ResultWrapper>
+    +CancelAsync(subscriptionId: Guid): Task<ResultWrapper>
+    +UpdateSubscriptionStatusAsync(subscriptionId: Guid, status: string): Task<ResultWrapper<CrudResult>>
+    +ReactivateSubscriptionAsync(subscriptionId: Guid): Task<ResultWrapper>
+    +Handle(PaymentReceivedEvent): Task
+    +Handle(PaymentCancelledEvent): Task
+    +Handle(SubscriptionCreatedEvent): Task
+    +Handle(CheckoutSessionCompletedEvent): Task
+    +Handle(PaymentMethodUpdatedEvent): Task
+  }
+  
+  class PaymentService <<Service>> {
+    +ProcessInvoicePaidEvent(invoice: InvoiceRequest): Task<ResultWrapper>
+    +ProcessCheckoutSessionCompletedAsync(session: SessionDto): Task<ResultWrapper>
+    +UpdatePaymentRetryInfoAsync(paymentId, attemptCount, lastAttemptAt, nextRetryAt, failureReason): Task<ResultWrapper>
+    +RetryPaymentAsync(paymentId: Guid): Task<ResultWrapper>
+    +ProcessPaymentFailedAsync(request: PaymentIntentRequest): Task<ResultWrapper>
+    +CreateUpdatePaymentMethodSessionAsync(userId: string, subscriptionId: string): Task<ResultWrapper<string>>
+  }
+  
+  class SubscriptionRetryService <<Service>> {
+    +ProcessPendingRetriesAsync(): Task
+    +Handle(SubscriptionPaymentFailedEvent): Task
+    -HandleMaxRetriesExceeded(subscription, payment, failureReason): Task
+  }
+  
+  class KycService <<Service>> {
+    +GetUserKycStatusAsync(userId: Guid): Task<ResultWrapper<KycData>>
+    +VerifyAsync(request: KycVerificationRequest): Task<ResultWrapper<KycData>>
+    +IsUserVerifiedAsync(userId: Guid, requiredLevel: string): Task<ResultWrapper<bool>>
+  }
+  
+  class StripeService <<PaymentProvider>> {
+    +CreateCheckoutSession(userId, subscriptionId, amount, interval): Task<ResultWrapper<SessionDto>>
+    +RetryPaymentAsync(paymentIntentId, subscriptionId): Task<ResultWrapper>
+    +CreateUpdatePaymentMethodSessionAsync(subscriptionId, metadata): Task<ResultWrapper<SessionDto>>
+  }
+}
+
+' Relationships
+UserData --> KycData : has
+SubscriptionData --> UserData : belongs to
+PaymentData --> SubscriptionData : for
+TransactionData --> SubscriptionData : records
+SubscriptionService --> PaymentService : uses
+PaymentService --> StripeService : uses
+SubscriptionRetryService --> PaymentService : uses
+SubscriptionRetryService --> SubscriptionService : uses
+SubscriptionService --> KycService : verifies through
+
+' Process Flows
+note right of SubscriptionService #SUBSCRIPTION_COLOR
+  **Subscription Creation Process**
+  1. Validate request (user, allocations, amount)
+  2. Create subscription in pending state
+  3. Create checkout session with Stripe
+  4. Wait for payment to complete
+  5. Update subscription to active when paid
+endnote
+
+note right of PaymentService #PAYMENT_COLOR
+  **Payment Processing Flow**
+  1. Receive payment notification from webhook
+  2. Update subscription status
+  3. Record transaction
+  4. Notify user of successful payment
+  5. Schedule next payment based on interval
+endnote
+
+note right of SubscriptionRetryService #ERROR_COLOR
+  **Payment Retry Logic**
+  1. Detect payment failure
+  2. Schedule retry (1 day, 3 days, 7 days)
+  3. Retry payment
+  4. Suspend subscription after 3 failures
+  5. Allow reactivation with new payment method
+endnote
+
+' Sequence Diagrams
+newpage Subscription Creation Sequence
+
+actor User
+participant "Client App" as Client
+participant "API Gateway" as API
+participant "SubscriptionController" as SubController
+participant "SubscriptionService" as SubService
+participant "PaymentService" as PaymentSvc
+participant "KycService" as KycSvc
+participant "Stripe" as Stripe
+participant "Database" as DB
+
+User -> Client : Initiate subscription creation
+Client -> API : POST /api/subscription/new
+API -> SubController : New(subscriptionRequest)
+activate SubController
+SubController -> SubController : Validate idempotency key
+SubController -> SubController : Verify user authorization
+SubController -> SubController : Validate request
+SubController -> SubService : CreateAsync(request)
+activate SubService
+
+SubService -> KycSvc : IsUserVerifiedAsync(userId)
+KycSvc --> SubService : User verification status
+
+SubService -> DB : InsertAsync(subscription)
+DB --> SubService : Subscription created
+
+SubService -> PaymentSvc : CreateCheckoutSessionAsync(...)
+activate PaymentSvc
+PaymentSvc -> Stripe : Create checkout session
+Stripe --> PaymentSvc : Checkout session URL
+PaymentSvc --> SubService : Checkout session
+deactivate PaymentSvc
+
+SubService --> SubController : Subscription creation result
+deactivate SubService
+SubController -> SubController : Store idempotency result
+SubController --> API : 201 Created
+API --> Client : Subscription ID + Checkout URL
+Client -> User : Redirect to checkout page
+
+User -> Stripe : Complete payment on Stripe checkout
+Stripe -> API : Webhook - checkout.session.completed
+API -> PaymentSvc : ProcessCheckoutSessionCompletedAsync()
+activate PaymentSvc
+PaymentSvc -> SubService : Handle(CheckoutSessionCompletedEvent)
+activate SubService
+SubService -> DB : Update subscription to ACTIVE
+SubService -> DB : Update NextDueDate
+SubService --> PaymentSvc : Success
+deactivate SubService
+PaymentSvc --> API : 200 OK
+deactivate PaymentSvc
+API -> Client : Subscription activated
+Client -> User : Show success message
+
+newpage Payment Processing & Retry Sequence
+
+participant "Stripe Webhook" as Webhook
+participant "PaymentWebhookController" as WebhookCtrl
+participant "PaymentService" as PaymentSvc
+participant "SubscriptionService" as SubService
+participant "SubscriptionRetryService" as RetryService
+participant "NotificationService" as NotifySvc
+participant "Database" as DB
+
+== Successful Payment Processing ==
+
+Webhook -> WebhookCtrl : invoice.paid event
+activate WebhookCtrl
+WebhookCtrl -> PaymentSvc : ProcessInvoicePaidEvent(invoice)
+activate PaymentSvc
+PaymentSvc -> DB : Create payment record
+PaymentSvc -> PaymentSvc : Publish PaymentReceivedEvent
+PaymentSvc -> SubService : Handle(PaymentReceivedEvent)
+activate SubService
+SubService -> DB : Update subscription NextDueDate
+SubService -> DB : Update TotalInvestments
+SubService -> NotifySvc : Send payment success notification
+SubService --> PaymentSvc : Success
+deactivate SubService
+PaymentSvc --> WebhookCtrl : Success
+deactivate PaymentSvc
+WebhookCtrl --> Webhook : 200 OK
+deactivate WebhookCtrl
+
+== Payment Failure & Retry ==
+
+Webhook -> WebhookCtrl : invoice.payment_failed event
+activate WebhookCtrl
+WebhookCtrl -> PaymentSvc : ProcessPaymentFailedAsync(request)
+activate PaymentSvc
+PaymentSvc -> PaymentSvc : Publish SubscriptionPaymentFailedEvent
+PaymentSvc -> RetryService : Handle(SubscriptionPaymentFailedEvent)
+activate RetryService
+RetryService -> DB : Get subscription
+RetryService -> RetryService : Check attempt count
+RetryService -> PaymentSvc : UpdatePaymentRetryInfoAsync()
+PaymentSvc -> DB : Update payment retry information
+PaymentSvc --> RetryService : Success
+RetryService -> NotifySvc : Send payment failure notification
+RetryService --> PaymentSvc : Success
+deactivate RetryService
+PaymentSvc --> WebhookCtrl : Success
+deactivate PaymentSvc
+WebhookCtrl --> Webhook : 200 OK
+deactivate WebhookCtrl
+
+== Scheduled Payment Retry Processing ==
+
+note over RetryService: Triggered by scheduled job
+activate RetryService
+RetryService -> PaymentSvc : GetPendingRetriesAsync()
+PaymentSvc -> DB : Fetch pending retries
+PaymentSvc --> RetryService : List of payments to retry
+RetryService -> RetryService : For each pending payment:
+RetryService -> PaymentSvc : RetryPaymentAsync(paymentId)
+activate PaymentSvc
+PaymentSvc -> Stripe : Retry payment
+Stripe --> PaymentSvc : Payment result
+PaymentSvc --> RetryService : Retry result
+deactivate PaymentSvc
+RetryService -> NotifySvc : Send success/failure notification
+RetryService -> RetryService : If failed, publish SubscriptionPaymentFailedEvent
+deactivate RetryService
+
+== Max Retries Exceeded Processing ==
+
+RetryService -> RetryService : HandleMaxRetriesExceeded()
+activate RetryService
+RetryService -> SubService : UpdateSubscriptionStatusAsync(subscriptionId, "SUSPENDED")
+activate SubService
+SubService -> DB : Update subscription status
+SubService --> RetryService : Success
+deactivate SubService
+RetryService -> NotifySvc : Send subscription suspended notification
+deactivate RetryService
+
+@enduml

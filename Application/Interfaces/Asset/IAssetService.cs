@@ -12,6 +12,7 @@ namespace Application.Interfaces.Asset
         Task<ResultWrapper<AssetData>> GetFromSymbolAsync(string symbol);
         Task<ResultWrapper<IEnumerable<string>>> GetSupportedTickersAsync();
         Task<ResultWrapper<IEnumerable<AssetDto>>> GetSupportedAssetsAsync();
+        Task<ResultWrapper<List<AssetData>>> GetManyByTickersAsync(IEnumerable<string> tickers);
         Task<ResultWrapper<Guid>> CreateAsync(AssetCreateRequest request);
     }
 }

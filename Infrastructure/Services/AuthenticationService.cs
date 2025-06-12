@@ -23,24 +23,22 @@ namespace Infrastructure.Services
         private readonly IUserService _userService;
         private readonly RoleManager<ApplicationRole> _roleManager;
         private readonly ILogger<AuthenticationService> _logger;
-        //private readonly IEmailService _emailService;
-        //private readonly ISystemSettingsService _systemSettingsService;
+        private readonly IEmailService _emailService;
 
         public AuthenticationService(
             RoleManager<ApplicationRole> roleManager,
             ILogger<AuthenticationService> logger,
             UserManager<ApplicationUser> userManager,
             IOptionsSnapshot<JwtSettings> jwtSettings,
-            IUserService userService
-            //, IEmailService emailService
-            )
+            IUserService userService,
+            IEmailService emailService)
         {
             _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
             _jwtSettings = jwtSettings.Value ?? throw new ArgumentNullException(nameof(jwtSettings));
             _userService = userService ?? throw new ArgumentNullException(nameof(userService));
             _roleManager = roleManager ?? throw new ArgumentNullException(nameof(roleManager));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            //_emailService = emailService;
+            _emailService = emailService ?? throw new ArgumentNullException(nameof(emailService));
         }
 
         public async Task<LoginResponse> LoginAsync(LoginRequest request)
@@ -231,10 +229,12 @@ namespace Infrastructure.Services
                 // Generate email verification token
                 var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
 
-                // Send verification email (commented out as email service not implemented)
-                /* await _emailService.SendEmailConfirmationMail(user, token);
-                 _ = _emailService.SendNewUserMailToAdmin(user.Email, user.Id.ToString());
-                 _ = _emailService.SendWelcomeMailToNewUser(user.Email, new {});*/
+                // Send verification email
+                await _emailService.SendEmailConfirmationMailAsync(user, token);
+
+                // Send welcome and admin notifications
+                _ = _emailService.SendWelcomeMailToNewUserAsync(user.Email, new { name = user.Fullname });
+                _ = _emailService.SendNewUserMailToAdminAsync(user.Email, user.Id.ToString());
 
                 _logger.LogInformation("User registered successfully: {UserId}", user.Id);
 
@@ -391,14 +391,22 @@ namespace Infrastructure.Services
                 if (user == null)
                 {
                     _logger.LogWarning("Email confirmation attempt for non-existent user {UserId}", userId);
-                    throw new ApplicationException($"User with ID '{userId}' not found.");
+                    return new BaseResponse
+                    {
+                        Success = false,
+                        Message = "Invalid confirmation link. User not found."
+                    };
                 }
 
                 // Validate token
                 if (string.IsNullOrWhiteSpace(token))
                 {
                     _logger.LogWarning("Empty email confirmation token for user {UserId}", userId);
-                    throw new ApplicationException("Invalid confirmation token.");
+                    return new BaseResponse
+                    {
+                        Success = false,
+                        Message = "Invalid confirmation token."
+                    };
                 }
 
                 var result = await _userManager.ConfirmEmailAsync(user, token);
@@ -407,14 +415,19 @@ namespace Infrastructure.Services
                     string errorMessage = string.Join(", ", result.Errors.Select(e => e.Description));
                     _logger.LogWarning("Email confirmation failed for user {UserId}: {Errors}",
                         userId, errorMessage);
-                    throw new ApplicationException($"Error confirming email: {errorMessage}");
+                    
+                    return new BaseResponse
+                    {
+                        Success = false,
+                        Message = $"Error confirming email: {errorMessage}"
+                    };
                 }
 
                 _logger.LogInformation("Email confirmed successfully for user {UserId}", userId);
                 return new BaseResponse
                 {
                     Success = true,
-                    Message = "/login?message=Your email address has been confirmed. You can now log in."
+                    Message = "Your email has been confirmed successfully. You can now log in."
                 };
             }
             catch (Exception ex)
@@ -474,6 +487,74 @@ namespace Infrastructure.Services
             {
                 _logger.LogError(ex, "Error during token refresh");
                 return new BaseResponse { Success = false, Message = "Error refreshing token" };
+            }
+        }
+
+        public async Task<BaseResponse> ResendConfirmationEmailAsync(string email)
+        {
+            try
+            {
+                // Add tracing for security auditing
+                using var logScope = _logger.BeginScope(new Dictionary<string, object>
+                {
+                    ["EmailHash"] = ComputeSHA256Hash(email),
+                    ["IPAddress"] = GetUserIPAddress(),
+                    ["Action"] = "ResendConfirmation"
+                });
+
+                // Find the user by email
+                var user = await _userManager.FindByEmailAsync(email);
+
+                if (user == null)
+                {
+                    // For security reasons, don't reveal if the email exists or not
+                    _logger.LogWarning("Confirmation email resend attempt for non-existent email: {EmailHash}", 
+                        ComputeSHA256Hash(email));
+                    
+                    return new BaseResponse
+                    {
+                        Success = true,
+                        Message = "If your email exists in our system and is not yet confirmed, a confirmation link has been sent."
+                    };
+                }
+
+                // Check if email is already confirmed
+                if (user.EmailConfirmed)
+                {
+                    _logger.LogInformation("Confirmation email resend attempt for already confirmed email: {EmailHash}", 
+                        ComputeSHA256Hash(email));
+                    
+                    return new BaseResponse
+                    {
+                        Success = true,
+                        Message = "Your email is already confirmed. You can log in with your credentials."
+                    };
+                }
+
+                // Generate a new confirmation token
+                var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+
+                // Send the confirmation email
+                await _emailService.SendEmailConfirmationMailAsync(user, token);
+
+                _logger.LogInformation("Confirmation email resent successfully for user: {UserId}", user.Id);
+
+                return new BaseResponse
+                {
+                    Success = true,
+                    Message = "A new confirmation email has been sent. Please check your inbox."
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during confirmation email resend for email hash: {EmailHash}", 
+                    ComputeSHA256Hash(email));
+
+                return new BaseResponse
+                {
+                    Success = false,
+                    Message = "Failed to resend confirmation email. Please try again later."
+                };
             }
         }
 

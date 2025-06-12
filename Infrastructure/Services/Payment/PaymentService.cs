@@ -10,6 +10,7 @@ using Domain.Constants.Payment;
 using Domain.DTOs;
 using Domain.DTOs.Payment;
 using Domain.DTOs.Settings;
+using Domain.DTOs.User;
 using Domain.Events;
 using Domain.Exceptions;
 using Domain.Models.Payment;
@@ -30,9 +31,6 @@ namespace Infrastructure.Services
         private readonly IUserService _userService;
         private readonly INotificationService _notificationService;
         private readonly IIdempotencyService _idempotencyService;
-
-        private const string CACHE_KEY_SUBSCRIPTION_TRANSACTIONS = "subscription_transactions:{0}";
-        private const string CACHE_KEY_PAYMENT_TRANSACTIONS = "payment_transactions:{0}";
 
         public IReadOnlyDictionary<string, IPaymentProvider> Providers => _providers;
         public IPaymentProvider DefaultProvider => _defaultProvider;
@@ -286,18 +284,14 @@ namespace Infrastructure.Services
         }
         public async Task<ResultWrapper<PaymentData>> GetByProviderIdAsync(string paymentProviderId)
         {
-            var cacheKey = string.Format(CACHE_KEY_PAYMENT_TRANSACTIONS, paymentProviderId);
-            return await FetchCached(
-                cacheKey,
+            return await SafeExecute(
                 async () =>
                 {
                     var paymentResult = await GetOneAsync(new FilterDefinitionBuilder<PaymentData>().Eq(t => t.PaymentProviderId, paymentProviderId));
                     if (paymentResult == null || !paymentResult.IsSuccess)
                         throw new KeyNotFoundException("Failed to fetch payment transactions");
                     return paymentResult.Data;
-                },
-                TimeSpan.FromHours(1),
-                () => new KeyNotFoundException("Failed to fetch payment {paymentProviderId} transactions.")
+                }
                 );
         }
 
@@ -876,7 +870,7 @@ namespace Infrastructure.Services
             if (search != null && search.Any())
             {
                 var cid = search.First().Id;
-                await _userService.UpdateAsync(uid, new UserData { PaymentProviderCustomerId = cid });
+                await _userService.UpdateAsync(uid, new UserUpdateDTO { PaymentProviderCustomerId = cid });
                 return cid;
             }
 

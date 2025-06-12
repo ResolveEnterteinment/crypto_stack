@@ -13,9 +13,9 @@
     <TypeScriptConfiguration Remove="src\pages - Copy\**" />
   </ItemGroup>
   <ItemGroup>
+    <Folder Include="public\models\" />
     <Folder Include="src\components\DevTools\" />
     <Folder Include="src\components\LandingPage\ui\" />
-    <Folder Include="src\components\KYC\" />
     <Folder Include="src\components\Withdrawal\" />
   </ItemGroup>
 </Project>

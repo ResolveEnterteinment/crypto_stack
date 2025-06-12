@@ -1,5 +1,4 @@
 ﻿using AspNetCore.Identity.Mongo;
-using AspNetCore.Identity.Mongo.Model;
 using Domain.Models.Authentication;
 using Microsoft.AspNetCore.Identity;
 using MongoDB.Driver;
@@ -18,7 +17,7 @@ namespace crypto_investment_project.Server.Helpers
             var mongoClient = new MongoClient(connectionString);
             builder.Services.AddSingleton<IMongoClient>(mongoClient);
 
-            builder.Services.AddIdentityMongoDbProvider<ApplicationUser, ApplicationRole, Guid>(identity => 
+            builder.Services.AddIdentityMongoDbProvider<ApplicationUser, ApplicationRole, Guid>(identity =>
                 {
                     identity.Password.RequiredLength = 4;
                     identity.Password.RequireUppercase = false;

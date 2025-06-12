@@ -369,7 +369,7 @@ namespace Infrastructure.Services.Exchange
                             {
                                 UserId = payment.UserId,
                                 AssetId = alloc.AssetId,
-                                Ticker = asset.Ticker,
+                                Ticker = alloc.AssetTicker,
                                 Available = placedOrder.QuantityFilled,
                                 LastUpdated = DateTime.UtcNow
                             };
@@ -383,15 +383,13 @@ namespace Infrastructure.Services.Exchange
                                     $"Failed to update balances: {updateBalanceResult?.ErrorMessage ?? "Unknown error"}");
                             }
 
-                            var balance = updateBalanceResult.Data;
-
                             // Record the transaction
                             var transaction = new TransactionData
                             {
                                 UserId = payment.UserId,
                                 PaymentProviderId = payment.PaymentProviderId,
                                 SubscriptionId = payment.SubscriptionId,
-                                BalanceId = balance.Id,
+                                BalanceId = updateBalanceResult.Data.Id,
                                 SourceName = exchange.Name,
                                 SourceId = placedOrder.OrderId.ToString(),
                                 Action = $"Exchange Order: Buy",
@@ -448,99 +446,6 @@ namespace Infrastructure.Services.Exchange
             {
                 _logger.LogError("Failed to process payment {PaymentId}: {Message}", payment.Id, ex.Message);
                 return ResultWrapper<IEnumerable<OrderResult>>.FromException(ex);
-            }
-        }
-
-        // Add to PaymentProcessingService
-        private async Task<ResultWrapper<bool>> ProcessPaymentWithTransactionAsync(PaymentData payment)
-        {
-            using (_logger.BeginScope(new Dictionary<string, object>
-            {
-                ["PaymentId"] = payment.Id,
-                ["SubscriptionId"] = payment.SubscriptionId
-            }))
-            {
-                try
-                {
-                    await _exchangeService.ExecuteInTransactionAsync(async (session) =>
-                    {
-
-                        session.StartTransaction();
-
-                        try
-                        {
-                            // Get subscription
-                            var subscriptionResult = await _subscriptionService.GetByIdAsync(payment.SubscriptionId);
-                            if (subscriptionResult == null || !subscriptionResult.IsSuccess)
-                            {
-                                throw new ResourceNotFoundException("Subscription", payment.SubscriptionId.ToString());
-                            }
-                            var subscription = subscriptionResult.Data;
-
-                            // Update subscription with payment info
-                            var nextDueDate = await _paymentService.Providers[payment.Provider]
-                                .GetNextDueDate(payment.InvoiceId);
-
-                            var newTotalInvestments = (subscription.TotalInvestments ?? 0) + payment.NetAmount;
-
-                            await _subscriptionService.UpdateAsync(
-                                payment.SubscriptionId,
-                                new
-                                {
-                                    Status = SubscriptionStatus.Active,
-                                    NextDueDate = nextDueDate,
-                                    TotalInvestments = newTotalInvestments,
-                                    LastPaymentDate = DateTime.UtcNow,
-                                    LastPaymentAmount = payment.NetAmount
-                                });
-
-                            // Update user balance
-                            var balanceResult = await _balanceService.UpsertBalanceAsync(
-                                payment.UserId,
-                                new BalanceData
-                                {
-                                    UserId = payment.UserId,
-                                    AssetId = Guid.Parse(payment.Currency), // Assuming currency matches asset ID
-                                    Available = payment.NetAmount,
-                                    Locked = 0
-                                },
-                                session);
-
-                            // Create transaction record
-                            await _transactionService.InsertAsync(
-                                new TransactionData
-                                {
-                                    UserId = payment.UserId,
-                                    PaymentProviderId = payment.PaymentProviderId,
-                                    SubscriptionId = payment.SubscriptionId,
-                                    BalanceId = balanceResult.Data.Id,
-                                    SourceName = payment.Provider,
-                                    SourceId = payment.Id.ToString(),
-                                    Action = "Deposit",
-                                    Quantity = payment.NetAmount
-                                });
-
-                            await session.CommitTransactionAsync();
-                            return true;
-                        }
-                        catch (Exception ex)
-                        {
-                            await session.AbortTransactionAsync();
-                            _logger.LogError("Transaction failed for payment {PaymentId}: {ErrorMessage}",
-                                payment.Id,
-                                ex.Message);
-                            throw;
-                        }
-                    });
-                    return ResultWrapper<bool>.Success(true);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError("Failed to process payment {PaymentId}: {ErrorMessage}",
-                        payment.Id,
-                        ex.Message);
-                    return ResultWrapper<bool>.FromException(ex);
-                }
             }
         }
     }

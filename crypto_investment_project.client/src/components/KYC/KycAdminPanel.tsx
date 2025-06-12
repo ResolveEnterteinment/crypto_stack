@@ -1,336 +1,468 @@
-// crypto_investment_project.client/src/components/KYC/KycAdminPanel.tsx
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Card, Tag, Badge, Tabs } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, QuestionCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { format } from 'date-fns';
+import api from '../../services/api';
 
-const { Option } = Select;
-const { TextArea } = Input;
-const { TabPane } = Tabs;
+interface PersonalInfo {
+    firstName: string;
+    lastName: string;
+    dateOfBirth: string;
+    documentNumber: string;
+    nationality: string;
+}
 
-// Define types for the KYC verification record
+interface VerificationHistory {
+    timestamp: string;
+    action: string;
+    status: string;
+    performedBy: string;
+    details?: any;
+}
+
 interface KycVerification {
     id: string;
     userId: string;
-    status: VerificationStatus;
-    verificationLevel: VerificationLevel;
+    status: string;
+    verificationLevel: string;
+    submittedAt: string;
+    lastCheckedAt: string | null;
     isPoliticallyExposed: boolean;
     isHighRisk: boolean;
-    riskScore?: number;
-    submittedAt?: string;
-    lastCheckedAt?: string;
-    providerName?: string; // Added provider name
+    riskScore: string;
+    verificationData: Record<string, any>;
+    history?: VerificationHistory[];
+    additionalInfo?: {
+        AmlCheckDate?: string;
+        AmlProvider?: string;
+    };
 }
 
-// Define types for status and verification level
-type VerificationStatus = 'APPROVED' | 'REJECTED' | 'PENDING_VERIFICATION' | 'NEEDS_REVIEW' | 'ADDITIONAL_INFO_REQUIRED';
-type VerificationLevel = 'NONE' | 'BASIC' | 'STANDARD' | 'ADVANCED' | 'ENHANCED';
-
-// Define pagination type
-interface PaginationConfig {
-    current: number;
+interface PaginatedResult {
+    items: KycVerification[];
+    page: number;
     pageSize: number;
-    total: number;
+    totalCount: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
 }
 
 const KycAdminPanel: React.FC = () => {
     const [verifications, setVerifications] = useState<KycVerification[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
-    const [pagination, setPagination] = useState<PaginationConfig>({ current: 1, pageSize: 10, total: 0 });
-    const [modalVisible, setModalVisible] = useState<boolean>(false);
-    const [currentRecord, setCurrentRecord] = useState<KycVerification | null>(null);
-    const [availableProviders, setAvailableProviders] = useState<string[]>([]);
-    const [activeProvider, setActiveProvider] = useState<string>('all');
-    const [form] = Form.useForm();
+    const [error, setError] = useState<string | null>(null);
+    const [page, setPage] = useState<number>(1);
+    const [totalPages, setTotalPages] = useState<number>(1);
+    const [selectedVerification, setSelectedVerification] = useState<KycVerification | null>(null);
+    const [statusUpdate, setStatusUpdate] = useState<{ status: string; comment: string }>({
+        status: '',
+        comment: '',
+    });
+    const [activeTab, setActiveTab] = useState<'info' | 'history'>('info');
 
-    useEffect(() => {
-        fetchProviders();
-        fetchPendingVerifications();
-    }, [pagination.current, activeProvider]);
-
-    const fetchProviders = async (): Promise<void> => {
-        try {
-            const response = await fetch('/api/kyc/providers', {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch KYC providers');
-            }
-
-            const data = await response.json();
-            setAvailableProviders(data.providers);
-        } catch (err) {
-            console.error('Error fetching KYC providers:', err);
-        }
-    };
-
-    const fetchPendingVerifications = async (): Promise<void> => {
+    const fetchVerifications = async () => {
         try {
             setLoading(true);
-            const response = await fetch(`/api/kyc/pending?page=${pagination.current}&pageSize=${pagination.pageSize}`, {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
-                },
-            });
+            const response = await api.get<{ success: boolean; data: PaginatedResult }>(
+                `/admin/kyc/pending?page=${page}&pageSize=10`
+            );
 
-            if (!response.ok) {
-                throw new Error('Failed to fetch pending verifications');
+            if (response.data.success) {
+                setVerifications(response.data.data.items);
+                setTotalPages(response.data.data.totalPages);
+            } else {
+                setError('Failed to fetch verifications');
             }
-
-            const data = await response.json();
-
-            // If a provider filter is active, filter the results
-            let filteredItems = data.items;
-            if (activeProvider !== 'all') {
-                filteredItems = data.items.filter((item: KycVerification) =>
-                    item.providerName === activeProvider);
-            }
-
-            setVerifications(filteredItems);
-            setPagination({
-                ...pagination,
-                total: data.totalCount,
-            });
-        } catch (err) {
-            console.error('Error fetching verifications:', err);
+        } catch (err: any) {
+            setError(err.message || 'An error occurred');
         } finally {
             setLoading(false);
         }
     };
 
-    // Define types for the Table onChange handler parameters
-    interface TableChangeParams {
-        pagination: PaginationConfig;
-        filters: Record<string, (string | number | boolean)[] | null>;
-        sorter: any; // Using any for sorter as it can be complex
-        extra: {
-            currentDataSource: KycVerification[];
-            action: 'paginate' | 'sort' | 'filter';
-        };
-    }
+    useEffect(() => {
+        fetchVerifications();
+    }, [page]);
 
-    const handleTableChange = (
-        pagination: PaginationConfig,
-        _filters: TableChangeParams['filters'],
-        _sorter: TableChangeParams['sorter'],
-        _extra: TableChangeParams['extra']
-    ): void => {
-        // Only use the pagination parameter, ignoring filters, sorter, and extra
-        setPagination(pagination);
-    };
+    const handleUpdateStatus = async () => {
+        if (!selectedVerification || !statusUpdate.status) {
+            return;
+        }
 
-    const showUpdateModal = (record: KycVerification): void => {
-        setCurrentRecord(record);
-        form.setFieldsValue({
-            status: record.status,
-            comment: '',
-        });
-        setModalVisible(true);
-    };
-
-    const handleModalCancel = (): void => {
-        setModalVisible(false);
-    };
-
-    const handleModalSubmit = async (): Promise<void> => {
         try {
-            const values = await form.validateFields();
-
-            if (currentRecord === null) {
-                throw new Error('No record selected');
-            }
-
-            const response = await fetch(`/api/kyc/admin/update/${currentRecord.userId}`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    status: values.status,
-                    comment: values.comment,
-                }),
+            const response = await api.post(`/admin/kyc/update-status/${selectedVerification.userId}`, {
+                status: statusUpdate.status,
+                comment: statusUpdate.comment,
             });
 
-            if (!response.ok) {
-                throw new Error('Failed to update KYC status');
+            if (response.data.success) {
+                // Refresh the verifications list
+                fetchVerifications();
+                // Close the detail view
+                setSelectedVerification(null);
+                setStatusUpdate({ status: '', comment: '' });
+            } else {
+                setError('Failed to update status');
             }
-
-            setModalVisible(false);
-            fetchPendingVerifications();
-        } catch (err) {
-            console.error('Error updating KYC status:', err);
+        } catch (err: any) {
+            setError(err.message || 'An error occurred while updating status');
         }
     };
 
-    const getStatusTag = (status: VerificationStatus): React.ReactNode => {
+    const getStatusBadgeColor = (status: string): string => {
         switch (status) {
-            case 'APPROVED':
-                return <Tag color="success" icon={<CheckCircleOutlined />}>Approved</Tag>;
-            case 'REJECTED':
-                return <Tag color="error" icon={<CloseCircleOutlined />}>Rejected</Tag>;
             case 'PENDING_VERIFICATION':
-                return <Tag color="processing" icon={<QuestionCircleOutlined />}>Pending</Tag>;
+                return 'bg-yellow-100 text-yellow-800';
             case 'NEEDS_REVIEW':
-                return <Tag color="warning" icon={<ExclamationCircleOutlined />}>Needs Review</Tag>;
+                return 'bg-orange-100 text-orange-800';
+            case 'APPROVED':
+                return 'bg-green-100 text-green-800';
+            case 'REJECTED':
+                return 'bg-red-100 text-red-800';
+            case 'ADDITIONAL_INFO_REQUIRED':
+                return 'bg-blue-100 text-blue-800';
             default:
-                return <Tag>{status}</Tag>;
+                return 'bg-gray-100 text-gray-800';
         }
     };
 
-    const getProviderTag = (providerName?: string): React.ReactNode => {
-        if (!providerName) return <Tag>Unknown</Tag>;
-
-        switch (providerName) {
-            case 'Onfido':
-                return <Tag color="blue">Onfido</Tag>;
-            case 'SumSub':
-                return <Tag color="green">SumSub</Tag>;
-            default:
-                return <Tag>{providerName}</Tag>;
-        }
+    const formatDate = (dateString: string | null): string => {
+        if (!dateString) return 'N/A';
+        return format(new Date(dateString), 'MMM dd, yyyy HH:mm');
     };
 
-    const getRiskBadge = (record: KycVerification): React.ReactNode => {
-        if (record.isPoliticallyExposed) {
-            return <Badge status="warning" text="PEP" className="mr-2" />;
-        }
-        if (record.isHighRisk) {
-            return <Badge status="error" text="High Risk" className="mr-2" />;
-        }
-        return null;
-    };
+    if (loading && verifications.length === 0) {
+        return (
+            <div className="bg-white shadow rounded-lg p-6">
+                <h2 className="text-xl font-semibold mb-4">KYC Verification Requests</h2>
+                <div className="flex justify-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                </div>
+            </div>
+        );
+    }
 
-    const columns = [
-        {
-            title: 'User ID',
-            dataIndex: 'userId',
-            key: 'userId',
-            ellipsis: true,
-        },
-        {
-            title: 'Status',
-            dataIndex: 'status',
-            key: 'status',
-            render: (status: VerificationStatus) => getStatusTag(status),
-        },
-        {
-            title: 'Provider',
-            dataIndex: 'providerName',
-            key: 'providerName',
-            render: (providerName: string) => getProviderTag(providerName),
-        },
-        {
-            title: 'Level',
-            dataIndex: 'verificationLevel',
-            key: 'verificationLevel',
-        },
-        {
-            title: 'Risk',
-            key: 'risk',
-            render: (_: any, record: KycVerification) => (
-                <>
-                    {getRiskBadge(record)}
-                    {record.riskScore && <span>Score: {record.riskScore}</span>}
-                </>
-            ),
-        },
-        {
-            title: 'Submitted',
-            dataIndex: 'submittedAt',
-            key: 'submittedAt',
-            render: (date: string | undefined) => date ? new Date(date).toLocaleString() : '-',
-        },
-        {
-            title: 'Last Checked',
-            dataIndex: 'lastCheckedAt',
-            key: 'lastCheckedAt',
-            render: (date: string | undefined) => date ? new Date(date).toLocaleString() : '-',
-        },
-        {
-            title: 'Actions',
-            key: 'actions',
-            render: (_: any, record: KycVerification) => (
-                <Button type="primary" onClick={() => showUpdateModal(record)}>
-                    Review
-                </Button>
-            ),
-        },
-    ];
-
-    const handleProviderChange = (provider: string) => {
-        setActiveProvider(provider);
-    };
+    if (error) {
+        return (
+            <div className="bg-white shadow rounded-lg p-6">
+                <h2 className="text-xl font-semibold mb-4">KYC Verification Requests</h2>
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                    {error}
+                </div>
+            </div>
+        );
+    }
 
     return (
-        <Card title="KYC Verification Management" className="mb-5">
-            <Tabs defaultActiveKey="all" onChange={handleProviderChange}>
-                <TabPane tab="All Providers" key="all" />
-                {availableProviders.map(provider => (
-                    <TabPane tab={provider} key={provider} />
-                ))}
-            </Tabs>
+        <div className="bg-white shadow rounded-lg p-6">
+            <h2 className="text-xl font-semibold mb-4">KYC Verification Requests</h2>
 
-            <Table
-                columns={columns}
-                dataSource={verifications}
-                rowKey="id"
-                pagination={pagination}
-                loading={loading}
-                onChange={handleTableChange as any} // Type assertion to avoid complex typing issues with antd Table
-            />
-
-            <Modal
-                title="Update KYC Status"
-                visible={modalVisible}
-                onCancel={handleModalCancel}
-                onOk={handleModalSubmit}
-                width={600}
-            >
-                {currentRecord && (
-                    <div>
-                        <div className="mb-4">
-                            <p><strong>User ID:</strong> {currentRecord.userId}</p>
-                            <p><strong>Current Status:</strong> {getStatusTag(currentRecord.status)}</p>
-                            <p><strong>Verification Level:</strong> {currentRecord.verificationLevel}</p>
-                            <p><strong>Provider:</strong> {getProviderTag(currentRecord.providerName)}</p>
-                            {currentRecord.isPoliticallyExposed && (
-                                <p><strong>PEP Status:</strong> <Tag color="warning">Politically Exposed Person</Tag></p>
-                            )}
-                            {currentRecord.isHighRisk && (
-                                <p><strong>Risk Status:</strong> <Tag color="error">High Risk</Tag></p>
-                            )}
-                            {currentRecord.riskScore && (
-                                <p><strong>Risk Score:</strong> {currentRecord.riskScore}</p>
-                            )}
-                        </div>
-
-                        <Form form={form} layout="vertical">
-                            <Form.Item
-                                name="status"
-                                label="Update Status"
-                                rules={[{ required: true, message: 'Please select a status' }]}
-                            >
-                                <Select>
-                                    <Option value="APPROVED">Approve</Option>
-                                    <Option value="REJECTED">Reject</Option>
-                                    <Option value="ADDITIONAL_INFO_REQUIRED">Request Additional Info</Option>
-                                </Select>
-                            </Form.Item>
-                            <Form.Item
-                                name="comment"
-                                label="Comment"
-                                rules={[{ required: true, message: 'Please enter a comment' }]}
-                            >
-                                <TextArea rows={4} placeholder="Enter reason for approval/rejection or additional information needed" />
-                            </Form.Item>
-                        </Form>
+            {selectedVerification ? (
+                <div className="border rounded-lg p-4 mb-4">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-medium">Verification Details</h3>
+                        <button
+                            onClick={() => setSelectedVerification(null)}
+                            className="text-gray-500 hover:text-gray-700"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
                     </div>
-                )}
-            </Modal>
-        </Card>
+
+                    <div className="mb-4">
+                        <div className="flex border-b space-x-4">
+                            <button
+                                onClick={() => setActiveTab('info')}
+                                className={`py-2 px-4 ${activeTab === 'info' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500'}`}
+                            >
+                                Personal Info
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('history')}
+                                className={`py-2 px-4 ${activeTab === 'history' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500'}`}
+                            >
+                                History
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <p className="text-sm text-gray-500">User ID</p>
+                            <p className="font-medium">{selectedVerification.userId}</p>
+                        </div>
+                        <div>
+                            <p className="text-sm text-gray-500">Status</p>
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeColor(selectedVerification.status)}`}>
+                                {selectedVerification.status}
+                            </span>
+                        </div>
+                        <div>
+                            <p className="text-sm text-gray-500">Verification Level</p>
+                            <p className="font-medium">{selectedVerification.verificationLevel}</p>
+                        </div>
+                        <div>
+                            <p className="text-sm text-gray-500">Submitted At</p>
+                            <p className="font-medium">{formatDate(selectedVerification.submittedAt)}</p>
+                        </div>
+                        <div>
+                            <p className="text-sm text-gray-500">Risk Score</p>
+                            <p className={`font-medium ${selectedVerification.riskScore === 'high' ? 'text-red-600' : selectedVerification.riskScore === 'medium' ? 'text-yellow-600' : 'text-green-600'}`}>
+                                {selectedVerification.riskScore?.toUpperCase() || 'N/A'}
+                            </p>
+                        </div>
+                        <div>
+                            <p className="text-sm text-gray-500">Politically Exposed</p>
+                            <p className="font-medium">{selectedVerification.isPoliticallyExposed ? 'Yes' : 'No'}</p>
+                        </div>
+                    </div>
+
+                    {activeTab === 'info' && selectedVerification.verificationData && (
+                        <div className="mb-4">
+                            <div className="mb-4">
+                                <h4 className="text-md font-medium mb-2">Verification Documents</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {selectedVerification.verificationData?.selfieImage && (
+                                        <div>
+                                            <p className="text-sm text-gray-500 mb-1">Selfie Image</p>
+                                            <div className="border rounded p-1">
+                                                <img
+                                                    src={selectedVerification.verificationData.selfieImage}
+                                                    alt="Selfie"
+                                                    className="max-h-64 object-contain mx-auto"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                    {selectedVerification.verificationData?.documentImage && (
+                                        <div>
+                                            <p className="text-sm text-gray-500 mb-1">Document Image</p>
+                                            <div className="border rounded p-1">
+                                                <img
+                                                    src={selectedVerification.verificationData.documentImage}
+                                                    alt="ID Document"
+                                                    className="max-h-64 object-contain mx-auto"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            <h4 className="text-md font-medium mb-2">Personal Information</h4>
+                            <div className="bg-gray-50 p-3 rounded">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div>
+                                        <p className="text-sm text-gray-500">First Name</p>
+                                        <p className="font-medium">{selectedVerification.verificationData.firstName}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Last Name</p>
+                                        <p className="font-medium">{selectedVerification.verificationData.lastName}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Date of Birth</p>
+                                        <p className="font-medium">{selectedVerification.verificationData.dateOfBirth}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Document Number</p>
+                                        <p className="font-medium">{selectedVerification.verificationData.documentNumber}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Nationality</p>
+                                        <p className="font-medium">{selectedVerification.verificationData.nationality}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    {activeTab === 'history' && selectedVerification.history && (
+                        <div className="mb-4">
+                            <h4 className="text-md font-medium mb-2">Verification History</h4>
+                            <div className="bg-gray-50 p-3 rounded overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                    <thead>
+                                        <tr>
+                                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Timestamp</th>
+                                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
+                                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">By</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200">
+                                    {selectedVerification.history ? (
+                                        selectedVerification.history.map((entry, index) => (
+                                            <tr key={index}>
+                                                <td className="px-3 py-2 whitespace-nowrap text-sm">{formatDate(entry.timestamp)}</td>
+                                                <td className="px-3 py-2 whitespace-nowrap text-sm">{entry.action}</td>
+                                                <td className="px-3 py-2 whitespace-nowrap text-sm">
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeColor(entry.status)}`}>
+                                                        {entry.status}
+                                                    </span>
+                                                </td>
+                                                <td className="px-3 py-2 whitespace-nowrap text-sm">{entry.performedBy === 'SYSTEM' ? 'System' : 'Admin'}</td>
+                                            </tr>
+                                        )))
+                                        : (
+                                            <tr key={'noHistory'}>
+                                                    <td className="px-3 py-2 whitespace-nowrap text-sm" colSpan={4}>No records</td>
+                                            </tr>
+                                        )
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="border-t pt-4 mt-4">
+                        <h4 className="text-md font-medium mb-2">Update Status</h4>
+                        <div className="grid grid-cols-1 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Status</label>
+                                <select
+                                    value={statusUpdate.status}
+                                    onChange={(e) => setStatusUpdate({ ...statusUpdate, status: e.target.value })}
+                                    className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                >
+                                    <option value="">Select Status</option>
+                                    <option value="APPROVED">Approve</option>
+                                    <option value="REJECTED">Reject</option>
+                                    <option value="ADDITIONAL_INFO_REQUIRED">Request Additional Info</option>
+                                    <option value="PENDING_VERIFICATION">Pending Verification</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Comment</label>
+                                <textarea
+                                    value={statusUpdate.comment}
+                                    onChange={(e) => setStatusUpdate({ ...statusUpdate, comment: e.target.value })}
+                                    rows={3}
+                                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                                    placeholder="Add a comment about this decision..."
+                                />
+                            </div>
+                            <div>
+                                <button
+                                    onClick={handleUpdateStatus}
+                                    disabled={!statusUpdate.status}
+                                    className="w-full inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-300"
+                                >
+                                    Update Status
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            ) : (
+                <div>
+                    {verifications.length === 0 ? (
+                        <div className="text-center py-8">
+                            <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <h3 className="mt-2 text-sm font-medium text-gray-900">No pending verifications</h3>
+                            <p className="mt-1 text-sm text-gray-500">There are no verifications waiting for review.</p>
+                        </div>
+                    ) : (
+                        <>
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                    <thead className="bg-gray-50">
+                                        <tr>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User ID</th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Level</th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Submitted</th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Risk</th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                        {verifications.map((verification) => (
+                                            <tr key={verification.id} className="hover:bg-gray-50">
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{verification.userId.substring(0, 8)}...</td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeColor(verification.status)}`}>
+                                                        {verification.status}
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{verification.verificationLevel}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDate(verification.submittedAt)}</td>
+                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                    <span className={`inline-block h-2 w-2 rounded-full mr-2 ${verification.isHighRisk ? 'bg-red-500' : verification.isPoliticallyExposed ? 'bg-yellow-500' : 'bg-green-500'}`}></span>
+                                                    <span className="text-sm text-gray-500">{verification.riskScore}</span>
+                                                </td>
+                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                                    <button
+                                                        onClick={() => setSelectedVerification(verification)}
+                                                        className="text-blue-600 hover:text-blue-900"
+                                                    >
+                                                        Review
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {totalPages > 1 && (
+                                <div className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6 mt-4">
+                                    <div className="flex flex-1 justify-between sm:hidden">
+                                        <button
+                                            onClick={() => setPage(page - 1)}
+                                            disabled={page === 1}
+                                            className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400"
+                                        >
+                                            Previous
+                                        </button>
+                                        <button
+                                            onClick={() => setPage(page + 1)}
+                                            disabled={page === totalPages}
+                                            className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400"
+                                        >
+                                            Next
+                                        </button>
+                                    </div>
+                                    <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+                                        <div>
+                                            <p className="text-sm text-gray-700">
+                                                Showing page <span className="font-medium">{page}</span> of <span className="font-medium">{totalPages}</span>
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
+                                                <button
+                                                    onClick={() => setPage(page - 1)}
+                                                    disabled={page === 1}
+                                                    className="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:bg-gray-100"
+                                                >
+                                                    <span className="sr-only">Previous</span>
+                                                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                        <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
+                                                    </svg>
+                                                </button>
+                                                <button
+                                                    onClick={() => setPage(page + 1)}
+                                                    disabled={page === totalPages}
+                                                    className="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-20 focus:outline-offset-0 disabled:bg-gray-100"
+                                                >
+                                                    <span className="sr-only">Next</span>
+                                                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                        <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                                                    </svg>
+                                                </button>
+                                            </nav>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
     );
 };
 

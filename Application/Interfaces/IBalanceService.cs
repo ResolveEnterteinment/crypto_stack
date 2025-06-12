@@ -1,6 +1,5 @@
 ﻿using Application.Interfaces.Base;
 using Domain.DTOs;
-using Domain.DTOs.Balance;
 using Domain.Events;
 using Domain.Models.Balance;
 using MediatR;
@@ -10,8 +9,9 @@ namespace Application.Interfaces
 {
     public interface IBalanceService : IBaseService<BalanceData>, INotificationHandler<PaymentReceivedEvent>
     {
-        public Task<ResultWrapper<List<BalanceData>>> GetAllByUserIdAsync(Guid userId, string? assetClass = null);
-        public Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(Guid userId, BalanceData balance, IClientSessionHandle session = null);
-        public Task<ResultWrapper<List<BalanceDto>>> FetchBalancesWithAssetsAsync(Guid userId);
+        Task<ResultWrapper<List<BalanceData>>> GetAllByUserIdAsync(Guid userId, string? assetClass = null);
+        Task<ResultWrapper<BalanceData>> GetUserBalanceByTickerAsync(Guid userId, string ticker);
+        Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(Guid userId, BalanceData balance, IClientSessionHandle? session = null);
+        Task<ResultWrapper<List<BalanceData>>> FetchBalancesWithAssetsAsync(Guid userId, string? assetType = null);
     }
 }

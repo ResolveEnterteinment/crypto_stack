@@ -1,9 +1,13 @@
 using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
-using Domain.Constants;
+using Domain.Constants.Asset;
+using Domain.DTOs.Balance;
 using Domain.Exceptions;
+using Domain.Models.Balance;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
+using System.Security.Claims;
 
 namespace crypto_investment_project.Server.Controllers
 {
@@ -28,13 +32,26 @@ namespace crypto_investment_project.Server.Controllers
             {
                 return ValidationProblem("A valid user is required.");
             }
-            var balancesResult = await _balanceService.GetAllByUserIdAsync(userId, AssetType.Exchange);
-            if (balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
-            {
-                return BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.");
-            }
+            var balancesResult = await _balanceService.FetchBalancesWithAssetsAsync(userId, AssetType.Exchange);
+            return balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null
+                ? BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.")
+                : Ok(balancesResult.Data.Select(b => new BalanceDto(b)));
+        }
 
-            return Ok(balancesResult.Data);
+        [HttpGet]
+        [Route("asset/{ticker}")]
+        public async Task<IActionResult> GetAssetBalance(string ticker)
+        {
+            var user = GetUserId();
+            if (user is null || user == Guid.Empty)
+            {
+                return ValidationProblem("A valid user is required.");
+            }
+            var filter = new FilterDefinitionBuilder<BalanceData>().Where(b => b.UserId == user && b.Ticker == ticker);
+            var balancesResult = await _balanceService.GetUserBalanceByTickerAsync(user.Value, ticker);
+            return balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null
+                ? BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.")
+                : Ok(balancesResult.Data);
         }
 
         [HttpGet]
@@ -47,12 +64,9 @@ namespace crypto_investment_project.Server.Controllers
                 return ValidationProblem("A valid user is required.");
             }
             var balancesResult = await _balanceService.GetAllByUserIdAsync(userId, AssetType.Platform);
-            if (balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
-            {
-                return BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.");
-            }
-
-            return Ok(balancesResult.Data);
+            return balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null
+                ? BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.")
+                : Ok(balancesResult.Data);
         }
 
         [HttpGet]
@@ -74,7 +88,10 @@ namespace crypto_investment_project.Server.Controllers
             {
                 var assetResult = await _assetService.GetByIdAsync(balance.AssetId);
                 if (assetResult == null || !assetResult.IsSuccess)
+                {
                     throw new AssetFetchException($"Failed to fetch asset {balance.AssetId}");
+                }
+
                 var asset = assetResult.Data;
                 var priceResult = await _exchangeService.Exchanges[asset.Exchange].GetAssetPrice(asset.Ticker);
                 if (priceResult is null || !priceResult.IsSuccess)
@@ -87,32 +104,12 @@ namespace crypto_investment_project.Server.Controllers
             return Ok(portfolioValue);
         }
 
-        [HttpGet]
-        [Route("subscription/{subscription}")]
-        public async Task<IActionResult> GetSubscriptionBalances(string subscription)
+        private Guid? GetUserId()
         {
-            /*var isSubscriptionValid = Guid.TryParse(subscription, out var subscriptionId);
-            if (subscription is null || subscription == string.Empty || !isSubscriptionValid)
-            {
-                return ValidationProblem("A valid user is required.");
-            }
-            var balances = await _balanceService.GetAllByUserIdAsync(subscriptionId);
-            if (balances.IsSuccess)
-            {
-                var query = balances?.Data?
-                .GroupBy(b => b.AssetId, (id, bal) => new
-                {
-                    CoinId = id.ToString(),
-                    Available = bal.Select(b => b.Available).Sum(),
-                    Locked = bal.Select(b => b.Locked).Sum(),
-                });
-                return Ok(query);
-            }
-            else
-            {
-                return BadRequest(balances.ErrorMessage);
-            }*/
-            throw new NotImplementedException();
+            string? userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            return string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out Guid parsedUserId)
+                ? null
+                : parsedUserId;
         }
     }
 }

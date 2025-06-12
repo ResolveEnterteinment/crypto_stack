@@ -39,17 +39,70 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 var result = await _withdrawalService.GetUserWithdrawalLimitsAsync(parsedUserId);
-                if (!result.IsSuccess)
-                {
-                    return BadRequest(new { message = result.ErrorMessage });
-                }
-
-                return Ok(result.Data);
+                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : Ok(result.Data);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting withdrawal limits");
                 return StatusCode(500, new { message = "An error occurred while retrieving withdrawal limits" });
+            }
+        }
+
+        [HttpGet("networks/{assetTicker}")]
+        public async Task<IActionResult> GetSupportedNetworks(string assetTicker)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(assetTicker))
+                {
+                    return BadRequest(new { message = "Invalid asset ticker" });
+                }
+
+                var result = await _withdrawalService.GetSupportedNetworksAsync(assetTicker);
+
+                if (!result.IsSuccess)
+                {
+                    return BadRequest(new { message = result.ErrorMessage });
+                }
+
+                return Ok(new
+                {
+                    isSuccess = true,
+                    data = result.Data
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting supported networks");
+                return StatusCode(500, new { message = "An error occurred while retrieving supported networks" });
+            }
+        }
+
+        [HttpGet("pending/total/{assetTicker}")]
+        public async Task<IActionResult> GetPendingTotals(string assetTicker)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(assetTicker))
+                {
+                    return BadRequest(new { message = "Invalid asset ticker" });
+                }
+
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var parsedUserId))
+                {
+                    return BadRequest(new { message = "Invalid user ID" });
+                }
+
+                var result = await _withdrawalService.GetUserPendingTotalsAsync(parsedUserId, assetTicker);
+
+                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : Ok(result.Data);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting supported networks");
+                return StatusCode(500, new { message = "An error occurred while retrieving supported networks" });
             }
         }
 
@@ -68,12 +121,7 @@ namespace crypto_investment_project.Server.Controllers
                 request.UserId = parsedUserId;
 
                 var result = await _withdrawalService.RequestWithdrawalAsync(request);
-                if (!result.IsSuccess)
-                {
-                    return BadRequest(new { message = result.ErrorMessage });
-                }
-
-                return Ok(result.Data);
+                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : Ok(result.Data);
             }
             catch (Exception ex)
             {
@@ -94,12 +142,7 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 var result = await _withdrawalService.GetUserWithdrawalHistoryAsync(parsedUserId);
-                if (!result.IsSuccess)
-                {
-                    return BadRequest(new { message = result.ErrorMessage });
-                }
-
-                return Ok(result.Data);
+                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : Ok(result.Data);
             }
             catch (Exception ex)
             {
@@ -131,12 +174,7 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 // Ensure user can only see their own withdrawals (unless admin)
-                if (result.Data.UserId != parsedUserId && !User.IsInRole("ADMIN"))
-                {
-                    return Forbid();
-                }
-
-                return Ok(result.Data);
+                return result.Data.UserId != parsedUserId && !User.IsInRole("ADMIN") ? Forbid() : Ok(result.Data);
             }
             catch (Exception ex)
             {
@@ -184,6 +222,7 @@ namespace crypto_investment_project.Server.Controllers
                 var result = await _withdrawalService.UpdateWithdrawalStatusAsync(
                     parsedWithdrawalId,
                     WithdrawalStatus.Cancelled,
+                    parsedUserId,
                     "Canceled by user");
 
                 if (!result.IsSuccess)
@@ -201,19 +240,14 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         // Admin endpoints
-        [HttpGet("admin/pending")]
+        [HttpGet("pending")]
         [Authorize(Roles = "ADMIN")]
         public async Task<IActionResult> GetPendingWithdrawals([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
             try
             {
                 var result = await _withdrawalService.GetPendingWithdrawalsAsync(page, pageSize);
-                if (!result.IsSuccess)
-                {
-                    return BadRequest(new { message = result.ErrorMessage });
-                }
-
-                return Ok(result.Data);
+                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : Ok(result.Data);
             }
             catch (Exception ex)
             {
@@ -222,7 +256,7 @@ namespace crypto_investment_project.Server.Controllers
             }
         }
 
-        [HttpPut("admin/{withdrawalId}/update-status")]
+        [HttpPut("{withdrawalId}/update-status")]
         [Authorize(Roles = "ADMIN")]
         public async Task<IActionResult> UpdateWithdrawalStatus(
             string withdrawalId,
@@ -240,10 +274,17 @@ namespace crypto_investment_project.Server.Controllers
                     return BadRequest(new { message = "Status is required" });
                 }
 
+                if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
+                {
+                    return BadRequest(new { message = "Invalid user ID" });
+                }
+
                 var result = await _withdrawalService.UpdateWithdrawalStatusAsync(
                     parsedWithdrawalId,
                     request.Status,
-                    request.Comment);
+                    userId,
+                    request.Comment,
+                    request.TransactionHash);
 
                 if (!result.IsSuccess)
                 {

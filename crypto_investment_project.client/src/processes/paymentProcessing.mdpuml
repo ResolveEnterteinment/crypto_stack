@@ -1,0 +1,130 @@
+@startuml "Payment Processing Architecture"
+
+!define PAYMENT_COLOR #FFE4B5
+!define EVENT_COLOR #90EE90
+!define EXCHANGE_COLOR #FFB6C1
+!define SUBSCRIPTION_COLOR #E6E6FA
+!define ASSET_COLOR #F0E68C
+
+skinparam rectangle {
+  BackgroundColor white
+  BorderColor black
+  RoundCorner 10
+}
+
+skinparam component {
+  BackgroundColor white
+  BorderColor black
+}
+
+rectangle "Payment Service" as PaymentService #FFE4B5 {
+  component "ProcessPaymentRequest" as ProcessPayment
+  rectangle "Atomic Persist" as AtomicPersist {
+    component "PaymentData" as PaymentData
+    component "EventData" as EventData
+  }
+}
+
+rectangle "Event Service" as EventService1 #90EE90 {
+  component "Publish" as Publish1
+}
+
+rectangle "Event Service" as EventService2 #90EE90 {
+  component "Publish" as Publish2
+}
+
+rectangle "ExchangeService" as ExchangeService #FFB6C1 {
+  component "ProcessPayment" as ExchangeProcessPayment
+  component "CheckExchangeBalance" as CheckExchangeBalance
+  component "Fetch Allocations" as FetchAllocations
+  component "Handle Event" as HandleEvent
+  component "For Each Allocation" as ForEachAllocation
+  component "Fetch Previously Filled Orders" as FetchPreviousOrders
+  component "Fetch AssetData" as FetchAssetData
+  component "PlaceExchangeOrder" as PlaceExchangeOrder
+  
+  rectangle "Atomic Persist" as ExchangeAtomicPersist {
+    component "ExchangeOrderData" as ExchangeOrderData
+    component "BalanceData" as BalanceData
+    component "TransactionData" as TransactionData
+  }
+}
+
+rectangle "SubscriptionService" as SubscriptionService #E6E6FA {
+  component "GetAllocations" as GetAllocations
+}
+
+rectangle "AssetService" as AssetService #F0E68C {
+  component "GetById" as GetById
+}
+
+component "Payment Webhook" as PaymentWebhook
+component "PaymentReceivedEvent" as PaymentReceivedEvent
+component "RequestFundingEvent" as RequestFundingEvent
+component "Binance Service PlaceMarketBuyOrder" as BinanceService
+
+' External flows
+PaymentWebhook --> ProcessPayment : PaymentRequest
+
+' Internal Payment Service flow
+ProcessPayment --> AtomicPersist
+AtomicPersist --> PaymentData
+AtomicPersist --> EventData
+
+' Event publishing
+ProcessPayment --> Publish1 : dispatch
+Publish1 --> PaymentReceivedEvent
+
+' Exchange Service triggered by event
+PaymentReceivedEvent --> ExchangeProcessPayment
+
+' Exchange Service internal flow
+ExchangeProcessPayment --> CheckExchangeBalance
+CheckExchangeBalance --> FetchAllocations
+FetchAllocations --> GetAllocations : call
+GetAllocations --> FetchAllocations : Insufficient?
+
+FetchAllocations --> HandleEvent
+HandleEvent --> ForEachAllocation
+ForEachAllocation --> FetchPreviousOrders
+FetchPreviousOrders --> FetchAssetData
+FetchAssetData --> GetById : call
+GetById --> FetchAssetData
+FetchAssetData --> PlaceExchangeOrder
+PlaceExchangeOrder --> BinanceService : call
+PlaceExchangeOrder --> ExchangeAtomicPersist
+
+' Event publication from Exchange
+ExchangeAtomicPersist --> Publish2 : dispatch
+Publish2 --> RequestFundingEvent
+
+' Update flows
+HandleEvent --> EventService1 : Update
+EventService1 --> PaymentService : EventData.PaymentId
+
+' Additional flows
+PaymentService --> EventService1 : GetById
+
+note top of PaymentService
+**Payment Service**
+- Processes incoming payment webhooks
+- Atomically persists payment and event data
+- Publishes PaymentReceived events
+end note
+
+note top of ExchangeService
+**Exchange Service**
+- Handles payment processing events
+- Checks balances and allocations
+- Places orders on external exchanges
+- Manages order and transaction data
+end note
+
+note bottom of EventService1
+**Event Service**
+- Publishes domain events
+- Handles event routing
+- Manages event persistence
+end note
+
+@enduml

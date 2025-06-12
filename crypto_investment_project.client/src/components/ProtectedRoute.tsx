@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { Spin, Result, Button } from 'antd';
 
 // Define the KYC level type for TypeScript
-type KycLevel = 'NONE' | 'BASIC' | 'STANDARD' | 'ADVANCED' | 'ENHANCED';
+type KycLevel = 'NONE' | 'BASIC' | 'STANDARD' | 'ADVANCED';
 
 // Define the props for the component
 interface ProtectedRouteProps {
@@ -85,7 +85,6 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
             case 'BASIC': return 1;
             case 'STANDARD': return 2;
             case 'ADVANCED': return 3;
-            case 'ENHANCED': return 4;
             default: return 0;
         }
     };
@@ -140,7 +139,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
                 title="KYC Verification Required"
                 subTitle={`You need to complete KYC verification (level: ${requiredKycLevel}) to access this page.`}
                 extra={
-                    <Button type="primary" onClick={() => window.location.href = '/kyc-verification'}>
+                    <Button type="primary" onClick={() => window.location.href = `/kyc-verification`}>
                         Complete Verification
                     </Button>
                 }

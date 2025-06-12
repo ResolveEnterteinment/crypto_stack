@@ -18,9 +18,9 @@ namespace Application.Interfaces
         public Task<ResultWrapper> UpdateDashboardData(
             Guid userId,
             decimal totalInvestments,
-            IEnumerable<AssetHoldingsDto> balances,
+            IEnumerable<AssetHoldingDto> balances,
             decimal portfolioValue
             );
-        public Task InvalidateDashboardCacheAsync(Guid userId);
+        public void InvalidateDashboardCacheAsync(Guid userId);
     }
 }

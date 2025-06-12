@@ -266,32 +266,105 @@ namespace crypto_investment_project.Server.Controllers.Auth
         /// <summary>
         /// Confirms a user's email address
         /// </summary>
-        /// <param name="userId">User identifier</param>
-        /// <param name="token">Email confirmation token</param>
-        /// <returns>Redirect to login page or error page</returns>
-        [HttpGet]
-        [Route("confirm-email")]
+        /// <param name="token">Combined token containing userId and confirmation token</param>
+        /// <returns>Result of the confirmation operation</returns>
+        [HttpPost("confirm-email")]
+        [IgnoreAntiforgeryToken]
         [AllowAnonymous]
+        [EnableRateLimiting("AuthEndpoints")]
+        public async Task<IActionResult> ConfirmEmail([FromBody] ConfirmEmailRequest request)
+        {
+            if (string.IsNullOrEmpty(request.Token))
+            {
+                return BadRequest(new ErrorResponse
+                {
+                    Message = "Invalid confirmation token",
+                    Code = "INVALID_TOKEN",
+                    TraceId = HttpContext.TraceIdentifier
+                });
+            }
+
+            try
+            {
+                // Split the combined token to extract userId and the actual token
+                string[] tokenParts = request.Token.Split(':', 2);
+                if (tokenParts.Length != 2)
+                {
+                    return BadRequest(new ErrorResponse
+                    {
+                        Message = "Invalid token format",
+                        Code = "INVALID_TOKEN_FORMAT",
+                        TraceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                string userId = tokenParts[0];
+                string emailToken = tokenParts[1];
+
+                var result = await _authenticationService.ConfirmEmail(userId, emailToken);
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during email confirmation");
+                
+                return StatusCode(500, new ErrorResponse
+                {
+                    Message = "An error occurred during email confirmation",
+                    Code = "EMAIL_CONFIRMATION_ERROR",
+                    TraceId = HttpContext.TraceIdentifier
+                });
+            }
+        }
+
+        /// <summary>
+        /// Resends the email confirmation link to a user
+        /// </summary>
+        /// <param name="request">The email to resend confirmation to</param>
+        /// <returns>Result of the resend operation</returns>
+        [HttpPost("resend-confirmation")]
         [IgnoreAntiforgeryToken]
         [EnableRateLimiting("AuthEndpoints")]
-        public async Task<IActionResult> ConfirmEmail([FromQuery] string userId, [FromQuery] string token)
+        [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> ResendConfirmation([FromBody] ResendConfirmationRequest request)
         {
-            if (string.IsNullOrEmpty(userId) || string.IsNullOrEmpty(token))
+            try
             {
-                return BadRequest("Invalid confirmation parameters");
-            }
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(new ErrorResponse
+                    {
+                        Message = "Invalid email",
+                        Code = "INVALID_EMAIL",
+                        ValidationErrors = ModelState.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()),
+                        TraceId = HttpContext.TraceIdentifier
+                    });
+                }
 
-            var result = await _authenticationService.ConfirmEmail(userId, token);
+                // Get client IP for rate limiting/security
+                string clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                _logger.LogInformation("Confirmation email resend attempt from IP {ClientIP}", clientIp);
 
-            if (result.Success)
-            {
-                // If successful, redirect to login with success message
-                return Redirect(result.Message);
+                var result = await _authenticationService.ResendConfirmationEmailAsync(request.Email);
+
+                return Ok(result);
             }
-            else
+            catch (Exception ex)
             {
-                // If failed, redirect to error page
-                return Redirect($"/error?message={Uri.EscapeDataString(result.Message)}");
+                _logger.LogError(ex, "Error during confirmation email resend");
+                
+                return StatusCode(500, new ErrorResponse
+                {
+                    Message = "An error occurred during confirmation email resend",
+                    Code = "RESEND_CONFIRMATION_ERROR",
+                    TraceId = HttpContext.TraceIdentifier
+                });
             }
         }
 

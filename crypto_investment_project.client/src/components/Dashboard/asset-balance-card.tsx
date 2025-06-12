@@ -1,13 +1,13 @@
 // src/components/Dashboard/asset-balance-card.tsx
 import React from 'react';
-import { IBalance } from '../../services/dashboard';
 import { useNavigate } from "react-router-dom";
+import { AssetHolding } from '../../types/dashboardTypes';
 
 interface AssetBalanceCardProps {
-    balances: IBalance[];
+    assetHoldings: AssetHolding[];
 }
 
-const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
+const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) => {
     const navigate = useNavigate();
 
     // Define colors for different cryptocurrencies
@@ -26,14 +26,15 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
     };
 
     // Fallback color for assets not in the list
-    const getAssetColor = (ticker: string): string => {
+    const getAssetColor = (ticker: string | undefined): string => {
+        if (!ticker) return '#6B7280'; // Gray fallback if ticker is undefined
         return assetColors[ticker] || '#6B7280'; // Gray fallback
     };
 
     // Calculate total value to determine proportions
     const calculateTotal = (): number => {
-        if (!balances || !balances.length) return 0;
-        return balances.reduce((sum, balance) => sum + balance.value, 0);
+        if (!assetHoldings || !assetHoldings.length) return 0;
+        return assetHoldings.reduce((sum, holding) => sum + holding.value, 0);
     };
 
     const totalValue = calculateTotal();
@@ -68,22 +69,22 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
         <div className="bg-white shadow rounded-lg p-4 h-full">
             <h2 className="text-xl font-semibold mb-4">Asset Holdings</h2>
 
-            {balances && balances.length > 0 ? (
+            {assetHoldings && assetHoldings.length > 0 ? (
                 <>
                     {/* Bar chart visualization */}
                     <div className="mb-4 h-4 bg-gray-200 rounded-full overflow-hidden flex">
-                        {balances.map((balance) => {
+                        {assetHoldings.map((holding) => {
                             // Calculate percentage width for the bar
-                            const percentage = (balance.value / totalValue) * 100;
+                            const percentage = (holding.value / totalValue) * 100;
                             return (
                                 <div
-                                    key={balance.id}
+                                    key={holding.id}
                                     style={{
                                         width: `${percentage}%`,
-                                        backgroundColor: getAssetColor(balance.ticker)
+                                        backgroundColor: getAssetColor(holding.ticker)
                                     }}
                                     className="h-full"
-                                    title={`${balance.ticker}: ${percentage.toFixed(1)}%`}
+                                    title={`${holding.ticker || 'Unknown'}: ${percentage.toFixed(1)}%`}
                                 />
                             );
                         })}
@@ -91,24 +92,25 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
 
                     {/* List of balances */}
                     <div className="space-y-3">
-                        {balances.map((balance) => (
-                            <div key={balance.id} className="flex justify-between items-center">
+                        {assetHoldings.map((holding) => (
+                            <div key={holding.id} className="flex justify-between items-center">
                                 <div className="flex items-center">
                                     <div
                                         className="w-3 h-3 rounded-full mr-2"
-                                        style={{ backgroundColor: getAssetColor(balance.ticker) }}
+                                        style={{ backgroundColor: getAssetColor(holding.ticker) }}
                                     />
                                     <span className="font-medium">
-                                        {(balance.name || balance.ticker) &&
-                                            <span className="text-gray-500 ml-1">{balance.name}({balance.ticker})</span>
-                                        }
+                                        <span className="text-gray-500 ml-1">
+                                            {holding.name || 'Unknown'}
+                                            ({holding.ticker || 'N/A'})
+                                        </span>
                                     </span>
                                 </div>
-                                <div className="font-bold">{formatAmount(balance.total)}</div>
-                                <div className="font-bold">${balance.value.toFixed(2)}</div>
+                                <div className="font-bold">{formatAmount(holding.total)}</div>
+                                <div className="font-bold">${holding.value.toFixed(2)}</div>
                                 <div className="font-bold">
                                     <button
-                                        onClick={() => handleWithdraw(balance.id)}
+                                        onClick={() => handleWithdraw(holding.id)}
                                         className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 px-4 rounded-md text-sm font-medium transition-colors"
                                     >
                                         Withdraw
@@ -122,7 +124,7 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ balances }) => {
                     <div className="mt-4 pt-3 border-t border-gray-200">
                         <div className="flex justify-between items-center">
                             <span className="font-medium">Total Assets</span>
-                            <span className="font-bold">{balances.length} tokens</span>
+                            <span className="font-bold">{assetHoldings.length} tokens</span>
                         </div>
                     </div>
                     <div className="mt-4 pt-3 border-t border-gray-200">

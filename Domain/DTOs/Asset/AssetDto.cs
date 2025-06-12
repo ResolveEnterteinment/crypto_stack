@@ -10,6 +10,8 @@ namespace Domain.DTOs.Asset
         public string Symbol { get; set; }
         public uint Precision { get; set; }
         public string? SubunitName { get; set; }
+        public string Type { get; set; }
+        public string Class { get; set; }
         public AssetDto(AssetData asset)
         {
             Id = asset.Id;
@@ -18,6 +20,8 @@ namespace Domain.DTOs.Asset
             Symbol = asset.Symbol;
             Precision = asset.Precision;
             SubunitName = asset.SubunitName;
+            Type = asset.Type;
+            Class = asset.Class;
         }
     }
 }

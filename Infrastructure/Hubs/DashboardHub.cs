@@ -144,7 +144,7 @@ namespace Infrastructure.Hubs
                 }
 
                 // Force refresh by invalidating cache and fetching new data
-                await _dashboardService.InvalidateDashboardCacheAsync(userGuid);
+                _dashboardService.InvalidateDashboardCacheAsync(userGuid);
 
                 // This will trigger pulling fresh data and sending it to the client
                 _logger.LogInformation("Manual dashboard refresh requested by user {UserId}", userId);
@@ -193,7 +193,7 @@ namespace Infrastructure.Hubs
                                 var userId = updatedBalance.UserId;
 
                                 // Invalidate dashboard cache and send updates
-                                await _dashboardService.InvalidateDashboardCacheAsync(userId);
+                                _dashboardService.InvalidateDashboardCacheAsync(userId);
 
                                 _logger.LogDebug("Dashboard updated for user {UserId} due to balance change", userId);
                             }

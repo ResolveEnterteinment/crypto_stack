@@ -10,5 +10,16 @@
         public const string NeedsReview = "NEEDS_REVIEW";
         public const string AdditionalInfoRequired = "ADDITIONAL_INFO_REQUIRED";
         public const string Expired = "EXPIRED";
+
+        public static string[] AllValues = [
+            NotStarted,
+            InProgress,
+            Pending,
+            Approved,
+            Rejected,
+            NeedsReview,
+            AdditionalInfoRequired,
+            Expired
+            ];
     }
 }

@@ -8,7 +8,7 @@ namespace Application.Interfaces.KYC
     public interface IKycProvider
     {
         string ProviderName { get; }
-
+        Task<ResultWrapper<KycSessionData>> GetOrCreateUserSession(Guid userId, string verificationLevel);
         Task<ResultWrapper<KycSessionDto>> InitiateVerificationAsync(KycVerificationRequest request, KycData existingData);
         Task<ResultWrapper<KycData>> ProcessCallbackAsync(KycCallbackRequest callback);
         Task<ResultWrapper> PerformAmlCheckAsync(Guid userId, KycData kycData);

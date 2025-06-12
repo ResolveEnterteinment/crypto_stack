@@ -46,7 +46,9 @@ namespace Infrastructure.Services.Base
             EventService = eventService;
 
             if (indexModels is not null)
+            {
                 _ = IndexService.EnsureIndexesAsync(indexModels);
+            }
         }
 
         public virtual async Task<ResultWrapper<T>> GetByIdAsync(Guid id, CancellationToken ct = default)
@@ -57,11 +59,8 @@ namespace Infrastructure.Services.Base
                 ["EntityId"] = id,
             });
 
-            var result = await FetchCached(
-                CacheService.GetCacheKey(id),
-                () => _repository.GetByIdAsync(id, ct),
-                TimeSpan.FromMinutes(5),
-                () => new ResourceNotFoundException(typeof(T).Name, id.ToString())
+            var result = await SafeExecute(
+                () => _repository.GetByIdAsync(id, ct)
             );
 
             if (result == null || !result.IsSuccess)
@@ -80,11 +79,8 @@ namespace Infrastructure.Services.Base
                 ["Filter"] = filter.ToString(),
             });
 
-            var result = await FetchCached(
-                CacheService.GetFilterCacheKey() + ":one:" + filter,
-                () => _repository.GetOneAsync(filter, ct),
-                TimeSpan.FromMinutes(5),
-                () => new KeyNotFoundException($"{typeof(T).Name} not found with specified filter.")
+            var result = await SafeExecute(
+                () => _repository.GetOneAsync(filter, ct)
             );
 
             if (result == null || !result.IsSuccess)
@@ -95,7 +91,7 @@ namespace Infrastructure.Services.Base
             return result;
         }
 
-        public async virtual Task<ResultWrapper<List<T>>> GetManyAsync(FilterDefinition<T> filter, CancellationToken ct = default)
+        public virtual async Task<ResultWrapper<List<T>>> GetManyAsync(FilterDefinition<T> filter, CancellationToken ct = default)
         {
             using var Scope = Logger.BeginScope("BaseService::GetManyAsync", new Dictionary<string, object>
             {
@@ -103,11 +99,8 @@ namespace Infrastructure.Services.Base
                 ["Filter"] = filter.ToString(),
             });
 
-            var result = await FetchCached(
-                CacheService.GetFilterCacheKey() + ":many:" + filter,
-                () => _repository.GetAllAsync(filter, ct),
-                TimeSpan.FromMinutes(5),
-                () => new KeyNotFoundException($"No {typeof(T).Name} entities found with specified filter.")
+            var result = await SafeExecute(
+                () => _repository.GetAllAsync(filter, ct)
             );
 
             if (result == null || !result.IsSuccess)
@@ -125,11 +118,8 @@ namespace Infrastructure.Services.Base
                 ["EntityType"] = typeof(T).Name,
             });
 
-            var result = await FetchCached(
-                CacheService.GetCollectionCacheKey(),
-                () => _repository.GetAllAsync(null, ct),
-                TimeSpan.FromMinutes(5),
-                () => new KeyNotFoundException($"{typeof(T).Name} collection is empty.")
+            var result = await SafeExecute(
+                () => _repository.GetAllAsync(null, ct)
             );
 
             if (result == null || !result.IsSuccess)
@@ -150,11 +140,8 @@ namespace Infrastructure.Services.Base
                 PageSize = pageSize,
             });
 
-            var result = await FetchCached(
-                CacheService.GetFilterCacheKey() + ":filter:" + filter + ":sort:" + sort,
-                () => _repository.GetPaginatedAsync(filter, sort, page, pageSize, cancellationToken),
-                TimeSpan.FromMinutes(5),
-                () => new KeyNotFoundException($"{typeof(T).Name} collection is empty.")
+            var result = await SafeExecute(
+                () => _repository.GetPaginatedAsync(filter, sort, page, pageSize, cancellationToken)
             );
 
             if (result == null || !result.IsSuccess)
@@ -175,14 +162,19 @@ namespace Infrastructure.Services.Base
 
             var result = await SafeExecute(async () =>
             {
-                CacheService.Invalidate(CacheService.GetCollectionCacheKey());
                 var crudResult = await _repository.InsertAsync(entity, ct);  // returns CrudResult with AffectedIds, etc.
                 if (crudResult == null || !crudResult.IsSuccess)
+                {
                     throw new DatabaseException(crudResult!.ErrorMessage!);
+                }
 
                 var id = crudResult.AffectedIds.First();
+
                 if (EventService is not null)
+                {
                     await EventService.PublishAsync(new EntityCreatedEvent<T>(id, entity, Logger.Context));
+                }
+
                 return crudResult;
             });
 
@@ -206,21 +198,27 @@ namespace Infrastructure.Services.Base
             {
                 var result = await SafeExecute(async () =>
                 {
-                    CacheService.Invalidate(CacheService.GetCacheKey(id));
-                    CacheService.Invalidate(CacheService.GetCollectionCacheKey());
-
                     // ensure the entity exists (will throw if not)
                     var toUpdate = await _repository.GetByIdAsync(id, ct)
                         ?? throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
 
                     var crudResult = await _repository.UpdateAsync(id, fields, ct);
                     if (!crudResult.IsSuccess)
+                    {
                         throw new DatabaseException(crudResult.ErrorMessage!);
+                    }
 
                     var updatedResult = await GetByIdAsync(id, ct);
                     if (updatedResult == null || !updatedResult.IsSuccess)
+                    {
                         throw new DatabaseException($"Failed to fetch updated {typeof(T).Name} entity: {updatedResult?.ErrorMessage ?? "Fetch result returned null"}");
-                    await EventService?.PublishAsync(new EntityUpdatedEvent<T>(id, updatedResult.Data!, Logger.Context));
+                    }
+
+                    if (EventService != null)
+                    {
+                        await EventService.PublishAsync(new EntityUpdatedEvent<T>(id, updatedResult.Data!, Logger.Context));
+                    }
+
                     return crudResult;
                 });
 
@@ -243,9 +241,6 @@ namespace Infrastructure.Services.Base
 
             var result = await SafeExecute(async () =>
             {
-                CacheService.Invalidate(CacheService.GetCacheKey(id));
-                CacheService.Invalidate(CacheService.GetCollectionCacheKey());
-
                 // fetch so we can emit the deleted entity in the event
                 var toDelete = await _repository.GetByIdAsync(id, ct)
                     ?? throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
@@ -257,7 +252,11 @@ namespace Infrastructure.Services.Base
                     throw new DatabaseException(crudResult.ErrorMessage!);
                 }
 
-                await EventService?.PublishAsync(new EntityDeletedEvent<T>(id, toDelete, Logger.Context));
+                if (EventService is not null)
+                {
+                    await EventService.PublishAsync(new EntityDeletedEvent<T>(id, toDelete, Logger.Context));
+                }
+
                 return crudResult;
             });
 
@@ -282,16 +281,19 @@ namespace Infrastructure.Services.Base
                 // invalidate all affected caches
                 var toDelete = await _repository.GetAllAsync(filter, ct)
                     ?? throw new ResourceNotFoundException(typeof(T).Name, filter.ToString());
-                foreach (var e in toDelete)
-                    CacheService.Invalidate(CacheService.GetCacheKey(e.Id));
-                CacheService.Invalidate(CacheService.GetCollectionCacheKey());
-                CacheService.Invalidate(CacheService.GetFilterCacheKey());
 
                 var crudResult = await _repository.DeleteManyAsync(filter, ct);
-                if (!crudResult.IsSuccess)
-                    throw new DatabaseException(crudResult.ErrorMessage!);
 
-                await EventService?.PublishAsync(new CollectionDeletedEvent<T>(toDelete, Logger.Context));
+                if (!crudResult.IsSuccess)
+                {
+                    throw new DatabaseException(crudResult.ErrorMessage!);
+                }
+
+                if (EventService is not null)
+                {
+                    await EventService.PublishAsync(new CollectionDeletedEvent<T>(toDelete, Logger.Context));
+                }
+
                 return crudResult;
             });
 
@@ -312,8 +314,6 @@ namespace Infrastructure.Services.Base
 
             var result = await SafeExecute(async () =>
             {
-                if (CacheService.TryGetValue(CacheService.GetCacheKey(id), out T _))
-                    return true;
                 return await _repository.CheckExistsAsync(id, cancellationToken);
             });
 
@@ -325,11 +325,11 @@ namespace Infrastructure.Services.Base
             return result;
         }
 
-        public async virtual Task<ResultWrapper<PaginatedResult<T>>> GetPaginatedAsync(
+        public virtual async Task<ResultWrapper<PaginatedResult<T>>> GetPaginatedAsync(
             FilterDefinition<T> filter,
             int page = 1,
             int pageSize = 20,
-            string sortField = null,
+            string? sortField = null,
             bool sortAscending = false,
             CancellationToken cancellationToken = default)
         {
@@ -422,9 +422,7 @@ namespace Infrastructure.Services.Base
             try
             {
                 var item = await CacheService.GetAnyCachedAsync(cacheKey, factory, duration);
-                if (item is null)
-                    throw notFoundFactory?.Invoke() ?? new KeyNotFoundException(cacheKey);
-                return ResultWrapper<TItem>.Success(item);
+                return item is null ? throw notFoundFactory?.Invoke() ?? new KeyNotFoundException(cacheKey) : ResultWrapper<TItem>.Success(item);
             }
             catch (Exception ex)
             {

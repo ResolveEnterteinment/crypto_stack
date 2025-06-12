@@ -7,15 +7,21 @@ import DashboardPage from "./pages/DashboardPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SubscriptionCreationPage from "./pages/SubscriptionCreationPage";
 import AdminPage from "./pages/AdminPage";
-import KycVerification from "./components/KYC/KycVerification";
-import WithdrawalForm from "./components/Withdrawal/WithdrawalForm";
+import WithdrawalPage from "./pages/WithdrawalPage";
+import KycPage from "./pages/KycPage";
+import EmailConfirmation from './pages/EmailConfirmation';
+import Navbar from "./components/Navbar";
 
 const App: React.FC = () => {
     return (
         <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<AuthPage />} />
-            <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+            <Route path="/dashboard" element={
+                <ProtectedRoute>
+                    <Navbar />
+                    <DashboardPage />
+                </ProtectedRoute>} />
 
             {/* Admin route with role-based access control */}
             <Route path="/admin" element={
@@ -33,17 +39,20 @@ const App: React.FC = () => {
 
             {/* Standard subscription requires KYC */}
             <Route path="/withdraw" element={
-                <ProtectedRoute requiredKycLevel="BASIC">
-                    <WithdrawalForm />
+                <ProtectedRoute /*requiredKycLevel="STANDARD"*/>
+                    <WithdrawalPage />
                 </ProtectedRoute>
             } />
 
             {/* KYC verification page */}
             <Route path="/kyc-verification" element={
                 <ProtectedRoute>
-                    <KycVerification />
+                    <KycPage />
                 </ProtectedRoute>
             } />
+
+            {/* Email confirmation routes */}
+            <Route path="/confirm-email" element={<EmailConfirmation />} />
 
             {/* Redirect all other routes to auth page */}
             <Route path="*" element={<AuthPage />} />

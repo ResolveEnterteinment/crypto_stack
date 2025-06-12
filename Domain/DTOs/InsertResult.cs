@@ -1,6 +1,4 @@
-﻿using MongoDB.Bson;
-
-namespace Domain.DTOs
+﻿namespace Domain.DTOs
 {
     public class InsertResult
     {

@@ -129,16 +129,13 @@ namespace Infrastructure.Services.Event
         }
 
         public Task<ResultWrapper<IEnumerable<Domain.Models.Event.EventData>>> GetRecentEventsAsync(string eventType, int limit = 20)
-            => FetchCached(
-                $"events:recent:{eventType}:{limit}",
+            => SafeExecute(
                 async () =>
                 {
                     var filter = Builders<EventData>.Filter.Eq(e => e.Name, eventType);
                     var wrapper = await GetPaginatedAsync(filter, page: 1, pageSize: limit, sortField: nameof(EventData.CreatedAt), sortAscending: false);
                     return wrapper.Data.Items;
-                },
-                EVENT_CACHE_DURATION,
-                () => new KeyNotFoundException("Recent events not found.")
+                }
             );
     }
 }

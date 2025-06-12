@@ -6,11 +6,12 @@ import Navbar from "../components/Navbar";
 import PortfolioChart from "../components/Dashboard/portfolio-chart";
 import AssetBalanceCard from "../components/Dashboard/asset-balance-card";
 import SubscriptionCard from "../components/Dashboard/subscription-card";
-import { getDashboardData, IDashboardData } from "../services/dashboard";
+import { getDashboardData } from "../services/dashboard";
 import { getSubscriptions, getTransactions, updateSubscription } from "../services/subscription";
-import ISubscription from "../interfaces/ISubscription";
+import { Subscription } from "../types/subscription";
 import ITransaction from "../interfaces/ITransaction";
 import ApiTestPanel from '../components/DevTools/ApiTestPanel';
+import { Dashboard } from '../types/dashboardTypes';
 
 const DashboardPage: React.FC = () => {
     // Get authenticated user and navigation
@@ -22,8 +23,8 @@ const DashboardPage: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [isHistoryModalOpen, setHistoryModalOpen] = useState(false);
     const [currentSubscriptionId, setCurrentSubscriptionId] = useState<string | null>(null);
-    const [dashboardData, setDashboardData] = useState<IDashboardData | null>(null);
-    const [subscriptions, setSubscriptions] = useState<ISubscription[]>([]);
+    const [dashboardData, setDashboardData] = useState<Dashboard | null>(null);
+    const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
     const [transactions, setTransactions] = useState<ITransaction[]>([]);
     const [transactionsLoading, setTransactionsLoading] = useState(false);
 
@@ -198,11 +199,11 @@ const DashboardPage: React.FC = () => {
 
     return (
         <>
-            <Navbar showProfile={showProfile} showSettings={showSettings} logout={handleLogout} />
+            <Navbar/>
             <div className="min-h-screen bg-gray-50 py-8 px-4 lg:px-10">
                 {/* Header with welcome message */}
                 <div className="mb-8">
-                    <h1 className="text-3xl font-bold mb-2">Welcome back, {user?.username || 'Investor'}</h1>
+                    <h1 className="text-3xl font-bold mb-2">Welcome back, {user?.username || 'Investor'}</h1>,
                     <p className="text-gray-500">Here's the latest update on your investments</p>
                 </div>
 
@@ -287,7 +288,7 @@ const DashboardPage: React.FC = () => {
 
                     {/* Asset Balance */}
                     <div className="lg:col-span-1">
-                        <AssetBalanceCard balances={dashboardData?.assetHoldings || []} />
+                        <AssetBalanceCard assetHoldings={dashboardData?.assetHoldings!} />
                     </div>
                 </div>
 

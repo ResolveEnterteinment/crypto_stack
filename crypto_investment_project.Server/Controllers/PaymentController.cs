@@ -151,7 +151,7 @@ namespace crypto_investment_project.Server.Controllers
 
                     if (sessionResult is null || !sessionResult.IsSuccess || sessionResult.Data is null)
                     {
-                        throw new PaymentApiException("Failed to retrieve payment from checkout session.", sessionResult?.Data?.Provider ?? "Session result returned null.");
+                        throw new PaymentApiException($"Failed to retrieve payment from checkout session:  {sessionResult?.Data?.Provider ?? "Session result returned null."}", "Stripe");
                     }
 
                     var checkoutSession = sessionResult.Data;
@@ -244,7 +244,7 @@ namespace crypto_investment_project.Server.Controllers
                 // If payment is associated with a subscription, update its status
                 if (!string.IsNullOrEmpty(payment.SubscriptionId))
                 {
-                    await _subscriptionService.UpdateSubscriptionStatusAsync(Guid.Parse(payment.SubscriptionId), SubscriptionStatus.Canceled);
+                    _ = await _subscriptionService.UpdateSubscriptionStatusAsync(Guid.Parse(payment.SubscriptionId), SubscriptionStatus.Canceled);
                 }
 
                 return Ok(result);
@@ -345,12 +345,7 @@ namespace crypto_investment_project.Server.Controllers
                 var filter = MongoDB.Driver.Builders<Domain.Models.Payment.PaymentData>.Filter.Eq(p => p.SubscriptionId, parsedSubscriptionId);
                 var paymentsResult = await _unitOfWork.Payments.GetManyAsync(filter);
 
-                if (!paymentsResult.IsSuccess)
-                {
-                    return StatusCode(500, paymentsResult.ErrorMessage);
-                }
-
-                return Ok(new { data = paymentsResult.Data });
+                return !paymentsResult.IsSuccess ? StatusCode(500, paymentsResult.ErrorMessage) : (IActionResult)Ok(new { data = paymentsResult.Data });
             }
             catch (Exception ex)
             {

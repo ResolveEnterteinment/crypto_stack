@@ -24,7 +24,6 @@ namespace crypto_investment_project.Server.Controllers
 
         [HttpGet]
         [Route("user/{user}")]
-        //[IgnoreAntiforgeryToken]
         [Authorize(Roles = "USER")]
         [EnableRateLimiting("standard")]
         public async Task<IActionResult> GetUserDashboardData(string user)

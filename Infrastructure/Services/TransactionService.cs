@@ -17,9 +17,6 @@ namespace Infrastructure.Services
     {
         private static readonly TimeSpan TRANSACTION_CACHE_DURATION = TimeSpan.FromMinutes(10);
 
-        private const string CACHE_KEY_USER_TRANSACTIONS = "user_transactions:{0}";
-        private const string CACHE_KEY_SUBSCRIPTION_TRANSACTIONS = "subscription_transactions:{0}";
-
         private readonly ISubscriptionService _subscriptionService;
         private readonly IAssetService _assetService;
         private readonly IBalanceService _balanceService;
@@ -91,8 +88,7 @@ namespace Infrastructure.Services
                 SubscriptionId = subscriptionId,
             });
 
-            var result = await FetchCached(
-                string.Format(CACHE_KEY_SUBSCRIPTION_TRANSACTIONS, subscriptionId),
+            var result = await SafeExecute(
                 async () =>
                 {
                     var filter = Builders<TransactionData>.Filter.Eq(t => t.SubscriptionId, subscriptionId);
@@ -124,8 +120,7 @@ namespace Infrastructure.Services
                         });
                     }
                     return transactionsDto;
-                },
-                TRANSACTION_CACHE_DURATION
+                }
             );
             if (result == null || !result.IsSuccess)
             {

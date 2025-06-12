@@ -372,4 +372,22 @@ namespace Application.Validation
                 .WithMessage("Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character");
         }
     }
+
+    /// <summary>
+    /// Validator for ResendConfirmationRequest
+    /// </summary>
+    public class ResendConfirmationRequestValidator : AbstractValidator<Contracts.Requests.Auth.ResendConfirmationRequest>
+    {
+        private static readonly Regex EmailRegex = new(
+            @"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+            RegexOptions.Compiled);
+
+        public ResendConfirmationRequestValidator()
+        {
+            RuleFor(x => x.Email)
+                .NotEmpty().WithMessage("Email is required")
+                .EmailAddress().WithMessage("A valid email is required")
+                .Must(email => EmailRegex.IsMatch(email)).WithMessage("Email format is invalid");
+        }
+    }
 }

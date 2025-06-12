@@ -117,9 +117,6 @@ namespace Infrastructure.Services.Subscription
                 if (insertResult == null || !insertResult.IsSuccess)
                     throw new MongoException("Failed to insert subscription into database.");
 
-                // Invalidate cache for this user's subscriptions
-                CacheService.Invalidate(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, userId));
-
                 // Notify user
                 await _notificationService.CreateAndSendNotificationAsync(new NotificationData
                 {
@@ -179,14 +176,6 @@ namespace Infrastructure.Services.Subscription
                 // Execute update
                 var result = await UpdateAsync(id, updateFields);
 
-                if (result.IsSuccess)
-                {
-                    // Invalidate user cache
-                    var subscriptionWr = await GetByIdAsync(id);
-                    if (subscriptionWr.IsSuccess && subscriptionWr.Data != null)
-                        CacheService.Invalidate(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subscriptionWr.Data.UserId));
-                }
-
                 return ResultWrapper.Success();
             }
             catch (Exception ex)
@@ -212,8 +201,6 @@ namespace Infrastructure.Services.Subscription
             if (result.IsSuccess)
             {
                 var subWr = await GetByIdAsync(subscriptionId);
-                if (subWr.IsSuccess && subWr.Data != null)
-                    CacheService.Invalidate(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subWr.Data.UserId));
 
                 var message = status switch
                 {
@@ -241,8 +228,7 @@ namespace Infrastructure.Services.Subscription
         }
 
         public Task<ResultWrapper<List<AllocationDto>>> GetAllocationsAsync(Guid subscriptionId)
-            => FetchCached(
-                string.Format(CACHE_KEY_SUBSCRIPTION_ALLOCATIONS, subscriptionId),
+            => SafeExecute(
                 async () =>
                 {
                     var subWr = await GetByIdAsync(subscriptionId);
@@ -266,13 +252,11 @@ namespace Infrastructure.Services.Subscription
                         });
                     }
                     return dtos;
-                },
-                TimeSpan.FromMinutes(10)
+                }
             );
 
         public Task<ResultWrapper<List<SubscriptionDto>>> GetAllByUserIdAsync(Guid userId) =>
-            FetchCached(
-                string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, userId),
+            SafeExecute(
                 async () =>
                 {
                     var filter = Builders<SubscriptionData>.Filter.Eq(x => x.UserId, userId);
@@ -314,8 +298,7 @@ namespace Infrastructure.Services.Subscription
                         });
                     }
                     return list;
-                },
-                TimeSpan.FromMinutes(5)
+                }
             );
 
         public async Task Handle(CheckoutSessionCompletedEvent notification, CancellationToken cancellationToken)
@@ -347,8 +330,6 @@ namespace Infrastructure.Services.Subscription
                     var subscriptionResult = await GetByIdAsync(subscriptionId);
                     subscriptionResult.OnSuccess(async (subscription) =>
                     {
-                        CacheService.Invalidate(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subscription.UserId));
-
                         // Notify user
                         await _notificationService.CreateAndSendNotificationAsync(new()
                         {
@@ -417,8 +398,6 @@ namespace Infrastructure.Services.Subscription
                     var subscriptionResult = await GetByIdAsync(parsedSubscriptionId);
                     subscriptionResult.OnSuccess(async (subscription) =>
                     {
-                        CacheService.Invalidate(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subscription!.UserId));
-
                         Logger.LogInformation("Successfully updated subscription {SubscriptionId} with provider details",
                             parsedSubscriptionId);
 
@@ -500,9 +479,6 @@ namespace Infrastructure.Services.Subscription
 
                 if (updateResult.IsSuccess)
                 {
-                    // Invalidate cache
-                    CacheService.Invalidate(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subscription.UserId));
-
                     // Notify user
                     await _notificationService.CreateAndSendNotificationAsync(new()
                     {
@@ -549,9 +525,6 @@ namespace Infrastructure.Services.Subscription
 
                 if (updateResult.IsSuccess)
                 {
-                    // Invalidate cache
-                    CacheService.Invalidate(string.Format(CACHE_KEY_USER_SUBSCRIPTIONS, subscription!.UserId));
-
                     // Notify user
                     await _notificationService.CreateAndSendNotificationAsync(new()
                     {

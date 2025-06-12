@@ -1,34 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Tag, Button, Card, Tooltip, Modal, Alert, Skeleton, Typography } from 'antd';
-import { ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
-import { useAuth } from '../../context/AuthContext';
+import { Table, Tag, Button, Card, Tooltip, Modal, Alert, Skeleton, Typography, message, Space } from 'antd';
+import { ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, CopyOutlined } from '@ant-design/icons';
+//import { useAuth } from '../../context/AuthContext';
+import { WithdrawalResponse } from '../../types/withdrawal';
+import withdrawalService from '../../services/withdrawalService';
 
 const { Text } = Typography;
-const { confirm } = Modal;
 
-// Define interfaces for type safety
-interface WithdrawalData {
-    id: string;
-    amount: number;
-    currency: string;
-    withdrawalMethod: string;
-    withdrawalAddress: string;
-    status: string;
-    createdAt: string;
-    transactionHash?: string;
-}
-
-interface AuthContextType {
+/*interface AuthContextType {
     user: any;
     // Add other auth properties as needed
-}
+}*/
 
 const WithdrawalHistory: React.FC = () => {
-    const { user } = useAuth() as AuthContextType;
-    const [withdrawals, setWithdrawals] = useState<WithdrawalData[]>([]);
+    //const { user } = useAuth() as AuthContextType;
+    const [withdrawals, setWithdrawals] = useState<WithdrawalResponse[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
-    const [cancelLoading, setCancelLoading] = useState<boolean>(false);
+    const [cancelLoadingMap, setCancelLoadingMap] = useState<Record<string, boolean>>({});
+    const [confirmModalOpen, setConfirmModalOpen] = useState<boolean>(false);
+    const [withdrawalToCancel, setWithdrawalToCancel] = useState<string | null>(null);
 
     useEffect(() => {
         fetchWithdrawalHistory();
@@ -37,18 +28,8 @@ const WithdrawalHistory: React.FC = () => {
     const fetchWithdrawalHistory = async (): Promise<void> => {
         try {
             setLoading(true);
-            const response = await fetch('/api/withdrawal/history', {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch withdrawal history');
-            }
-
-            const data = await response.json();
-            setWithdrawals(data);
+            const response = await withdrawalService.getHistory();
+            setWithdrawals(response);
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
             setError(errorMessage);
@@ -57,39 +38,64 @@ const WithdrawalHistory: React.FC = () => {
         }
     };
 
-    const handleCancelWithdrawal = async (withdrawalId: string): Promise<void> => {
-        confirm({
-            title: 'Are you sure you want to cancel this withdrawal request?',
-            icon: <ExclamationCircleOutlined />,
-            content: 'This action cannot be undone.',
-            okText: 'Yes, Cancel',
-            okType: 'danger',
-            cancelText: 'No',
-            onOk: async () => {
-                try {
-                    setCancelLoading(true);
-                    const response = await fetch(`/api/withdrawal/${withdrawalId}/cancel`, {
-                        method: 'PUT',
-                        headers: {
-                            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-                        },
-                    });
+    const cancelWithdrawal = async (withdrawalId: string): Promise<void> => {
+        try {
+            setCancelLoadingMap(prev => ({ ...prev, [withdrawalId]: true }));
 
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.message || 'Failed to cancel withdrawal request');
-                    }
+            const success = await withdrawalService.cancelWithdrawal(withdrawalId);
 
-                    // Refresh withdrawal history
-                    fetchWithdrawalHistory();
-                } catch (err) {
-                    const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
-                    setError(errorMessage);
-                } finally {
-                    setCancelLoading(false);
-                }
-            },
-        });
+            if (success) {
+                await fetchWithdrawalHistory();
+                message.success('Withdrawal request has been cancelled successfully.');
+            } else {
+                throw new Error('Failed to cancel withdrawal request');
+            }
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
+            setError(errorMessage);
+            message.error(errorMessage);
+        } finally {
+            setCancelLoadingMap(prev => ({ ...prev, [withdrawalId]: false }));
+        }
+    };
+
+    const handleCancelWithdrawal = (withdrawalId: string): void => {
+        setWithdrawalToCancel(withdrawalId);
+        setConfirmModalOpen(true);
+    };
+
+    const handleConfirmCancel = async (): Promise<void> => {
+        if (withdrawalToCancel) {
+            setConfirmModalOpen(false);
+            await cancelWithdrawal(withdrawalToCancel);
+            setWithdrawalToCancel(null);
+        }
+    };
+
+    const handleCancelModal = (): void => {
+        setConfirmModalOpen(false);
+        setWithdrawalToCancel(null);
+    };
+
+    const copyToClipboard = async (text: string): Promise<void> => {
+        try {
+            await navigator.clipboard.writeText(text);
+            message.success('Address copied to clipboard');
+        } catch (err) {
+            // Fallback for older browsers
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            message.success('Address copied to clipboard');
+        }
+    };
+
+    const formatAddress = (address: string): string => {
+        if (!address || address.length <= 8) return address;
+        return `${address.slice(0, 6)}...${address.slice(-4)}`;
     };
 
     const getStatusTag = (status: string): React.ReactNode => {
@@ -97,7 +103,7 @@ const WithdrawalHistory: React.FC = () => {
             case 'PENDING':
                 return <Tag icon={<ClockCircleOutlined />} color="processing">Pending</Tag>;
             case 'APPROVED':
-                return <Tag icon={<CheckCircleOutlined />} color="blue">Approved</Tag>;
+                return <Tag icon={<CheckCircleOutlined />} color="success">Approved</Tag>;
             case 'COMPLETED':
                 return <Tag icon={<CheckCircleOutlined />} color="success">Completed</Tag>;
             case 'REJECTED':
@@ -121,9 +127,9 @@ const WithdrawalHistory: React.FC = () => {
         {
             title: 'Amount',
             key: 'amount',
-            render: (_: any, record: WithdrawalData) => (
+            render: (_: any, record: WithdrawalResponse) => (
                 <span>
-                    {record.amount.toFixed(2)} {record.currency}
+                    {record.amount} {record.currency}
                 </span>
             ),
         },
@@ -152,12 +158,33 @@ const WithdrawalHistory: React.FC = () => {
             title: 'Withdrawal Address',
             dataIndex: 'withdrawalAddress',
             key: 'withdrawalAddress',
-            ellipsis: true,
-            render: (text: string) => (
-                <Tooltip title={text}>
-                    <span>{text?.substring(0, 15)}...</span>
+            ellipsis: false,
+            render: (text: string) => text ? (
+                <Tooltip title={text} placement="top">
+                    <Space size="small">
+                        <span style={{ fontFamily: 'monospace', fontSize: '13px' }}>
+                            {formatAddress(text)}
+                        </span>
+                        <Button
+                            type="text"
+                            size="small"
+                            icon={<CopyOutlined />}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                copyToClipboard(text);
+                            }}
+                            style={{
+                                padding: '0 4px',
+                                height: '20px',
+                                width: '20px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                            }}
+                        />
+                    </Space>
                 </Tooltip>
-            ),
+            ) : '-',
         },
         {
             title: 'Transaction Hash',
@@ -173,12 +200,14 @@ const WithdrawalHistory: React.FC = () => {
         {
             title: 'Actions',
             key: 'actions',
-            render: (_: any, record: WithdrawalData) => (
+            render: (_: any, record: WithdrawalResponse) => (
                 record.status === 'PENDING' && (
                     <Button
                         danger
+                        size="small"
                         onClick={() => handleCancelWithdrawal(record.id)}
-                        loading={cancelLoading}
+                        loading={cancelLoadingMap[record.id] || false}
+                        disabled={cancelLoadingMap[record.id]}
                     >
                         Cancel
                     </Button>
@@ -209,18 +238,36 @@ const WithdrawalHistory: React.FC = () => {
                 />
             )}
 
-            {withdrawals.length === 0 ? (
-                <div className="text-center py-10">
-                    <Text type="secondary">No withdrawal history found.</Text>
-                </div>
-            ) : (
+            {withdrawals && withdrawals.length > 0 ? (
                 <Table
                     dataSource={withdrawals}
                     columns={columns}
                     rowKey="id"
                     pagination={{ pageSize: 10 }}
+                    scroll={{ x: 800 }}
                 />
+            ) : (
+                <div className="text-center py-10">
+                    <Text type="secondary">No withdrawal history found.</Text>
+                </div>
             )}
+
+            {/* Confirmation modal */}
+            <Modal
+                title="Cancel Withdrawal Request"
+                open={confirmModalOpen}
+                onOk={handleConfirmCancel}
+                onCancel={handleCancelModal}
+                okText="Yes, Cancel"
+                cancelText="No"
+                okType="danger"
+                confirmLoading={withdrawalToCancel ? cancelLoadingMap[withdrawalToCancel] : false}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <ExclamationCircleOutlined style={{ color: '#faad14', fontSize: '16px' }} />
+                    <span>Are you sure you want to cancel this withdrawal request? This action cannot be undone.</span>
+                </div>
+            </Modal>
         </Card>
     );
 };

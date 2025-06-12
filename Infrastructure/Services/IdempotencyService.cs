@@ -55,25 +55,31 @@ namespace Infrastructure.Services
         public async Task<(bool exists, T result)> GetResultAsync<T>(string key)
         {
             if (string.IsNullOrWhiteSpace(key))
+            {
                 throw new ArgumentNullException(nameof(key));
+            }
 
             string cacheKey = CACHE_PREFIX + key;
             if (_memoryCache.TryGetValue(cacheKey, out T cached))
+            {
                 return (true, cached);
+            }
 
             // Fetch from DB
             var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
             var record = await _repository.GetOneAsync(filter);
             if (record == null || string.IsNullOrEmpty(record.ResultJson))
+            {
                 return (false, default);
+            }
 
             try
             {
                 var result = JsonSerializer.Deserialize<T>(record.ResultJson, _jsonOptions);
-                _memoryCache.Set(cacheKey, result, CACHE_DURATION);
+                _ = _memoryCache.Set(cacheKey, result, CACHE_DURATION);
                 return (true, result);
             }
-            catch (JsonException ex)
+            catch (JsonException)
             {
                 Logger.LogError("Deserialization failed for idempotency key {Key}", key);
                 return (false, default);
@@ -83,7 +89,9 @@ namespace Infrastructure.Services
         public async Task StoreResultAsync<T>(string key, T result, TimeSpan? expiration = null)
         {
             if (string.IsNullOrWhiteSpace(key))
+            {
                 throw new ArgumentNullException(nameof(key));
+            }
 
             var json = result != null
                 ? JsonSerializer.Serialize(result, _jsonOptions)
@@ -96,7 +104,7 @@ namespace Infrastructure.Services
             if (existing != null)
             {
                 // Update
-                await _repository.UpdateAsync(existing.Id, new { ResultJson = json, ExpiresAt = expireAt });
+                _ = await _repository.UpdateAsync(existing.Id, new { ResultJson = json, ExpiresAt = expireAt });
             }
             else
             {
@@ -108,54 +116,92 @@ namespace Infrastructure.Services
                     CreatedAt = DateTime.UtcNow,
                     ExpiresAt = expireAt
                 };
-                await _repository.InsertAsync(record);
+                _ = await _repository.InsertAsync(record);
             }
 
             // Cache
             if (result != null)
-                _memoryCache.Set(CACHE_PREFIX + key, result, CACHE_DURATION);
+            {
+                _ = _memoryCache.Set(CACHE_PREFIX + key, result, CACHE_DURATION);
+            }
+        }
+
+        public string GenerateETagFromContent<T>(T content)
+        {
+            if (content == null)
+            {
+                return $"\"{Guid.NewGuid():N}\""; // Fallback to random ETag if content is null
+            }
+
+            try
+            {
+                // Serialize the content using the existing JSON options
+                string json = JsonSerializer.Serialize(content, _jsonOptions);
+
+                // Compute hash of the serialized content
+                using var sha256 = System.Security.Cryptography.SHA256.Create();
+                byte[] contentBytes = System.Text.Encoding.UTF8.GetBytes(json);
+                byte[] hashBytes = sha256.ComputeHash(contentBytes);
+
+                // Convert hash to hexadecimal string and format as ETag
+                // ETags should be enclosed in quotes as per HTTP spec
+                string hashString = Convert.ToHexString(hashBytes).ToLowerInvariant();
+                return $"\"{hashString}\"";
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to generate content-based ETag: {ErrorMessage}", ex.Message);
+                // Fallback to random ETag on error
+                return $"\"{Guid.NewGuid():N}\"";
+            }
         }
 
         public async Task<bool> HasKeyAsync(string key)
         {
             if (string.IsNullOrWhiteSpace(key))
+            {
                 throw new ArgumentNullException(nameof(key));
+            }
 
             string cacheKey = CACHE_PREFIX + "exists:" + key;
             if (_memoryCache.TryGetValue(cacheKey, out bool exists))
+            {
                 return exists;
+            }
 
             var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
             var record = await _repository.GetOneAsync(filter);
             exists = record != null;
-            _memoryCache.Set(cacheKey, exists, CACHE_DURATION);
+            _ = _memoryCache.Set(cacheKey, exists, CACHE_DURATION);
             return exists;
         }
 
         public async Task<T> ExecuteIdempotentOperationAsync<T>(string key, Func<Task<T>> operation, TimeSpan? expiration = null)
         {
             if (string.IsNullOrWhiteSpace(key))
+            {
                 throw new ArgumentNullException(nameof(key));
+            }
 
             using var activity = new Activity("IdempotentOperation").SetTag("key", key).Start();
             var (found, cached) = await GetResultAsync<T>(key);
             if (found)
             {
-                activity.SetTag("cached", true);
+                _ = activity.SetTag("cached", true);
                 return cached;
             }
 
-            activity.SetTag("cached", false);
+            _ = activity.SetTag("cached", false);
             try
             {
                 var result = await operation();
                 await StoreResultAsync(key, result, expiration);
                 return result;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 Logger.LogError("Operation failed for idempotency key {Key}", key);
-                activity.SetTag("error", true);
+                _ = activity.SetTag("error", true);
                 throw;
             }
         }
@@ -163,13 +209,18 @@ namespace Infrastructure.Services
         public async Task<bool> RemoveKeyAsync(string key)
         {
             if (string.IsNullOrWhiteSpace(key))
+            {
                 throw new ArgumentNullException(nameof(key));
+            }
 
             var filter = Builders<IdempotencyData>.Filter.Eq(d => d.Key, key);
             var existing = await _repository.GetOneAsync(filter);
-            if (existing == null) return false;
+            if (existing == null)
+            {
+                return false;
+            }
 
-            await _repository.DeleteAsync(existing.Id);
+            _ = await _repository.DeleteAsync(existing.Id);
             _memoryCache.Remove(CACHE_PREFIX + key);
             _memoryCache.Remove(CACHE_PREFIX + "exists:" + key);
             return true;
@@ -181,7 +232,10 @@ namespace Infrastructure.Services
             var filter = Builders<IdempotencyData>.Filter.Lt(d => d.ExpiresAt, now);
             var deleted = await DeleteManyAsync(filter);
             if (deleted == null || !deleted.IsSuccess)
+            {
                 return ResultWrapper<long>.Failure(deleted.Reason, deleted.ErrorMessage);
+            }
+
             Logger.LogInformation("Purged {Count} expired idempotency records", deleted);
             return ResultWrapper<long>.Success(deleted.Data.ModifiedCount);
         }

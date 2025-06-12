@@ -15,14 +15,14 @@ public static class AppSettingsExtensions
         BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
 
         // Configure settings sections
-        services.Configure<MongoDbSettings>(configuration.GetSection("MongoDB"));
-        services.Configure<ExchangeServiceSettings>(configuration.GetSection("ExchangeService"));
-        services.Configure<BinanceSettings>(configuration.GetSection("Binance"));
-        services.Configure<PaymentServiceSettings>(configuration.GetSection("PaymentService"));
-        services.Configure<StripeSettings>(configuration.GetSection("Stripe"));
-        services.Configure<JwtSettings>(configuration.GetSection("Jwt"));
-        services.Configure<EncryptionSettings>(configuration.GetSection("Encryption"));
-        services.Configure<OnfidoSettings>(configuration.GetSection("Onfido"));
+        _ = services.Configure<MongoDbSettings>(configuration.GetSection("MongoDB"));
+        _ = services.Configure<EmailSettings>(configuration.GetSection("EmailSettings"));
+        _ = services.Configure<ExchangeServiceSettings>(configuration.GetSection("ExchangeService"));
+        _ = services.Configure<BinanceSettings>(configuration.GetSection("Binance"));
+        _ = services.Configure<PaymentServiceSettings>(configuration.GetSection("PaymentService"));
+        _ = services.Configure<StripeSettings>(configuration.GetSection("Stripe"));
+        _ = services.Configure<JwtSettings>(configuration.GetSection("Jwt"));
+        _ = services.Configure<EncryptionSettings>(configuration.GetSection("Encryption"));
 
         return services;
     }

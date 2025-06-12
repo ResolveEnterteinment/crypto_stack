@@ -42,7 +42,7 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         /// <summary>
-        /// Retrieves all subscriptions for a specific user
+        /// Retrieves all assets supported assets on the platform
         /// </summary>
         /// <param name="user">User GUID</param>
         /// <returns>Collection of subscriptions belonging to the user</returns>
@@ -53,7 +53,6 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="404">If the user is not found</response>
         [HttpGet]
         [Route("supported")]
-        //[IgnoreAntiforgeryToken]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -65,13 +64,12 @@ namespace crypto_investment_project.Server.Controllers
             using (_logger.BeginScope(new Dictionary<string, object>
             {
                 ["Operation"] = "GetSupportedAssets",
-                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
             }))
             {
                 try
                 {
                     // ETag support for caching
-                    var etagKey = $"supported_assets";
+                    var etagKey = $"user_assets";
                     var etag = Request.Headers.IfNoneMatch.FirstOrDefault();
                     var (hasEtag, storedEtag) = await _idempotencyService.GetResultAsync<string>(etagKey);
 
@@ -120,7 +118,6 @@ namespace crypto_investment_project.Server.Controllers
         [HttpPost]
         [Route("new")]
         [Authorize(Roles = "ADMIN")]
-        //[ValidateAntiForgeryToken]
         [EnableRateLimiting("heavyOperations")]
         [ProducesResponseType(StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]

@@ -1,0 +1,98 @@
+@startuml "Withdrawal Process Sequence"
+
+actor User
+participant "Client App" as Client
+participant "API Gateway" as API
+participant "KycMiddleware" as KycMiddle
+participant "WithdrawalController" as WithdrawCtrl
+participant "WithdrawalService" as WithdrawSvc
+participant "KycService" as KycSvc
+participant "BalanceService" as BalanceSvc
+participant "TransactionService" as TransactionSvc
+participant "Database" as DB
+
+== Withdrawal Limits Check ==
+
+User -> Client : Request withdrawal limits
+Client -> API : GET /api/withdrawal/limits
+API -> WithdrawCtrl : GetWithdrawalLimits()
+activate WithdrawCtrl
+WithdrawCtrl -> WithdrawSvc : GetUserWithdrawalLimitsAsync(userId)
+activate WithdrawSvc
+WithdrawSvc -> KycSvc : GetUserKycStatusAsync(userId)
+KycSvc --> WithdrawSvc : User KYC status
+WithdrawSvc -> WithdrawSvc : Calculate limits based on KYC level
+WithdrawSvc -> WithdrawSvc : Calculate daily/monthly used amounts
+WithdrawSvc --> WithdrawCtrl : WithdrawalLimitDto
+deactivate WithdrawSvc
+WithdrawCtrl --> API : Withdrawal limits
+deactivate WithdrawCtrl
+API --> Client : Display limits to user
+Client --> User : Show withdrawal limits
+
+== Withdrawal Request ==
+
+User -> Client : Submit withdrawal request
+Client -> API : POST /api/withdrawal/request
+API -> KycMiddle : Check KYC requirements
+activate KycMiddle
+KycMiddle -> KycSvc : IsUserVerifiedAsync(userId, "STANDARD")
+KycSvc --> KycMiddle : Verification status
+KycMiddle -> WithdrawSvc : CanUserWithdrawAsync(userId, amount)
+WithdrawSvc --> KycMiddle : Withdrawal allowed/denied
+
+alt KYC Sufficient
+  KycMiddle -> WithdrawCtrl : Forward request
+  deactivate KycMiddle
+  activate WithdrawCtrl
+  WithdrawCtrl -> WithdrawSvc : RequestWithdrawalAsync(request)
+  activate WithdrawSvc
+  WithdrawSvc -> BalanceSvc : CheckSufficientBalance(userId, amount)
+  BalanceSvc --> WithdrawSvc : Balance sufficient
+  WithdrawSvc -> WithdrawSvc : ValidateWithdrawalAddress(method, address)
+  WithdrawSvc -> DB : Create withdrawal record (PENDING)
+  WithdrawSvc -> TransactionSvc : Record pending transaction
+  WithdrawSvc --> WithdrawCtrl : Withdrawal created
+  deactivate WithdrawSvc
+  WithdrawCtrl --> API : Success response
+  deactivate WithdrawCtrl
+  API --> Client : Withdrawal submitted
+else KYC Insufficient or Limits Exceeded
+  KycMiddle --> API : 403 Forbidden (KYC_REQUIRED or WITHDRAWAL_LIMIT_EXCEEDED)
+  deactivate KycMiddle
+  API --> Client : Error message
+end
+
+== Admin Approval ==
+
+actor Admin
+Admin -> Client : Review pending withdrawals
+Client -> API : GET /api/withdrawal/pending
+API -> WithdrawCtrl : GetPendingWithdrawals()
+activate WithdrawCtrl
+WithdrawCtrl -> WithdrawSvc : GetPendingWithdrawalsAsync()
+activate WithdrawSvc
+WithdrawSvc --> WithdrawCtrl : List of pending withdrawals
+deactivate WithdrawSvc
+WithdrawCtrl --> API : Pending withdrawals
+deactivate WithdrawCtrl
+API --> Client : Display pending withdrawals
+Admin -> Client : Approve withdrawal
+Client -> API : PUT /api/withdrawal/{id}/update-status
+API -> WithdrawCtrl : UpdateWithdrawalStatus(id, APPROVED)
+activate WithdrawCtrl
+WithdrawCtrl -> WithdrawSvc : UpdateWithdrawalStatusAsync(id, "APPROVED")
+activate WithdrawSvc
+WithdrawSvc -> WithdrawSvc : HandleWithdrawalApproved(withdrawal)
+WithdrawSvc -> BalanceSvc : DeductBalance(userId, amount)
+WithdrawSvc -> TransactionSvc : Record completed transaction
+WithdrawSvc -> DB : Update withdrawal status
+WithdrawSvc --> WithdrawCtrl : Success result
+deactivate WithdrawSvc
+WithdrawCtrl --> API : Success response
+deactivate WithdrawCtrl
+API --> Client : Withdrawal approved
+Client -> Admin : Show success message
+Client -> User : Notify of approved withdrawal
+
+@enduml

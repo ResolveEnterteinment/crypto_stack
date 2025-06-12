@@ -12,19 +12,18 @@ namespace Infrastructure.Services.Base
 {
     public class Repository<T> : ICrudRepository<T> where T : BaseEntity
     {
-        private readonly IMongoClient _client;
         private readonly IMongoDatabase _database;
         protected readonly IMongoCollection<T> Collection;
 
-        public IMongoClient Client => _client;
+        public IMongoClient Client { get; }
 
         public Repository(IMongoClient client, IOptions<MongoDbSettings> mongoSettings)
         {
-            _client = client ?? throw new ArgumentNullException(nameof(client));
+            Client = client ?? throw new ArgumentNullException(nameof(client));
             var settings = mongoSettings?.Value
                 ?? throw new ArgumentNullException(nameof(mongoSettings));
 
-            _database = _client.GetDatabase(settings.DatabaseName);
+            _database = Client.GetDatabase(settings.DatabaseName);
 
             var bsonColl = typeof(T).GetCustomAttribute<BsonCollectionAttribute>();
 
@@ -41,12 +40,16 @@ namespace Infrastructure.Services.Base
         }
 
         public Task<T?> GetOneAsync(FilterDefinition<T> filter, CancellationToken ct = default)
-            => Collection.Find(filter).FirstOrDefaultAsync(ct);
+        {
+            return Collection.Find(filter).FirstOrDefaultAsync(ct);
+        }
 
         public Task<T?> GetOneAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken ct = default)
-            => Collection.Find(filter)
-            .Sort(sort)
-            .FirstOrDefaultAsync(ct);
+        {
+            return Collection.Find(filter)
+                    .Sort(sort)
+                    .FirstOrDefaultAsync(ct);
+        }
 
         public Task<List<T>> GetAllAsync(FilterDefinition<T>? filter = null, CancellationToken cancellationToken = default)
         {
@@ -60,6 +63,7 @@ namespace Infrastructure.Services.Base
                 .ToListAsync(cancellationToken);
         }
 
+        [Obsolete]
         public async Task<CrudResult> InsertAsync(T entity, CancellationToken cancellationToken = default)
         {
             try
@@ -67,19 +71,16 @@ namespace Infrastructure.Services.Base
                 await Collection.InsertOneAsync(entity, cancellationToken);
 
                 var insertedId = entity.Id;
-                if (insertedId == Guid.Empty)
-                {
-                    throw new DatabaseException($"Inserted entity of type {typeof(T).Name} has no valid Id");
-                }
-
-                return new CrudResult<T>
-                {
-                    IsSuccess = true,
-                    MatchedCount = 0,
-                    ModifiedCount = 1,
-                    AffectedIds = new[] { insertedId },
-                    Documents = new[] { entity }
-                };
+                return insertedId == Guid.Empty
+                    ? throw new DatabaseException($"Inserted entity of type {typeof(T).Name} has no valid Id")
+                    : (CrudResult)new CrudResult<T>
+                    {
+                        IsSuccess = true,
+                        MatchedCount = 0,
+                        ModifiedCount = 1,
+                        AffectedIds = new[] { insertedId },
+                        Documents = new[] { entity }
+                    };
             }
             catch (Exception ex)
             {
@@ -217,7 +218,17 @@ namespace Infrastructure.Services.Base
             {
                 foreach (var kv in dict)
                 {
-                    updateDefs.Add(updates.Set(kv.Key, kv.Value));
+                    // Convert JObject to BsonDocument before sending to MongoDB
+                    if (kv.Value is Newtonsoft.Json.Linq.JObject jObject)
+                    {
+                        // Convert JObject to a Dictionary or BsonDocument
+                        var bsonDoc = MongoDB.Bson.BsonDocument.Parse(jObject.ToString());
+                        updateDefs.Add(updates.Set(kv.Key, bsonDoc));
+                    }
+                    else
+                    {
+                        updateDefs.Add(updates.Set(kv.Key, kv.Value));
+                    }
                 }
             }
             else
@@ -227,17 +238,23 @@ namespace Infrastructure.Services.Base
                     var value = prop.GetValue(updatedFields);
                     if (value is not null)
                     {
-                        updateDefs.Add(updates.Set(prop.Name, value));
+                        // Convert JObject to BsonDocument before sending to MongoDB
+                        if (value is Newtonsoft.Json.Linq.JObject jObject)
+                        {
+                            var bsonDoc = MongoDB.Bson.BsonDocument.Parse(jObject.ToString());
+                            updateDefs.Add(updates.Set(prop.Name, bsonDoc));
+                        }
+                        else
+                        {
+                            updateDefs.Add(updates.Set(prop.Name, value));
+                        }
                     }
                 }
             }
 
-            if (!updateDefs.Any())
-            {
-                throw new ArgumentException("No valid fields provided", nameof(updatedFields));
-            }
-
-            return updates.Combine(updateDefs);
+            return !updateDefs.Any()
+                ? throw new ArgumentException("No valid fields provided", nameof(updatedFields))
+                : updates.Combine(updateDefs);
         }
     }
 }

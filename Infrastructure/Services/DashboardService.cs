@@ -5,7 +5,7 @@ using Application.Interfaces.Exchange;
 using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
-using Domain.Constants;
+using Domain.Constants.Asset;
 using Domain.DTOs;
 using Domain.DTOs.Dashboard;
 using Domain.DTOs.Payment;
@@ -68,8 +68,9 @@ namespace Infrastructure.Services
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
         }
 
-        public Task<ResultWrapper<DashboardDto>> GetDashboardDataAsync(Guid userId)
+        public async Task<ResultWrapper<DashboardDto>> GetDashboardDataAsync(Guid userId)
         {
+            /*
             string key = string.Format(CACHE_KEY, userId);
             return FetchCached(
                 key,
@@ -80,8 +81,16 @@ namespace Infrastructure.Services
                     await Task.WhenAll(inv, holdings);
                     var invRes = await inv;
                     var holdRes = await holdings;
-                    if (!invRes.IsSuccess) throw new Exception(invRes.ErrorMessage);
-                    if (!holdRes.IsSuccess) throw new Exception(holdRes.ErrorMessage);
+                    if (!invRes.IsSuccess)
+                    {
+                        throw new Exception(invRes.ErrorMessage);
+                    }
+
+                    if (!holdRes.IsSuccess)
+                    {
+                        throw new Exception(holdRes.ErrorMessage);
+                    }
+
                     decimal total = invRes.Data;
                     var assets = holdRes.Data;
                     decimal portfolio = assets.Sum(a => a.Value);
@@ -92,40 +101,85 @@ namespace Infrastructure.Services
                 },
                 CACHE_DURATION,
                 () => new KeyNotFoundException($"User {userId} Dashboard data not found")
-            );
+             );
+            */
+            try
+            {
+                var inv = FetchTotalInvestmentsAsync(userId);
+                var holdings = FetchAssetHoldingsAsync(userId, AssetType.Exchange);
+                await Task.WhenAll(inv, holdings);
+                var invRes = await inv;
+                var holdRes = await holdings;
+                if (!invRes.IsSuccess)
+                {
+                    throw new Exception(invRes.ErrorMessage);
+                }
+
+                if (!holdRes.IsSuccess)
+                {
+                    throw new Exception(holdRes.ErrorMessage);
+                }
+
+                decimal total = invRes.Data;
+                var assets = holdRes.Data;
+                decimal portfolio = assets.Sum(a => a.Value);
+
+                // Persist update
+                _ = UpdateDashboardData(userId, total, assets, portfolio);
+
+                return ResultWrapper<DashboardDto>.Success(new DashboardDto {
+                    TotalInvestments = total, 
+                    AssetHoldings = assets, 
+                    PortfolioValue = portfolio 
+                });
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<DashboardDto>.FromException(ex);
+            }
         }
 
-        private async Task<ResultWrapper<IEnumerable<AssetHoldingsDto>>> FetchAssetHoldingsAsync(Guid userId, string filterType)
+        private async Task<ResultWrapper<IEnumerable<AssetHoldingDto>>> FetchAssetHoldingsAsync(Guid userId, string filterType)
         {
             try
             {
-                if (userId == Guid.Empty) throw new ArgumentException("Invalid userId");
+                if (userId == Guid.Empty)
+                {
+                    throw new ArgumentException("Invalid userId");
+                }
+
                 var balancesResult = await _balanceService.FetchBalancesWithAssetsAsync(userId);
                 if (balancesResult == null || !balancesResult.IsSuccess)
-                    throw new BalanceFetchException($"Failed to fetch user {userId} balances.");
-                var balances = balancesResult.Data;
-                var list = new List<AssetHoldingsDto>();
-                foreach (var b in balances)
                 {
-                    var asset = b.AssetDocs;
-                    if (asset.Type != filterType) continue;
+                    throw new BalanceFetchException($"Failed to fetch user {userId} balances.");
+                }
+
+                var balances = balancesResult.Data;
+                var list = new List<AssetHoldingDto>();
+                foreach (var balance in balances)
+                {
+                    var asset = balance.Asset!;
+                    if (asset.Type != filterType)
+                    {
+                        continue;
+                    }
                     var rate = await _exchangeService.Exchanges[asset.Exchange].GetAssetPrice(asset.Ticker);
-                    decimal val = rate.IsSuccess ? b.Total * rate.Data : 0;
-                    list.Add(new AssetHoldingsDto
+                    decimal val = balance.Total * rate?.Data ?? 1m;
+                    list.Add(new AssetHoldingDto
                     {
                         Id = asset.Id.ToString(),
                         Name = asset.Name,
                         Symbol = asset.Symbol,
                         Ticker = asset.Ticker,
-                        Total = b.Total,
+                        Total = balance.Total,
                         Value = val
                     });
                 }
-                return ResultWrapper<IEnumerable<AssetHoldingsDto>>.Success(list);
+                return ResultWrapper<IEnumerable<AssetHoldingDto>>.Success(list);
             }
             catch (Exception ex)
             {
-                return ResultWrapper<IEnumerable<AssetHoldingsDto>>.FromException(ex);
+                return ResultWrapper<IEnumerable<AssetHoldingDto>>.FromException(ex);
             }
         }
 
@@ -134,7 +188,11 @@ namespace Infrastructure.Services
             try
             {
                 var subs = await _subscriptionService.GetAllByUserIdAsync(userId);
-                if (!subs.IsSuccess) throw new SubscriptionFetchException(subs.ErrorMessage);
+                if (!subs.IsSuccess)
+                {
+                    throw new SubscriptionFetchException(subs.ErrorMessage);
+                }
+
                 decimal total = subs.Data.Sum(s => s.TotalInvestments);
                 return ResultWrapper<decimal>.Success(total);
             }
@@ -144,7 +202,7 @@ namespace Infrastructure.Services
             }
         }
 
-        public async Task<ResultWrapper> UpdateDashboardData(Guid userId, decimal total, IEnumerable<AssetHoldingsDto> assets, decimal portfolio)
+        public async Task<ResultWrapper> UpdateDashboardData(Guid userId, decimal total, IEnumerable<AssetHoldingDto> assets, decimal portfolio)
         {
             try
             {
@@ -153,13 +211,14 @@ namespace Infrastructure.Services
                 var existingWr = await GetOneAsync(filter);
                 var fields = new { TotalInvestments = total, AssetHoldings = assets, PortfolioValue = portfolio, LastUpdated = DateTime.UtcNow };
                 if (existingWr.Data != null)
-                    await UpdateAsync(existingWr.Data.Id, fields);
+                {
+                    _ = await UpdateAsync(existingWr.Data.Id, fields);
+                }
                 else
                 {
                     var newData = new DashboardData { UserId = userId, TotalInvestments = total, AssetHoldings = assets, PortfolioValue = portfolio, LastUpdated = DateTime.UtcNow };
-                    await InsertAsync(newData);
+                    _ = await InsertAsync(newData);
                 }
-                CacheService.Invalidate(string.Format(CACHE_KEY, userId));
                 return ResultWrapper.Success();
             }
             catch (Exception ex)
@@ -169,15 +228,24 @@ namespace Infrastructure.Services
         }
 
         public Task Handle(PaymentReceivedEvent notification, CancellationToken ct)
-            => InvalidateCacheAndPush(notification.Payment.UserId);
+        {
+            return InvalidateCacheAndPush(notification.Payment.UserId);
+        }
+
+        public Task Handle(WithdrawalApprovedEvent notification, CancellationToken ct)
+        {
+            return InvalidateCacheAndPush(notification.Withdrawal.UserId);
+        }
 
         public Task Handle(EntityCreatedEvent<SubscriptionData> notification, CancellationToken ct)
-            => InvalidateCacheAndPush(notification.Entity.UserId);
+        {
+            return InvalidateCacheAndPush(notification.Entity.UserId);
+        }
 
-        public async Task InvalidateDashboardCacheAsync(Guid userId)
+        public void InvalidateDashboardCacheAsync(Guid userId)
         {
             string key = string.Format(CACHE_KEY, userId);
-            CacheService.Invalidate(key);
+            //CacheService.Invalidate(key);
         }
 
         public async Task<ResultWrapper<SubscriptionPaymentStatusDto>> GetSubscriptionPaymentStatusAsync(Guid subscriptionId)
@@ -225,10 +293,13 @@ namespace Infrastructure.Services
         private async Task InvalidateCacheAndPush(Guid userId)
         {
             string key = string.Format(CACHE_KEY, userId);
-            CacheService.Invalidate(key);
+            //CacheService.Invalidate(key);
+
             var dashWr = await GetDashboardDataAsync(userId);
             if (dashWr.IsSuccess)
+            {
                 await _hubContext.Clients.Group(userId.ToString()).SendAsync("DashboardUpdate", dashWr.Data);
+            }
         }
     }
 }

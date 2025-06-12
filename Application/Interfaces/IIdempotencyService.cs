@@ -24,6 +24,13 @@ namespace Application.Interfaces
         Task StoreResultAsync<T>(string idempotencyKey, T result, TimeSpan? expiration = null);
 
         /// <summary>
+        /// Generates an ETag key from a given content.
+        /// </summary>
+        /// <typeparam name="T">The type of the result.</typeparam>
+        /// <param name="content">The data object used to hash.</param>
+        string GenerateETagFromContent<T>(T content);
+
+        /// <summary>
         /// Checks if an operation with the given idempotency key has been executed.
         /// </summary>
         /// <param name="idempotencyKey">The unique key identifying the operation.</param>
@@ -40,8 +47,8 @@ namespace Application.Interfaces
         /// <returns>The result of the operation.</returns>
         Task<T> ExecuteIdempotentOperationAsync<T>(string idempotencyKey, Func<Task<T>> operation, TimeSpan? expiration = null);
 
-        public Task<bool> RemoveKeyAsync(string key);
+        Task<bool> RemoveKeyAsync(string key);
 
-        public Task<ResultWrapper<long>> PurgeExpiredRecordsAsync();
+        Task<ResultWrapper<long>> PurgeExpiredRecordsAsync();
     }
 }
