@@ -8,6 +8,9 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
+Console.WriteLine("🚀 Starting StackFi Server...");
+Console.WriteLine($"🌍 Environment: {builder.Environment.EnvironmentName}");
+
 // Apply configuration through extension methods
 builder.Services
     .AddAppSettings(builder.Configuration)
@@ -25,8 +28,12 @@ builder.Services
 
 builder.Host.UseSerilog();
 
+Console.WriteLine("✅ Services configured successfully");
+
 // Build the application
 var app = builder.Build();
+
+Console.WriteLine("🔧 Configuring middleware pipeline...");
 
 // Initialize default roles
 app.InitializeDefaultRoles();
@@ -61,14 +68,20 @@ app.UseRateLimiter();
 
 // Add CORS
 app.UseCors("AllowSpecifiedOrigins");
+Console.WriteLine("✅ CORS configured");
 
 // Configure antiforgery
 app.UseCustomAntiforgery();
+Console.WriteLine("✅ CSRF protection configured");
 
 // Authentication and authorization
 app.UseAuthentication();
 app.UseAuthorization();
+Console.WriteLine("✅ Authentication configured");
+
 app.UseHttpsRedirection();
+
+Console.WriteLine("✅ Middleware pipeline configured");
 
 // Configure health checks endpoints
 app.MapHealthChecks("/health", new HealthCheckOptions
@@ -96,6 +109,7 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
 
 // Map SignalR hub
 app.MapHub<NotificationHub>("/hubs/notificationHub");
+Console.WriteLine("✅ SignalR hub configured");
 
 // Map diagnostic endpoint
 app.MapGet("/api/diagnostic/connection", (HttpContext context) => Results.Ok(new
@@ -109,6 +123,11 @@ app.MapGet("/api/diagnostic/connection", (HttpContext context) => Results.Ok(new
 // Map controllers and fallback
 app.MapControllers();
 app.MapFallbackToFile("/index.html");
+
+Console.WriteLine("✅ Middleware pipeline configured successfully");
+Console.WriteLine($"🌐 Server ready!");
+Console.WriteLine($"📍 Test CSRF: https://localhost:7144/api/v1/csrf/test");
+Console.WriteLine($"🔄 CSRF Refresh: https://localhost:7144/api/v1/csrf/refresh");
 
 // Start the application
 app.Run();

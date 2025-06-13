@@ -109,7 +109,9 @@ namespace crypto_investment_project.Server.Controllers
 
         /// <summary>
         /// Gets the current client's encryption key (for server-side operations)
+        /// This is NOT an API endpoint - it's a helper method for middleware
         /// </summary>
+        [NonAction]
         public string? GetClientEncryptionKey(HttpContext context)
         {
             try

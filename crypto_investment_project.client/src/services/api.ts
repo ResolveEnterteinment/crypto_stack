@@ -18,7 +18,7 @@ const API_CONFIG = {
     CSRF_STORAGE_KEY: "csrf-token",
     CSRF_REFRESH_INTERVAL: 30 * 60 * 1000, // 30 minutes
     ENCRYPTION: {
-        ENABLED: true,
+        ENABLED: false,
         KEY_EXCHANGE_URL: '/v1/keyexchange/initialize',
         EXCLUDED_PATHS: [
             '/v1/auth/login',
