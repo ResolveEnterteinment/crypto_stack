@@ -1,6 +1,7 @@
 ﻿using Application.Contracts.Requests.Auth;
 using Application.Contracts.Responses;
 using Application.Contracts.Responses.Auth;
+using Application.Interfaces;
 using Domain.DTOs.Error;
 using Domain.Models.Authentication;
 using Microsoft.AspNetCore.Authentication;
@@ -21,16 +22,22 @@ namespace crypto_investment_project.Server.Controllers.Auth
     {
         private readonly Application.Interfaces.IAuthenticationService _authenticationService;
         private readonly RoleManager<ApplicationRole> _roleManager;
+        private readonly UserManager<ApplicationUser> _userManager;
+        private readonly IUserService _userService;
         private readonly ILogger<AuthenticationController> _logger;
         private readonly HtmlEncoder _htmlEncoder;
 
         public AuthenticationController(
             RoleManager<ApplicationRole> roleManager,
-            Application.Interfaces.IAuthenticationService authenticationService,
+            UserManager<ApplicationUser> userManager,
+            IUserService userService,
+        Application.Interfaces.IAuthenticationService authenticationService,
             ILogger<AuthenticationController> logger,
             HtmlEncoder htmlEncoder)
         {
             _roleManager = roleManager ?? throw new ArgumentNullException(nameof(roleManager));
+            _userManager = userManager ?? throw new ArgumentException(nameof(userManager));
+            _userService = userService ?? throw new ArgumentException(nameof(userService));
             _authenticationService = authenticationService ?? throw new ArgumentNullException(nameof(authenticationService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _htmlEncoder = htmlEncoder ?? throw new ArgumentNullException(nameof(htmlEncoder));
@@ -258,6 +265,72 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 {
                     Message = "An error occurred during login",
                     Code = "LOGIN_ERROR",
+                    TraceId = HttpContext.TraceIdentifier
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get current authenticated user information
+        /// </summary>
+        /// <returns>Current user data</returns>
+        /// <response code="200">Returns the user information</response>
+        /// <response code="401">If the user is not authenticated</response>
+        [HttpGet]
+        [Route("user")]
+        [Authorize]
+        [ProducesResponseType(typeof(UserDataResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<IActionResult> GetCurrentUser()
+        {
+            try
+            {
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(new ErrorResponse
+                    {
+                        Message = "User identity not found",
+                        Code = "IDENTITY_NOT_FOUND",
+                        TraceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                var user = await _userManager.FindByIdAsync(userId);
+                if (user == null)
+                {
+                    return Unauthorized(new ErrorResponse
+                    {
+                        Message = "User not found",
+                        Code = "USER_NOT_FOUND",
+                        TraceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                var roles = await _userManager.GetRolesAsync(user);
+
+                // Get user data
+                var userData = await _userService.GetAsync(user.Id);
+
+                return Ok(new UserDataResponse
+                {
+                    Success = true,
+                    UserId = user.Id.ToString(),
+                    Email = user.Email,
+                    Username = user.Fullname,
+                    EmailConfirmed = user.EmailConfirmed,
+                    Roles = roles.ToArray(),
+                    IsFirstLogin = !user.HasCompletedOnboarding
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving current user");
+
+                return StatusCode(500, new ErrorResponse
+                {
+                    Message = "An error occurred while retrieving user information",
+                    Code = "USER_RETRIEVAL_ERROR",
                     TraceId = HttpContext.TraceIdentifier
                 });
             }

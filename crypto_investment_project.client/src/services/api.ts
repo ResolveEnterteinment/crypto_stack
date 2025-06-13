@@ -1,21 +1,34 @@
-// src/services/api.ts
+﻿// src/services/api.ts
 import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from "axios";
 import ITraceLogNode from "../interfaces/TraceLog/ITraceLogNode";
+import encryptionService from './encryptionService';
 
 // API configuration
 const API_CONFIG = {
     BASE_URL: import.meta.env.VITE_API_BASE_URL || "https://localhost:7144/api",
-    TIMEOUT: 30000, // 30 seconds
+    TIMEOUT: 30000,
     RETRY_DELAY: 1000,
     MAX_RETRIES: 3,
-    RETRY_STATUS_CODES: [408, 429, 500, 502, 503, 504], // Status codes to retry
+    RETRY_STATUS_CODES: [408, 429, 500, 502, 503, 504],
     AUTH_HEADER: "Authorization",
     AUTH_SCHEME: "Bearer",
-    CSRF_REFRESH_URL: "/v1/Csrf/refresh", // Endpoint to refresh CSRF token
-    CSRF_HEADER: "X-CSRF-TOKEN", // Header name for CSRF token
-    CSRF_META_NAME: "csrf-token", // Meta tag name for storing CSRF token
-    CSRF_STORAGE_KEY: "csrf-token", // Storage key for CSRF token
+    CSRF_REFRESH_URL: "/v1/Csrf/refresh",
+    CSRF_HEADER: "X-CSRF-TOKEN",
+    CSRF_META_NAME: "csrf-token",
+    CSRF_STORAGE_KEY: "csrf-token",
     CSRF_REFRESH_INTERVAL: 30 * 60 * 1000, // 30 minutes
+    ENCRYPTION: {
+        ENABLED: true,
+        KEY_EXCHANGE_URL: '/v1/keyexchange/initialize',
+        EXCLUDED_PATHS: [
+            '/v1/auth/login',
+            '/v1/auth/register',
+            '/v1/auth/refresh-token',
+            '/v1/keyexchange',
+            '/health',
+            '/swagger'
+        ]
+    }
 };
 
 // Create Axios instance
@@ -26,27 +39,19 @@ const apiClient: AxiosInstance = axios.create({
         "Content-Type": "application/json",
         "Accept": "application/json",
     },
-    withCredentials: true, // Important for CSRF tokens and cookies
+    withCredentials: true,
 });
 
 // CSRF Token Management
 const csrfTokenManager = {
-    // Get CSRF token from storage or meta tag
     getToken: (): string | null => {
-        // First try meta tag
         const metaToken = document.querySelector(`meta[name="${API_CONFIG.CSRF_META_NAME}"]`)?.getAttribute('content');
-        if (metaToken) {
-            return metaToken;
-        }
-
-        // Fallback to sessionStorage
+        if (metaToken) return metaToken;
         return sessionStorage.getItem(API_CONFIG.CSRF_STORAGE_KEY);
     },
 
-    // Store CSRF token in both meta tag and sessionStorage
     storeToken: (token: string): void => {
-        // Update or create meta tag
-        let metaTag = document.querySelector(`meta[name="${API_CONFIG.CSRF_META_NAME}"]`);
+        let metaTag = document.querySelector(`meta[name="${API_CONFIG.CSRF_META_NAME}"]`) as HTMLMetaElement;
         if (metaTag) {
             metaTag.setAttribute('content', token);
         } else {
@@ -55,73 +60,144 @@ const csrfTokenManager = {
             metaTag.setAttribute('content', token);
             document.head.appendChild(metaTag);
         }
-
-        // Also store in sessionStorage as backup
         sessionStorage.setItem(API_CONFIG.CSRF_STORAGE_KEY, token);
-
-        console.debug('CSRF token stored successfully');
+        console.debug('✅ CSRF token stored successfully');
     },
 
-    // Refresh CSRF token from server
     refreshToken: async (): Promise<string | null> => {
         try {
-            console.debug('Refreshing CSRF token...');
-
-            // Use axios directly to avoid circular dependencies with interceptors
+            console.debug('🔄 Refreshing CSRF token...');
             const response = await axios.get(`${API_CONFIG.BASE_URL}${API_CONFIG.CSRF_REFRESH_URL}`, {
                 withCredentials: true,
-                headers: {
-                    'X-Skip-Csrf-Check': 'true' // Skip CSRF check to avoid infinite loop
-                }
+                headers: { 'X-Skip-Csrf-Check': 'true' }
             });
 
             const token = response.data?.token;
             if (token) {
                 csrfTokenManager.storeToken(token);
-                console.debug('CSRF token refreshed successfully');
+                console.debug('✅ CSRF token refreshed successfully');
                 return token;
             }
 
-            console.warn('CSRF token refresh response missing token data');
+            console.warn('⚠️ CSRF token refresh response missing token data');
             return null;
         } catch (error) {
-            console.error("Failed to refresh CSRF token:", error);
+            console.error("❌ Failed to refresh CSRF token:", error);
             return null;
         }
     },
 
-    // Initialize CSRF token
     initialize: async (): Promise<void> => {
-        // Only refresh if we don't have a token already
         if (!csrfTokenManager.getToken()) {
             await csrfTokenManager.refreshToken();
         }
 
-        // Set up automatic refresh interval
         setInterval(async () => {
             try {
                 await csrfTokenManager.refreshToken();
             } catch (error) {
-                console.warn('Scheduled CSRF token refresh failed:', error);
+                console.warn('⚠️ Scheduled CSRF token refresh failed:', error);
             }
         }, API_CONFIG.CSRF_REFRESH_INTERVAL);
     }
 };
 
-// Initialize CSRF token management on page load
+// Encryption management with improved error handling
+const encryptionManager = {
+    enabled: false,
+
+    initialize: async (encryptionKey?: string): Promise<boolean> => {
+        try {
+            if (encryptionManager.enabled) {
+                console.debug("✅ Encryption already initialized");
+                return true;
+            }
+
+            // Get encryption key from server if not provided
+            if (!encryptionKey) {
+                encryptionKey = await encryptionManager._fetchEncryptionKey();
+                if (!encryptionKey) {
+                    console.error("❌ Failed to obtain encryption key");
+                    return false;
+                }
+            }
+
+            // Initialize the encryption service
+            await encryptionService.initialize(encryptionKey);
+            encryptionManager.enabled = true;
+            console.info("🔐 Encryption initialized successfully");
+            return true;
+
+        } catch (error) {
+            console.error("❌ Failed to initialize encryption:", error);
+            encryptionManager.enabled = false;
+            return false;
+        }
+    },
+
+    _fetchEncryptionKey: async (): Promise<string | null> => {
+        const maxAttempts = 3;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                console.debug(`🔑 Requesting encryption key (attempt ${attempt}/${maxAttempts})...`);
+
+                const response = await axios.post(
+                    `${API_CONFIG.BASE_URL}${API_CONFIG.ENCRYPTION.KEY_EXCHANGE_URL}`,
+                    {},
+                    {
+                        withCredentials: true,
+                        headers: { 'X-Skip-Csrf-Check': 'true' }
+                    }
+                );
+
+                const key = response.data?.key;
+                if (key) {
+                    console.debug("✅ Encryption key received successfully");
+                    return key;
+                }
+
+                console.warn(`⚠️ No encryption key in response (attempt ${attempt})`);
+            } catch (error) {
+                console.error(`❌ Key exchange attempt ${attempt} failed:`, error);
+
+                if (attempt < maxAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+                }
+            }
+        }
+
+        return null;
+    },
+
+    shouldEncrypt: (url?: string): boolean => {
+        if (!encryptionManager.enabled || !url) return false;
+        return !API_CONFIG.ENCRYPTION.EXCLUDED_PATHS.some(
+            path => url.toLowerCase().includes(path.toLowerCase())
+        );
+    },
+
+    disable: (): void => {
+        encryptionManager.enabled = false;
+        encryptionService.reset();
+        console.info("🔓 Encryption disabled");
+    }
+};
+
+// Initialize CSRF token management
 csrfTokenManager.initialize().catch(error => {
-    console.warn('Failed to initialize CSRF protection:', error);
+    console.warn('⚠️ Failed to initialize CSRF protection:', error);
 });
 
-// Request interceptor for adding tokens, request IDs, etc.
+// Request interceptor
 apiClient.interceptors.request.use(
-    (config: InternalAxiosRequestConfig) => {
+    async (config: InternalAxiosRequestConfig) => {
         // Add request ID for tracing
         const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
         config.headers = config.headers || {};
         config.headers["X-Request-ID"] = requestId;
 
-        // Get auth token from storage
+        // Add auth token
         const token = localStorage.getItem("access_token");
         if (token) {
             config.headers[API_CONFIG.AUTH_HEADER] = `${API_CONFIG.AUTH_SCHEME} ${token}`;
@@ -133,27 +209,57 @@ apiClient.interceptors.request.use(
             if (csrfToken) {
                 config.headers[API_CONFIG.CSRF_HEADER] = csrfToken;
             } else {
-                console.warn(`No CSRF token available for ${config.method?.toUpperCase()} request to ${config.url}`);
+                console.warn(`⚠️ No CSRF token available for ${config.method?.toUpperCase()} request`);
             }
         }
 
-        // Add timestamp for performance tracking
+        // Add timing for performance tracking
         (config as any)._requestStartTime = Date.now();
+
+        // Add encryption for request data
+        if (encryptionManager.shouldEncrypt(config.url) && config.data) {
+            try {
+                const dataToEncrypt = typeof config.data === 'string' ? config.data : JSON.stringify(config.data);
+                const encryptedPayload = await encryptionService.encrypt(dataToEncrypt);
+                config.data = { payload: encryptedPayload };
+                console.debug(`🔐 Request encrypted for ${config.url}`);
+            } catch (error) {
+                console.error("❌ Failed to encrypt request data:", error);
+                // Continue with unencrypted data rather than failing
+            }
+        }
 
         return config;
     },
     (error: AxiosError) => {
-        console.error("Request error interceptor:", error);
+        console.error("❌ Request interceptor error:", error);
         return Promise.reject(error);
     }
 );
 
-// Response interceptor for error handling, retries, etc.
+// Response interceptor
 apiClient.interceptors.response.use(
-    (response: AxiosResponse) => {
-        // Log API response time for performance monitoring
+    async (response: AxiosResponse) => {
+        // Log response time
         const requestTime = Date.now() - ((response.config as any)._requestStartTime || 0);
-        console.debug(`API request to ${response.config.url} completed in ${requestTime}ms`);
+        if (requestTime > 1000) {
+            console.warn(`⚠️ Slow API request to ${response.config.url}: ${requestTime}ms`);
+        }
+
+        // Handle response decryption
+        if (encryptionManager.shouldEncrypt(response.config.url) && response.data?.payload) {
+            try {
+                console.debug(`🔓 Decrypting response from ${response.config.url}`);
+                const decryptedData = await encryptionService.decrypt(response.data.payload);
+                response.data = typeof decryptedData === 'string' && decryptedData.startsWith('{')
+                    ? JSON.parse(decryptedData)
+                    : decryptedData;
+                console.debug(`✅ Response decrypted successfully`);
+            } catch (error) {
+                console.error("❌ Failed to decrypt response:", error);
+                // Keep original response as fallback
+            }
+        }
 
         return response;
     },
@@ -164,57 +270,41 @@ apiClient.interceptors.response.use(
         };
 
         // Handle CSRF token errors
-        if (error.response?.status === 403 &&
-            (error.response?.data?.code === "INVALID_ANTIFORGERY_TOKEN" ||
-                error.response?.data?.message?.includes("antiforgery")) &&
-            !originalRequest._csrfRetry) {
+        if (error.response?.status === 403 && !originalRequest._csrfRetry) {
+            const errorData = error.response?.data as any;
+            if (errorData?.code === "INVALID_ANTIFORGERY_TOKEN" ||
+                errorData?.message?.includes("antiforgery")) {
 
-            console.log("CSRF token validation failed, attempting to refresh token...");
-            originalRequest._csrfRetry = true;
+                console.warn("🔄 CSRF token validation failed, refreshing...");
+                originalRequest._csrfRetry = true;
 
-            try {
-                // Refresh the CSRF token
-                const newToken = await csrfTokenManager.refreshToken();
-
-                if (newToken) {
-                    // Update the failed request with new token
-                    originalRequest.headers[API_CONFIG.CSRF_HEADER] = newToken;
-                    // Retry the original request
-                    return apiClient(originalRequest);
+                try {
+                    const newToken = await csrfTokenManager.refreshToken();
+                    if (newToken && originalRequest.headers) {
+                        originalRequest.headers[API_CONFIG.CSRF_HEADER] = newToken;
+                        return apiClient(originalRequest);
+                    }
+                } catch (refreshError) {
+                    console.error("❌ Failed to refresh CSRF token:", refreshError);
                 }
-            } catch (refreshError) {
-                console.error("Failed to refresh CSRF token after 403 error:", refreshError);
-                // Dispatch an event for app-wide handling if needed
-                window.dispatchEvent(new CustomEvent('auth:csrfInvalid'));
             }
         }
 
-        // Retry for specific server errors (with exponential backoff)
-        if (originalRequest &&
-            !originalRequest._retry &&
-            error.response &&
+        // Retry for server errors
+        if (originalRequest && !originalRequest._retry && error.response &&
             API_CONFIG.RETRY_STATUS_CODES.includes(error.response.status)) {
 
             originalRequest._retry = true;
+            const delay = API_CONFIG.RETRY_DELAY * Math.pow(2, 0) * (0.8 + Math.random() * 0.4);
 
-            // Implement exponential backoff with a small random delay
-            const retryCount = originalRequest._retry ? 1 : 0;
-            const delay = Math.min(
-                API_CONFIG.RETRY_DELAY * Math.pow(2, retryCount) * (0.8 + Math.random() * 0.4),
-                10000 // Maximum 10 seconds
-            );
-
-            console.warn(`Retrying failed request to ${originalRequest.url} after ${Math.round(delay)}ms`);
-
-            // Wait before retrying
+            console.warn(`🔄 Retrying failed request to ${originalRequest.url} after ${Math.round(delay)}ms`);
             await new Promise(resolve => setTimeout(resolve, delay));
-
             return apiClient(originalRequest);
         }
 
         // Handle token expiration
         if (error.response?.status === 401) {
-            // Dispatch an event that Auth context can listen for
+            console.warn("🔑 Token expired, dispatching refresh event");
             window.dispatchEvent(new CustomEvent('auth:tokenExpired'));
         }
 
@@ -225,16 +315,14 @@ apiClient.interceptors.response.use(
             url: originalRequest?.url,
             method: originalRequest?.method,
             message: error.message,
-            data: error.response?.data,
         };
-
-        console.error("API Error:", errorDetails);
+        console.error("❌ API Error:", errorDetails);
 
         return Promise.reject(error);
     }
 );
 
-// Type for the enhanced API response
+// API wrapper interface
 interface ApiResponse<T> {
     data: T;
     success: boolean;
@@ -244,22 +332,18 @@ interface ApiResponse<T> {
     totalCount?: number;
 }
 
-// Enhanced API wrapper with improved error handling and typing
+// Enhanced API wrapper
 const api = {
-    // Direct access to the axios instance
     instance: apiClient,
 
-    // Set default headers
     setHeader: (name: string, value: string): void => {
         apiClient.defaults.headers.common[name] = value;
     },
 
-    // Remove a header
     removeHeader: (name: string): void => {
         delete apiClient.defaults.headers.common[name];
     },
 
-    // Set auth token
     setAuthToken: (token: string | null): void => {
         if (token) {
             apiClient.defaults.headers.common[API_CONFIG.AUTH_HEADER] = `${API_CONFIG.AUTH_SCHEME} ${token}`;
@@ -268,7 +352,7 @@ const api = {
         }
     },
 
-    // HTTP method implementations
+    // HTTP methods
     async get<T = any>(url: string, config?: any): Promise<AxiosResponse<T>> {
         return apiClient.get<T>(url, config);
     },
@@ -285,15 +369,11 @@ const api = {
         return apiClient.delete<T>(url, config);
     },
 
-    async head<T = any>(url: string, config?: any): Promise<AxiosResponse<T>> {
-        return apiClient.head<T>(url, config);
-    },
-
     async patch<T = any>(url: string, data?: any, config?: any): Promise<AxiosResponse<T>> {
         return apiClient.patch<T>(url, data, config);
     },
 
-    // Safely handle API errors with typed returns
+    // Safe request wrapper
     async safeRequest<T = any>(
         method: 'get' | 'post' | 'put' | 'delete' | 'patch',
         url: string,
@@ -301,26 +381,15 @@ const api = {
         config?: any
     ): Promise<ApiResponse<T>> {
         try {
-            let response;
+            let response: AxiosResponse<T>;
 
             switch (method) {
-                case 'get':
-                    response = await apiClient.get<T>(url, config);
-                    break;
-                case 'post':
-                    response = await apiClient.post<T>(url, data, config);
-                    break;
-                case 'put':
-                    response = await apiClient.put<T>(url, data, config);
-                    break;
-                case 'delete':
-                    response = await apiClient.delete<T>(url, config);
-                    break;
-                case 'patch':
-                    response = await apiClient.patch<T>(url, data, config);
-                    break;
-                default:
-                    throw new Error(`Unsupported method: ${method}`);
+                case 'get': response = await this.get<T>(url, config); break;
+                case 'post': response = await this.post<T>(url, data, config); break;
+                case 'put': response = await this.put<T>(url, data, config); break;
+                case 'delete': response = await this.delete<T>(url, config); break;
+                case 'patch': response = await this.patch<T>(url, data, config); break;
+                default: throw new Error(`Unsupported method: ${method}`);
             }
 
             return {
@@ -331,58 +400,64 @@ const api = {
                 totalCount: parseInt(response.headers['x-total-count'] || '0')
             };
         } catch (error: any) {
-            // Format error response consistently
-            const apiResponse: ApiResponse<T> = {
+            return {
                 data: {} as T,
                 success: false,
                 statusCode: error.response?.status || 500,
                 message: error.response?.data?.message || error.message || 'An error occurred',
                 errors: error.response?.data?.validationErrors || error.response?.data?.errors
             };
-
-            return apiResponse;
         }
     },
 
-    // Helper to check if user is authenticated
-    isAuthenticated: (): boolean => {
-        const token = localStorage.getItem("access_token");
-        return !!token;
+    // Utility methods
+    isAuthenticated: (): boolean => !!localStorage.getItem("access_token"),
+    getCsrfToken: (): string | null => csrfTokenManager.getToken(),
+    refreshCsrfToken: async (): Promise<string | null> => csrfTokenManager.refreshToken(),
+    isCsrfProtectionActive: (): boolean => !!csrfTokenManager.getToken(),
+
+    // Encryption management
+    enableEncryption: async (key?: string): Promise<boolean> => {
+        return encryptionManager.initialize(key);
     },
 
-    // CSRF token helper methods
-    getCsrfToken: (): string | null => {
-        return csrfTokenManager.getToken();
+    disableEncryption: (): void => {
+        encryptionManager.disable();
     },
 
-    // Refresh CSRF token
-    refreshCsrfToken: async (): Promise<string | null> => {
-        return csrfTokenManager.refreshToken();
+    isEncryptionEnabled: (): boolean => {
+        return encryptionManager.enabled;
     },
 
-    // Check if CSRF protection is active
-    isCsrfProtectionActive: (): boolean => {
-        return !!csrfTokenManager.getToken();
-    },
+    // Initialize API services
+    initialize: async (encryptionKey?: string): Promise<void> => {
+        console.info("🚀 Initializing API services...");
 
-    // Initialize API services including CSRF
-    initialize: async (): Promise<void> => {
-        await csrfTokenManager.initialize();
+        try {
+            await csrfTokenManager.initialize();
+            console.debug("✅ CSRF protection initialized");
+
+            if (encryptionKey || API_CONFIG.ENCRYPTION.ENABLED) {
+                const success = await encryptionManager.initialize(encryptionKey);
+                if (success) {
+                    console.info("✅ API services initialized with encryption");
+                } else {
+                    console.warn("⚠️ API services initialized without encryption");
+                }
+            }
+        } catch (error) {
+            console.error("❌ Failed to initialize API services:", error);
+            throw error;
+        }
     }
 };
 
-// Fetch trace tree
-export const getTraceTree = () =>
-    api.get<ITraceLogNode[]>('/Trace/tree');
+// Export trace functions
+export const getTraceTree = () => api.get<ITraceLogNode[]>('/Trace/tree');
+export const resolveTraceLog = (id: string, comment: string) => api.post(`/Trace/resolve/${id}`, comment);
 
-// Submit resolution for a log entry
-export const resolveTraceLog = (id: string, comment: string) =>
-    api.post(`/Trace/resolve/${id}`, comment);
-
-
-// Add event listener for auth events
-window.addEventListener('auth:tokenExpired', async () => {
-    // Dispatch event to inform app about expired token
+// Event handlers
+window.addEventListener('auth:tokenExpired', () => {
     window.dispatchEvent(new CustomEvent('auth:refreshNeeded'));
 });
 

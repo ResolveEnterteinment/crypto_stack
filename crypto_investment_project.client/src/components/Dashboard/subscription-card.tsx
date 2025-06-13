@@ -136,10 +136,10 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
                                         key={alloc.assetId}
                                         style={{
                                             width: `${percentage}%`,
-                                            backgroundColor: assetColors[alloc.ticker] || '#6B7280'
+                                            backgroundColor: assetColors[alloc.assetTicker] || '#6B7280'
                                         }}
                                         className="h-full"
-                                        title={`${alloc.ticker}: ${percentage.toFixed(1)}%`}
+                                        title={`${alloc.assetTicker}: ${percentage.toFixed(1)}%`}
                                     />
                                 );
                             })}
@@ -151,10 +151,10 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
                                     <div className="flex items-center">
                                         <div
                                             className="w-3 h-3 rounded-full mr-2"
-                                            style={{ backgroundColor: assetColors[alloc.ticker] || '#6B7280' }}
+                                            style={{ backgroundColor: assetColors[alloc.assetTicker] || '#6B7280' }}
                                         />
                                         <span className="font-medium">
-                                            {(alloc.assetName || alloc.ticker) && <span className="text-gray-500 ml-1">{alloc.assetName} ({alloc.ticker})</span>}
+                                            {(alloc.assetName || alloc.assetTicker) && <span className="text-gray-500 ml-1">{alloc.assetName} ({alloc.assetTicker})</span>}
                                         </span>
                                     </div>
                                     <div className="font-bold">{alloc.percentAmount}%</div>

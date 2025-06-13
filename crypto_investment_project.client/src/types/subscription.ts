@@ -17,7 +17,7 @@ export interface Subscription {
 export interface Allocation {
     assetId: string;
     assetName: string;
-    ticker: string;
+    assetTicker: string;
     percentAmount: number;
 }
 

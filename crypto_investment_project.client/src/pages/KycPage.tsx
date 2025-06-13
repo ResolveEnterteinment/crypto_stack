@@ -74,7 +74,7 @@ const KycPageContent: React.FC = () => {
     if (loading) {
         return (
             <Layout style={{ minHeight: '100vh', background: token.colorBgContainer }}>
-                <Content style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '50px 20px' }}>
+                <Content className="mx-auto" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '50px 20px' }}>
                     <div style={{ textAlign: 'center' }}>
                         <Spin size="large" />
                         <Paragraph style={{ marginTop: 20, color: token.colorTextSecondary }}>
@@ -90,7 +90,7 @@ const KycPageContent: React.FC = () => {
     if (!sessionId) {
         return (
             <Layout style={{ minHeight: '100vh', background: 'linear-gradient(to right, #f7fafc, #edf2f7)' }}>
-                <Content style={{ padding: '50px 20px' }}>
+                <Content className="mx-auto" style={{ padding: '50px 20px' }}>
                     <Row justify="center">
                         <Col xs={24} sm={24} md={18} lg={16} xl={14}>
                             <Card
@@ -208,7 +208,7 @@ const KycPageContent: React.FC = () => {
 
     return (
         <Layout style={{ minHeight: '100vh', background: 'linear-gradient(to right, #f7fafc, #edf2f7)' }}>
-            <Content style={{ padding: '50px 20px' }}>
+            <Content className="mx-auto" style={{ padding: '50px 20px' }}>
                 <Row justify="center">
                     <Col xs={24} sm={24} md={20} lg={18} xl={16}>
                         <Card
@@ -292,7 +292,7 @@ const KycPage: React.FC = () => {
     return (
         <>
             <Navbar />
-            <div className="container mx-auto px-4 py-6">
+            <div className="relative top-5">
                 <KycPageContent />
             </div>
         </>

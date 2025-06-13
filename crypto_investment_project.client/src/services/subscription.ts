@@ -1,17 +1,17 @@
 ﻿// src/services/subscription.ts - Fixed version
 import api from "./api";
-import ISubscription from "../interfaces/ISubscription";
-import ITransaction from "../interfaces/ITransaction";
 import ICreateSubscriptionRequest from "../interfaces/ICreateSubscriptionRequest";
 import IUpdateSubscriptionRequest from "../interfaces/IUpdateSubscriptionRequest";
 import { logApiError } from "../utils/apiErrorHandler";
+import { Subscription } from "../types/subscription";
+import Transaction from "../types/transaction";
 
 /**
  * Fetches all subscriptions for a user
  * @param userId The ID of the user
  * @returns Promise with array of subscription objects
  */
-export const getSubscriptions = async (userId: string): Promise<ISubscription[]> => {
+export const getSubscriptions = async (userId: string): Promise<Subscription[]> => {
     if (!userId) {
         console.error("getSubscriptions called with undefined userId");
         return Promise.reject(new Error("User ID is required"));
@@ -226,7 +226,7 @@ export const cancelSubscription = async (subscriptionId: string): Promise<void> 
  * @param subscriptionId The ID of the subscription
  * @returns Promise with transaction history
  */
-export const getTransactions = async (subscriptionId: string): Promise<ITransaction[]> => {
+export const getTransactions = async (subscriptionId: string): Promise<Transaction[]> => {
     if (!subscriptionId) {
         console.error("getSubscriptionTransactions called with undefined subscriptionId");
         return Promise.reject(new Error("Subscription ID is required"));

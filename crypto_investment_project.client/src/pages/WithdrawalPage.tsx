@@ -118,7 +118,7 @@ const WithdrawalPageContent: React.FC = () => {
 
     return (
         <Layout style={{ minHeight: '100vh', background: 'linear-gradient(to right, #f7fafc, #edf2f7)' }}>
-            <Content style={{ padding: '50px 20px' }}>
+            <Content className="max-w-7xl mx-auto" style={{ padding: '50px 20px' }}>
             {/* Enhanced header */}
             <div className="mb-6">
                 <Space direction="vertical" size="small">
@@ -211,7 +211,7 @@ const WithdrawalPage: React.FC = () => {
     return (
         <>
             <Navbar />
-            <div className="container mx-auto px-4 py-6 max-w-7xl">
+            <div className="relative top-5">
                 <WithdrawalPageContent />
             </div>
         </>

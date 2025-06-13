@@ -127,11 +127,6 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
                             <span className="font-bold">{assetHoldings.length} tokens</span>
                         </div>
                     </div>
-                    <div className="mt-4 pt-3 border-t border-gray-200">
-                        <div className="flex justify-between items-center">
-                            <span className="font-medium">Actions</span>
-                        </div>
-                    </div>
                 </>
             ) : (
                 <div className="flex justify-center items-center h-32 text-gray-400">
