@@ -32,9 +32,6 @@ namespace StripeLibrary
         private readonly IMemoryCache _cache;
         private readonly AsyncRetryPolicy _retryPolicy;
 
-        private const string FeesCacheKeyPrefix = "stripe_fee_";
-        private const string InvoiceCacheKeyPrefix = "stripe_invoice_";
-        private const string SubscriptionCacheKeyPrefix = "stripe_subscription_";
         public string Name => "Stripe";
 
         /// <summary>
@@ -339,16 +336,6 @@ namespace StripeLibrary
         /// <exception cref="PaymentApiException">Thrown when an error occurs during fee retrieval.</exception>
         public async Task<decimal> GetFeeAsync(string paymentIntentId)
         {
-            string cacheKey = $"{FeesCacheKeyPrefix}{paymentIntentId}";
-
-            // Try to get from cache first if caching is available
-            if (_cache != null && _cache.TryGetValue(cacheKey, out decimal cachedFee))
-            {
-                _logger.LogDebug("Retrieved Stripe fee from cache for payment intent {PaymentIntentId}: {Fee}",
-                    paymentIntentId, cachedFee);
-                return cachedFee;
-            }
-
             using var activity = new Activity("StripeService.GetFee").Start();
             activity.SetTag("PaymentIntentId", paymentIntentId);
 
@@ -438,16 +425,6 @@ namespace StripeLibrary
                         MidpointRounding.AwayFromZero);
 
                     decimal stripeFee = chargeAmount / 100m;
-
-                    // Cache the result if caching is available
-                    if (_cache != null)
-                    {
-                        var cacheOptions = new MemoryCacheEntryOptions()
-                            .SetAbsoluteExpiration(TimeSpan.FromHours(24))
-                            .SetPriority(CacheItemPriority.Normal);
-
-                        _cache.Set(cacheKey, stripeFee, cacheOptions);
-                    }
 
                     _logger.LogInformation("Successfully retrieved fee for {PaymentIntentId}: {Fee}",
                         paymentIntentId, stripeFee);
@@ -544,8 +521,6 @@ namespace StripeLibrary
                 return null;
             }
         }
-
-
 
         /// <summary>
         /// Retrieves a subscription by payment ID from Stripe.
@@ -870,6 +845,146 @@ namespace StripeLibrary
         }
 
         /// <summary>
+        /// Retrieves all invoices for a specific subscription from Stripe.
+        /// </summary>
+        /// <param name="subscriptionId">The Stripe subscription ID</param>
+        /// <returns>List of invoices for the subscription</returns>
+        /// <exception cref="PaymentApiException">Thrown when an error occurs during invoice retrieval.</exception>
+        public async Task<IEnumerable<Invoice>> GetSubscriptionInvoicesAsync(string subscriptionId)
+        {
+            if (string.IsNullOrEmpty(subscriptionId))
+            {
+                throw new ArgumentNullException(nameof(subscriptionId), "Subscription ID is required");
+            }
+
+            using var activity = new Activity("StripeService.GetSubscriptionInvoicesAsync").Start();
+            activity.SetTag("SubscriptionId", subscriptionId);
+
+            try
+            {
+                _logger.LogInformation("Retrieving invoices for subscription {SubscriptionId}", subscriptionId);
+
+                return await _retryPolicy.ExecuteAsync(async (context) =>
+                {
+                    var options = new InvoiceListOptions
+                    {
+                        Subscription = subscriptionId,
+                        Limit = 100, // Get up to 100 invoices per request
+                        Status = "paid" // Only get paid invoices as these are the ones we want to sync
+                    };
+
+                    var invoices = new List<Invoice>();
+                    var service = _invoiceService;
+
+                    // Handle pagination
+                    StripeList<Invoice> invoicesList;
+                    string startingAfter = null;
+
+                    do
+                    {
+                        if (!string.IsNullOrEmpty(startingAfter))
+                        {
+                            options.StartingAfter = startingAfter;
+                        }
+
+                        invoicesList = await service.ListAsync(options);
+                        invoices.AddRange(invoicesList.Data);
+
+                        // Set the starting point for the next page
+                        if (invoicesList.HasMore && invoicesList.Data.Any())
+                        {
+                            startingAfter = invoicesList.Data.Last().Id;
+                        }
+
+                    } while (invoicesList.HasMore);
+
+                    _logger.LogInformation("Retrieved {InvoiceCount} invoices for subscription {SubscriptionId}",
+                        invoices.Count, subscriptionId);
+
+                    return invoices;
+
+                }, new Context("GetSubscriptionInvoices"));
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error retrieving invoices for subscription {SubscriptionId}: {Message}",
+                    subscriptionId, ex.Message);
+                throw new PaymentApiException(
+                    $"Error retrieving invoices for subscription: {ex.Message}", "Stripe", subscriptionId, ex);
+            }
+            catch (Exception ex) when (ex is not PaymentApiException)
+            {
+                _logger.LogError(ex, "Unexpected error retrieving invoices for subscription {SubscriptionId}",
+                    subscriptionId);
+                throw new PaymentApiException(
+                    "An unexpected error occurred while retrieving subscription invoices", "Stripe", subscriptionId, ex);
+            }
+        }
+
+        /// <summary>
+        /// Searches for subscriptions in Stripe based on metadata
+        /// </summary>
+        /// <param name="metadataKey">The metadata key to search for</param>
+        /// <param name="metadataValue">The metadata value to search for</param>
+        /// <returns>A list of matching Stripe subscriptions</returns>
+        /// <exception cref="PaymentApiException">Thrown when an error occurs during subscription search.</exception>
+        public async Task<IEnumerable<Subscription>> SearchSubscriptionsByMetadataAsync(string metadataKey, string metadataValue)
+        {
+            if (string.IsNullOrEmpty(metadataKey))
+            {
+                throw new ArgumentNullException(nameof(metadataKey), "Metadata key cannot be null or empty");
+            }
+
+            if (string.IsNullOrEmpty(metadataValue))
+            {
+                throw new ArgumentNullException(nameof(metadataValue), "Metadata value cannot be null or empty");
+            }
+
+            using var activity = new Activity("StripeService.SearchSubscriptionsByMetadataAsync").Start();
+            activity.SetTag("MetadataKey", metadataKey);
+            activity.SetTag("MetadataValue", metadataValue);
+
+            try
+            {
+                _logger.LogInformation("Searching for subscriptions with metadata {MetadataKey}={MetadataValue}",
+                    metadataKey, metadataValue);
+
+                return await _retryPolicy.ExecuteAsync(async (context) =>
+                {
+                    var options = new SubscriptionSearchOptions
+                    {
+                        Query = $"metadata['{metadataKey}']:'{metadataValue}'",
+                        Limit = 10, // Limit to avoid retrieving too many records
+                        Expand = new List<string> { "data.latest_invoice" } // Include latest invoice for additional context
+                    };
+
+                    var searchResult = await _subscriptionService.SearchAsync(options);
+                    var subscriptions = searchResult?.Data ?? new List<Subscription>();
+
+                    _logger.LogInformation("Found {SubscriptionCount} subscriptions with metadata {MetadataKey}={MetadataValue}",
+                        subscriptions.Count(), metadataKey, metadataValue);
+
+                    return subscriptions;
+
+                }, new Context("SearchSubscriptionsByMetadata"));
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error searching subscriptions by metadata {MetadataKey}={MetadataValue}: {Message}",
+                    metadataKey, metadataValue, ex.Message);
+                throw new PaymentApiException(
+                    $"Error searching subscriptions by metadata: {ex.Message}", "Stripe", metadataValue, ex);
+            }
+            catch (Exception ex) when (ex is not PaymentApiException)
+            {
+                _logger.LogError(ex, "Unexpected error searching subscriptions by metadata {MetadataKey}={MetadataValue}",
+                    metadataKey, metadataValue);
+                throw new PaymentApiException(
+                    "An unexpected error occurred while searching subscriptions", "Stripe", metadataValue, ex);
+            }
+        }
+
+        /// <summary>
         /// Retrieves a subscription from Stripe.
         /// </summary>
         /// <param name="subscriptionId">The ID of the subscription to retrieve.</param>
@@ -881,14 +996,6 @@ namespace StripeLibrary
                 throw new ArgumentNullException("No subscription ID provided");
             }
 
-            string cacheKey = $"{SubscriptionCacheKeyPrefix}{subscriptionId}";
-
-            // Try to get from cache first if caching is available
-            if (_cache != null && _cache.TryGetValue(cacheKey, out Subscription cachedSubscription))
-            {
-                return cachedSubscription!;
-            }
-
             try
             {
                 _logger.LogInformation("Retrieving subscription {SubscriptionId}", subscriptionId);
@@ -896,17 +1003,6 @@ namespace StripeLibrary
                 return await _retryPolicy.ExecuteAsync(async (context) =>
                 {
                     var subscription = await _subscriptionService.GetAsync(subscriptionId);
-
-                    // Cache the result if caching is available
-                    if (_cache != null && subscription != null)
-                    {
-                        var cacheOptions = new MemoryCacheEntryOptions()
-                            .SetAbsoluteExpiration(TimeSpan.FromMinutes(30))
-                            .SetPriority(CacheItemPriority.Normal);
-
-                        _cache.Set(cacheKey, subscription, cacheOptions);
-                    }
-
                     return subscription;
                 }, new Context("GetSubscription"));
             }

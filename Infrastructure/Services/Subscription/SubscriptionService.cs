@@ -26,9 +26,6 @@ namespace Infrastructure.Services.Subscription
         private readonly IAssetService _assetService;
         private readonly INotificationService _notificationService;
 
-        private const string CACHE_KEY_USER_SUBSCRIPTIONS = "user_subscriptions:{0}";
-        private const string CACHE_KEY_SUBSCRIPTION_ALLOCATIONS = "subscription_allocations:{0}";
-
         public SubscriptionService(
             ICrudRepository<SubscriptionData> repository,
             ICacheService<SubscriptionData> cacheService,
@@ -441,14 +438,21 @@ namespace Infrastructure.Services.Subscription
                 var subscriptionResult = await GetByIdAsync(subscriptionId);
                 if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                 {
-                    throw new KeyNotFoundException($"Subscription {subscriptionId} not found");
+                    throw new KeyNotFoundException($"Subscription {subscriptionId} not found: {subscriptionResult?.ErrorMessage ?? "Subscription fetch returned null"}");
                 }
 
                 var subscription = subscriptionResult.Data;
 
-                // Calculate new investment total
                 var investmentQuantity = payment.NetAmount;
-                var totalInvestments = subscription!.TotalInvestments;
+
+                // Calculate new investment total
+                var subscriptionPaymentsResult = await _paymentService.GetPaymentsForSubscriptionAsync(payment.SubscriptionId);
+
+                if (subscriptionPaymentsResult == null || !subscriptionPaymentsResult.IsSuccess)
+                {
+                    await Logger.LogTraceAsync($"Failed to calculate investment totals for subscription {subscription}: {subscriptionPaymentsResult?.ErrorMessage ?? "Subscription payments returned null"}", level: LogLevel.Warning);
+                }
+                var totalInvestments = subscriptionPaymentsResult?.Data.Select(p => p.TotalAmount).Sum() ?? 0m;
                 var newQuantity = totalInvestments + investmentQuantity;
 
                 // Get next due date from payment provider

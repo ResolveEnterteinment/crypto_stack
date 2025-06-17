@@ -139,3 +139,17 @@ export const getAssetPrice = async (ticker: string): Promise<number> => {
         throw error;
     }
 };
+
+export const getAssetMinNotional = async (ticker: string): Promise<number> => {
+    if (!ticker) {
+        return Promise.reject(new Error('Ticker is required'));
+    }
+
+    try {
+        const { data } = await api.get(`/Exchange/min-notional/${ticker}`);
+        return typeof data === 'number' ? data : parseFloat(data);
+    } catch (error) {
+        console.error(`Error fetching price for ${ticker}:`, error);
+        throw error;
+    }
+};

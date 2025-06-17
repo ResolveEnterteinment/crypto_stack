@@ -353,5 +353,167 @@ namespace crypto_investment_project.Server.Controllers
                 return StatusCode(500, "An error occurred while processing your request");
             }
         }
+
+        /// <summary>
+        /// Fetches and updates missing payment records from Stripe for a subscription
+        /// </summary>
+        /// <param name="subscriptionId">The subscription ID</param>
+        /// <returns>Result of the update operation</returns>
+        [HttpPost("fetch-update/{subscriptionId}")]
+        [Authorize]
+        [EnableRateLimiting("standard")]
+        [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> FetchUpdatePayments(string subscriptionId)
+        {
+            var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+
+            using var scope = Logger.BeginScope(new Dictionary<string, object>
+            {
+                ["SubscriptionId"] = subscriptionId,
+                ["CorrelationId"] = correlationId,
+                ["Operation"] = "FetchUpdatePayments"
+            });
+
+            try
+            {
+                if (!Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
+                {
+                    return BadRequest(new ErrorResponse
+                    {
+                        Message = "Invalid subscription ID format",
+                        Code = "INVALID_SUBSCRIPTION_ID",
+                        TraceId = correlationId
+                    });
+                }
+
+                // Get the current user ID from claims
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(new ErrorResponse
+                    {
+                        Message = "User ID not found in claims",
+                        Code = "UNAUTHORIZED_ACCESS",
+                        TraceId = correlationId
+                    });
+                }
+
+                // Verify that the subscription belongs to the user
+                var subscription = await _unitOfWork.Subscriptions.GetByIdAsync(parsedSubscriptionId);
+                if (!subscription.IsSuccess || subscription.Data == null)
+                {
+                    return NotFound(new ErrorResponse
+                    {
+                        Message = $"Subscription {subscriptionId} not found",
+                        Code = "SUBSCRIPTION_NOT_FOUND",
+                        TraceId = correlationId
+                    });
+                }
+
+                if (subscription.Data.UserId.ToString() != userId && !User.IsInRole("ADMIN"))
+                {
+                    return Forbid();
+                }
+
+                var subscriptionData = subscription.Data;
+                string stripeSubscriptionId = subscriptionData.ProviderSubscriptionId;
+
+                // If no Stripe subscription ID is found, try to find it using metadata
+                if (string.IsNullOrEmpty(stripeSubscriptionId))
+                {
+                    await Logger.LogTraceAsync($"No Stripe subscription ID found for subscription {subscriptionId}, searching Stripe by metadata", "FetchUpdatePayments");
+
+                    try
+                    {
+                        // Search for Stripe subscriptions with our domain subscription ID in metadata
+                        var searchResult = await _paymentService.SearchStripeSubscriptionByMetadataAsync("subscriptionId", subscriptionId);
+
+                        if (searchResult.IsSuccess && !string.IsNullOrEmpty(searchResult.Data))
+                        {
+                            stripeSubscriptionId = searchResult.Data;
+                            await Logger.LogTraceAsync($"Found Stripe subscription {stripeSubscriptionId} for domain subscription {subscriptionId}", "FetchUpdatePayments");
+
+                            // Update the domain subscription record with the found Stripe subscription ID
+                            var updateFields = new Dictionary<string, object>
+                            {
+                                ["ProviderSubscriptionId"] = stripeSubscriptionId
+                            };
+
+                            var updateResult = await _unitOfWork.Subscriptions.UpdateAsync(parsedSubscriptionId, updateFields);
+                            if (updateResult.IsSuccess)
+                            {
+                                await Logger.LogTraceAsync($"Updated domain subscription {subscriptionId} with Stripe subscription ID {stripeSubscriptionId}", "FetchUpdatePayments");
+                            }
+                            else
+                            {
+                                Logger.LogWarning("Failed to update domain subscription {SubscriptionId} with Stripe subscription ID {StripeSubscriptionId}: {Error}",
+                                    subscriptionId, stripeSubscriptionId, updateResult.ErrorMessage);
+                            }
+                        }
+                        else
+                        {
+                            await Logger.LogTraceAsync($"No Stripe subscription found with metadata subscriptionId={subscriptionId}: {searchResult.ErrorMessage}", "FetchUpdatePayments");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning("Error searching for Stripe subscription by metadata for subscription {SubscriptionId}: {Error}",
+                            subscriptionId, ex.Message);
+                        // Continue with the original logic - this is a fallback attempt
+                    }
+                }
+
+                // If we still don't have a Stripe subscription ID, return an informative error
+                if (string.IsNullOrEmpty(stripeSubscriptionId))
+                {
+                    return BadRequest(new ErrorResponse
+                    {
+                        Message = "No Stripe subscription found for this subscription. This may indicate the subscription was not properly created with Stripe, or the subscription ID metadata is missing.",
+                        Code = "STRIPE_SUBSCRIPTION_NOT_FOUND",
+                        TraceId = correlationId
+                    });
+                }
+
+                await Logger.LogTraceAsync($"Fetching payment updates for subscription {subscriptionId} (Stripe: {stripeSubscriptionId})", "FetchUpdatePayments");
+
+                // Call the payment service to fetch and process missing payments
+                var fetchResult = await _paymentService.FetchPaymentsBySubscriptionAsync(stripeSubscriptionId);
+
+                if (!fetchResult.IsSuccess)
+                {
+                    return BadRequest(new ErrorResponse
+                    {
+                        Message = fetchResult.ErrorMessage ?? "Failed to fetch payment updates",
+                        Code = "FETCH_PAYMENTS_FAILED",
+                        TraceId = correlationId
+                    });
+                }
+
+                await Logger.LogTraceAsync($"Successfully processed {fetchResult.Data} missing payment records", "FetchUpdatePayments");
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Payment records updated successfully",
+                    processedCount = fetchResult.Data,
+                    stripeSubscriptionId = stripeSubscriptionId,
+                    correlationId = correlationId
+                });
+            }
+            catch (Exception ex)
+            {
+                await Logger.LogTraceAsync($"Error fetching payment updates: {ex.Message}", "FetchUpdatePayments", requiresResolution: true);
+
+                return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
+                {
+                    Message = "An error occurred while updating payment records",
+                    Code = "SERVER_ERROR",
+                    TraceId = correlationId
+                });
+            }
+        }
     }
 }

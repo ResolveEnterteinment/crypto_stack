@@ -694,6 +694,195 @@ namespace Infrastructure.Services
                 return ResultWrapper<PaymentData>.FromException(ex);
             }
         }
+        public async Task<ResultWrapper<int>> FetchPaymentsBySubscriptionAsync(string stripeSubscriptionId)
+        {
+            using var scope = Logger.BeginScope("PaymentService::FetchPaymentsBySubscriptionAsync", new Dictionary<string, object?>
+            {
+                ["StripeSubscriptionId"] = stripeSubscriptionId
+            });
+
+            try
+            {
+                if (string.IsNullOrEmpty(stripeSubscriptionId))
+                {
+                    throw new ArgumentNullException(nameof(stripeSubscriptionId), "Stripe subscription ID cannot be null or empty");
+                }
+
+                // Step 1: Get all invoices from Stripe for this subscription
+                var stripeInvoices = await _stripeService.GetSubscriptionInvoicesAsync(stripeSubscriptionId);
+
+                if (stripeInvoices == null || !stripeInvoices.Any())
+                {
+                    Logger.LogInformation("No paid invoices found in Stripe for subscription {StripeSubscriptionId}", stripeSubscriptionId);
+                    return ResultWrapper<int>.Success(0);
+                }
+
+                // Step 2: Get existing payment records from our database for this subscription
+                var existingPaymentsFilter = Builders<PaymentData>.Filter.Eq(p => p.ProviderSubscriptionId, stripeSubscriptionId);
+                var existingPaymentsResult = await GetManyAsync(existingPaymentsFilter);
+
+                if (!existingPaymentsResult.IsSuccess)
+                {
+                    throw new DatabaseException(existingPaymentsResult.ErrorMessage ?? "Failed to fetch existing payments");
+                }
+
+                var existingPayments = existingPaymentsResult.Data?.ToList() ?? new List<PaymentData>();
+                var existingInvoiceIds = existingPayments.Select(p => p.InvoiceId).Where(id => !string.IsNullOrEmpty(id)).ToHashSet();
+
+                Logger.LogInformation("Found {StripeInvoiceCount} Stripe invoices and {ExistingPaymentCount} existing payment records",
+                    stripeInvoices.Count(), existingPayments.Count);
+
+                // Step 3: Find missing invoices that need to be processed
+                var missingInvoices = stripeInvoices.Where(invoice => !existingInvoiceIds.Contains(invoice.Id)).ToList();
+
+                if (!missingInvoices.Any())
+                {
+                    Logger.LogInformation("No missing payment records found for subscription {StripeSubscriptionId}", stripeSubscriptionId);
+                    return ResultWrapper<int>.Success(0);
+                }
+
+                Logger.LogInformation("Found {MissingInvoiceCount} missing payment records to process", missingInvoices.Count);
+
+                // Step 4: Process each missing invoice
+                int processedCount = 0;
+                foreach (var invoice in missingInvoices)
+                {
+                    try
+                    {
+                        // Extract metadata from the subscription or invoice
+                        var metadata = invoice.SubscriptionDetails?.Metadata ?? new Dictionary<string, string>();
+
+                        // Try to get userId and subscriptionId from metadata
+                        if (!metadata.TryGetValue("userId", out var userId) || string.IsNullOrEmpty(userId))
+                        {
+                            Logger.LogWarning("Missing userId in invoice {InvoiceId} metadata, skipping", invoice.Id);
+                            continue;
+                        }
+
+                        if (!metadata.TryGetValue("subscriptionId", out var subscriptionId) || string.IsNullOrEmpty(subscriptionId))
+                        {
+                            Logger.LogWarning("Missing subscriptionId in invoice {InvoiceId} metadata, skipping", invoice.Id);
+                            continue;
+                        }
+
+                        // Create InvoiceRequest for processing
+                        var invoiceRequest = new InvoiceRequest
+                        {
+                            Id = invoice.Id,
+                            Provider = "Stripe",
+                            ChargeId = invoice.ChargeId,
+                            PaymentIntentId = invoice.PaymentIntentId,
+                            UserId = userId,
+                            SubscriptionId = subscriptionId,
+                            ProviderSubscripitonId = stripeSubscriptionId,
+                            Amount = invoice.AmountPaid,
+                            Currency = invoice.Currency?.ToUpperInvariant() ?? "USD",
+                            Status = MapInvoiceStatusToPaymentStatus(invoice.Status)
+                        };
+
+                        // Process the invoice using existing logic
+                        var processResult = await ProcessInvoicePaidEvent(invoiceRequest);
+
+                        if (processResult.IsSuccess)
+                        {
+                            processedCount++;
+                            Logger.LogInformation("Successfully processed missing invoice {InvoiceId}", invoice.Id);
+                        }
+                        else
+                        {
+                            Logger.LogWarning("Failed to process invoice {InvoiceId}: {Error}", invoice.Id, processResult.ErrorMessage);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError("Error processing invoice {InvoiceId}: {Error}", invoice.Id, ex.Message);
+                        // Continue processing other invoices even if one fails
+                    }
+                }
+
+                Logger.LogInformation("Processed {ProcessedCount} out of {TotalMissingCount} missing payment records",
+                    processedCount, missingInvoices.Count);
+
+                return ResultWrapper<int>.Success(processedCount);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to fetch payments by subscription {StripeSubscriptionId}: {Message}",
+                    stripeSubscriptionId, ex.Message);
+                return ResultWrapper<int>.FromException(ex);
+            }
+        }
+
+        /// <summary>
+        /// Searches for Stripe subscriptions by metadata
+        /// </summary>
+        /// <param name="metadataKey">The metadata key to search for</param>
+        /// <param name="metadataValue">The metadata value to search for</param>
+        /// <returns>The first matching Stripe subscription ID, or null if not found</returns>
+        public async Task<ResultWrapper<string?>> SearchStripeSubscriptionByMetadataAsync(string metadataKey, string metadataValue)
+        {
+            using var scope = Logger.BeginScope("PaymentService::SearchStripeSubscriptionByMetadataAsync", new Dictionary<string, object?>
+            {
+                ["MetadataKey"] = metadataKey,
+                ["MetadataValue"] = metadataValue
+            });
+
+            try
+            {
+                if (string.IsNullOrEmpty(metadataKey))
+                {
+                    throw new ArgumentNullException(nameof(metadataKey), "Metadata key cannot be null or empty");
+                }
+
+                if (string.IsNullOrEmpty(metadataValue))
+                {
+                    throw new ArgumentNullException(nameof(metadataValue), "Metadata value cannot be null or empty");
+                }
+
+                // Search for Stripe subscriptions with the specified metadata
+                var stripeSubscriptions = await _stripeService.SearchSubscriptionsByMetadataAsync(metadataKey, metadataValue);
+
+                // Return the first matching subscription ID, or null if none found
+                var firstSubscription = stripeSubscriptions?.FirstOrDefault();
+                var subscriptionId = firstSubscription?.Id;
+
+                if (!string.IsNullOrEmpty(subscriptionId))
+                {
+                    Logger.LogInformation("Found Stripe subscription {StripeSubscriptionId} for metadata {MetadataKey}={MetadataValue}",
+                        subscriptionId, metadataKey, metadataValue);
+                }
+                else
+                {
+                    Logger.LogInformation("No Stripe subscription found for metadata {MetadataKey}={MetadataValue}",
+                        metadataKey, metadataValue);
+                }
+
+                return ResultWrapper<string?>.Success(subscriptionId);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to search Stripe subscription by metadata {MetadataKey}={MetadataValue}: {Message}",
+                    metadataKey, metadataValue, ex.Message);
+                return ResultWrapper<string?>.FromException(ex);
+            }
+        }
+
+        /// <summary>
+        /// Maps Stripe invoice status to our payment status
+        /// </summary>
+        /// <param name="invoiceStatus">Stripe invoice status</param>
+        /// <returns>Our payment status</returns>
+        private string MapInvoiceStatusToPaymentStatus(string invoiceStatus)
+        {
+            return invoiceStatus?.ToLowerInvariant() switch
+            {
+                "paid" => PaymentStatus.Filled,
+                "open" => PaymentStatus.Pending,
+                "void" => PaymentStatus.Failed,
+                "uncollectible" => PaymentStatus.Failed,
+                _ => PaymentStatus.Pending
+            };
+        }
 
         #region Helpers
         private void ValidateCharge(ChargeRequest c)

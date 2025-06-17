@@ -173,6 +173,16 @@ namespace Infrastructure.Services.Exchange
 
             try
             {
+                // Check for idempotency to avoid double processing
+                string idempotencyKey = $"payment_id_{payment.Id}";
+                var (exists, result) = await _idempotencyService.GetResultAsync<bool>(idempotencyKey);
+
+                if (exists)
+                {
+                    _logger.LogWarning("Payment id {PaymentId} already processed", payment.Id);
+                    return ResultWrapper<IEnumerable<OrderResult>>.Failure(FailureReason.IdempotencyConflict, $"Payment id {payment.Id} already processed");
+                }
+
                 _logger.LogInformation("Starting payment processing for {PaymentId} with amount {Amount} {Currency}",
                     payment.Id, netAmount, payment.Currency);
 
@@ -296,10 +306,21 @@ namespace Infrastructure.Services.Exchange
                         // Calculate remaining amount after accounting for previously filled orders
                         var remainingQuoteOrderQuantity = quoteOrderQuantity - previousFilledSumResult.Data;
 
-                        // Skip if already fully filled (idempotency check)
-                        if (remainingQuoteOrderQuantity <= 0)
+                        var minNotionalResult = await _orderManagementService.GetMinNotional(exchange, asset);
+                        if (minNotionalResult == null|| !minNotionalResult.IsSuccess)
                         {
-                            _logger.LogInformation("Order for asset {AssetId} already fully processed",
+
+                            //Do not throw here, just log the error and continue. Exchnage will handle it.
+                            await _logger.LogTraceAsync($"Failed to fetch minimum notional for {asset.Ticker} on {exchange.Name}: {minNotionalResult?.ErrorMessage ?? "Unknown error"}",
+                                level: Domain.Constants.Logging.LogLevel.Error);
+                        }
+
+                        var minNotional = minNotionalResult?.Data ?? 0m;
+
+                        // Skip if already fully filled (idempotency check)
+                        if (remainingQuoteOrderQuantity <= minNotional)
+                        {
+                            _logger.LogInformation("Order for asset {AssetId} already fully processed or remaining quantity is less than minimum notional value.",
                                 alloc.AssetId);
 
                             orderResults.Add(OrderResult.Success(
@@ -414,6 +435,8 @@ namespace Infrastructure.Services.Exchange
                                 placedOrder.QuantityFilled,
                                 placedOrder.Status));
 
+                            // Store record for idempotency
+                            await _idempotencyService.StoreResultAsync(idempotencyKey, true);
                             return true;
                         });
                     }

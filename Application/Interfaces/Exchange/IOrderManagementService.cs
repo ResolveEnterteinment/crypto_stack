@@ -10,6 +10,10 @@ namespace Application.Interfaces.Exchange
     {
         public Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(IExchange exchange, string assetTicker, decimal quantity, string paymentProviderId, string side = OrderSide.Buy, string type = "MARKET");
         public Task<ResultWrapper<decimal>> GetPreviousOrdersSum(IExchange exchange, AssetData asset, PaymentData payment);
+        Task<ResultWrapper<decimal>> GetMinNotional(
+            IExchange exchange,
+            AssetData asset
+            );
         public Task HandleDustAsync(PlacedExchangeOrder order);
     }
 }

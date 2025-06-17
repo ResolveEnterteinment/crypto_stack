@@ -1,21 +1,33 @@
-// src/components/Subscription/AssetAllocationForm.tsx (updated)
+// src/components/Subscription/AssetAllocationForm.tsx (refactored to use API min notionals)
 
-import React, { useState, useEffect } from 'react';
-import IAsset from '../../interfaces/IAsset';
-import IAllocation from '../../interfaces/IAllocation';
+import React, { useState, useEffect, useMemo } from 'react';
+import { AssetColors, getAssetColor as getColor } from '../../types/assetTypes';
+import { Allocation } from '../../types/subscription';
+import { EnhancedAsset } from './AssetAllocationStep';
 
 interface AssetAllocationFormProps {
-    availableAssets: IAsset[];
-    allocations: IAllocation[];
-    onChange: (allocations: IAllocation[]) => void;
+    availableAssets: EnhancedAsset[];
+    allocations: Allocation[];
+    onChange: (allocations: Allocation[]) => void;
+    totalInvestmentAmount: number; // Total investment amount in USD
     isLoading?: boolean;
     error?: string | null;
+}
+
+interface AllocationValidation {
+    isValid: boolean;
+    minPercentageNeeded: number;
+    minDollarAmount: number;
+    currentDollarAmount: number;
+    errorMessage?: string;
+    warningMessage?: string;
 }
 
 const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
     availableAssets,
     allocations,
     onChange,
+    totalInvestmentAmount,
     isLoading = false,
     error = null
 }) => {
@@ -28,7 +40,7 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
         const usedPercentage = allocations.reduce((sum, allocation) => sum + allocation.percentAmount, 0);
         const remaining = 100 - usedPercentage;
         if (remaining > 0) {
-            setPercentAmount(remaining);
+            setPercentAmount(Math.min(remaining, percentAmount));
         }
     }, [allocations]);
 
@@ -36,31 +48,79 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
     const usedPercentage = allocations.reduce((sum, allocation) => sum + allocation.percentAmount, 0);
     const remainingPercentage = 100 - usedPercentage;
 
-    // Get asset colors for visualization
-    const assetColors: Record<string, string> = {
-        BTC: '#F7931A',   // Bitcoin orange
-        ETH: '#627EEA',   // Ethereum blue
-        USDT: '#26A17B',  // Tether green
-        USDC: '#2775CA',  // USD Coin blue
-        BNB: '#F3BA2F',   // Binance Coin yellow
-        XRP: '#23292F',   // Ripple dark gray
-        ADA: '#0033AD',   // Cardano blue
-        SOL: '#14F195',   // Solana green
-        DOGE: '#C3A634',  // Dogecoin gold
-        DOT: '#E6007A',   // Polkadot pink
-        // Default color for others
-        DEFAULT: '#6B7280' // Gray
-    };
-
     // Get color for asset based on ticker
     const getAssetColor = (ticker: string): string => {
-        return assetColors[ticker] || assetColors.DEFAULT;
+        return getColor(ticker);
     };
 
     // Get an asset by ID
-    const getAssetById = (id: string): IAsset | undefined => {
+    const getAssetById = (id: string): EnhancedAsset | undefined => {
         return availableAssets.find(asset => asset.id === id);
     };
+
+    // Calculate dollar amount from percentage
+    const calculateDollarAmount = (percentage: number): number => {
+        return (percentage / 100) * totalInvestmentAmount;
+    };
+
+    // Calculate minimum percentage needed for an asset
+    const calculateMinimumPercentage = (asset: EnhancedAsset): number => {
+        if (!asset.minNotional || totalInvestmentAmount <= 0) return 0;
+        return Math.ceil((asset.minNotional / totalInvestmentAmount) * 100 * 100) / 100; // Round up to 2 decimals
+    };
+
+    // Validate allocation against minimum notional
+    const validateAllocation = (assetId: string, percentage: number): AllocationValidation => {
+        const asset = getAssetById(assetId);
+        if (!asset) {
+            return {
+                isValid: false,
+                minPercentageNeeded: 0,
+                minDollarAmount: 0,
+                currentDollarAmount: 0,
+                errorMessage: 'Asset not found'
+            };
+        }
+
+        const currentDollarAmount = calculateDollarAmount(percentage);
+        const minNotional = asset.minNotional || 0;
+        const minPercentageNeeded = calculateMinimumPercentage(asset);
+
+        // Handle case where min notional data is not available
+        if (asset.minNotional === undefined) {
+            return {
+                isValid: true, // Allow allocation but show warning
+                minPercentageNeeded: 0,
+                minDollarAmount: 0,
+                currentDollarAmount,
+                warningMessage: `Minimum order requirements for ${asset.ticker} could not be verified. Your order may be rejected if it's below the exchange minimum.`
+            };
+        }
+
+        const isValid = minNotional === 0 || currentDollarAmount >= minNotional;
+
+        return {
+            isValid,
+            minPercentageNeeded,
+            minDollarAmount: minNotional,
+            currentDollarAmount,
+            errorMessage: !isValid ?
+                `Minimum order value for ${asset.ticker} is $${minNotional.toFixed(2)} (${minPercentageNeeded.toFixed(2)}% of your investment)`
+                : undefined
+        };
+    };
+
+    // Get validation for all current allocations
+    const allocationValidations = useMemo(() => {
+        return allocations.map(allocation => ({
+            allocation,
+            validation: validateAllocation(allocation.assetId, allocation.percentAmount)
+        }));
+    }, [allocations, totalInvestmentAmount, availableAssets]);
+
+    // Check if there are any validation errors or warnings
+    const hasValidationErrors = allocationValidations.some(av => !av.validation.isValid);
+    const hasValidationWarnings = allocationValidations.some(av => av.validation.warningMessage);
 
     // Handle adding a new asset allocation
     const handleAddAllocation = () => {
@@ -81,12 +141,19 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
             return;
         }
 
+        // Validate minimum notional
+        const validation = validateAllocation(selectedAssetId, percentAmount);
+        if (!validation.isValid) {
+            setLocalError(validation.errorMessage || 'Allocation does not meet minimum requirements');
+            return;
+        }
+
         const selectedAsset = getAssetById(selectedAssetId);
         if (selectedAsset) {
-            const newAllocation: IAllocation = {
+            const newAllocation: Allocation = {
                 assetId: selectedAsset.id,
                 assetName: selectedAsset.name,
-                ticker: selectedAsset.ticker,
+                assetTicker: selectedAsset.ticker,
                 percentAmount: percentAmount
             };
 
@@ -94,7 +161,8 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
 
             // Reset form
             setSelectedAssetId('');
-            setPercentAmount(remainingPercentage - percentAmount);
+            const newRemaining = remainingPercentage - percentAmount;
+            setPercentAmount(newRemaining > 0 ? newRemaining : 0);
             setLocalError(null);
         }
     };
@@ -123,6 +191,13 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
             return;
         }
 
+        // Validate minimum notional for new percentage
+        const validation = validateAllocation(assetId, newPercentage);
+        if (!validation.isValid) {
+            setLocalError(validation.errorMessage || 'Allocation does not meet minimum requirements');
+            return;
+        }
+
         const updatedAllocations = allocations.map(allocation =>
             allocation.assetId === assetId
                 ? { ...allocation, percentAmount: newPercentage }
@@ -133,20 +208,60 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
         setLocalError(null);
     };
 
-    // Handle distributing remaining percentage evenly
+    // Handle distributing remaining percentage evenly with minimum notional checks
     const handleDistributeEvenly = () => {
         if (allocations.length === 0) return;
 
-        const percentPerAsset = Math.floor((100 / allocations.length) * 100) / 100; // Round to 2 decimal places
-        const updatedAllocations = allocations.map((allocation, index) => ({
-            ...allocation,
-            // Add the rounding remainder to the last allocation to ensure total is exactly 100%
-            percentAmount: index === allocations.length - 1
-                ? 100 - (percentPerAsset * (allocations.length - 1))
-                : percentPerAsset
-        }));
+        // Calculate base percentage per asset
+        const basePercentPerAsset = Math.floor((100 / allocations.length) * 100) / 100;
+        let remainder = 100 - (basePercentPerAsset * allocations.length);
 
-        onChange(updatedAllocations);
+        // Check if any assets would violate minimum notional with base percentage
+        const assetsNeedingMinimum: { allocation: Allocation; minPercent: number }[] = [];
+
+        allocations.forEach(allocation => {
+            const asset = getAssetById(allocation.assetId);
+            if (asset && asset.minNotional !== undefined) {
+                const minPercent = calculateMinimumPercentage(asset);
+                if (minPercent > basePercentPerAsset) {
+                    assetsNeedingMinimum.push({ allocation, minPercent });
+                }
+            }
+        });
+
+        // If some assets need more than base percentage, redistribute
+        if (assetsNeedingMinimum.length > 0) {
+            const totalMinimumNeeded = assetsNeedingMinimum.reduce((sum, item) => sum + item.minPercent, 0);
+            const remainingForOthers = 100 - totalMinimumNeeded;
+            const otherAssetsCount = allocations.length - assetsNeedingMinimum.length;
+
+            if (remainingForOthers < 0 || (otherAssetsCount > 0 && remainingForOthers / otherAssetsCount < 1)) {
+                setLocalError('Cannot distribute evenly while meeting minimum order requirements. Please adjust manually.');
+                return;
+            }
+
+            const percentForOthers = otherAssetsCount > 0 ? remainingForOthers / otherAssetsCount : 0;
+
+            const updatedAllocations = allocations.map(allocation => {
+                const needsMinimum = assetsNeedingMinimum.find(item => item.allocation.assetId === allocation.assetId);
+                return {
+                    ...allocation,
+                    percentAmount: needsMinimum ? needsMinimum.minPercent : percentForOthers
+                };
+            });
+
+            onChange(updatedAllocations);
+        } else {
+            // Standard even distribution
+            const updatedAllocations = allocations.map((allocation, index) => ({
+                ...allocation,
+                percentAmount: index === allocations.length - 1
+                    ? basePercentPerAsset + remainder
+                    : basePercentPerAsset
+            }));
+
+            onChange(updatedAllocations);
+        }
     };
 
     // Filter out already allocated assets from selection
@@ -154,12 +269,30 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
         asset => !allocations.some(allocation => allocation.assetId === asset.id)
     );
 
+    // Get suggested minimum percentage for selected asset
+    const selectedAssetMinPercentage = useMemo(() => {
+        if (!selectedAssetId) return 0;
+        const asset = getAssetById(selectedAssetId);
+        return asset ? calculateMinimumPercentage(asset) : 0;
+    }, [selectedAssetId, totalInvestmentAmount]);
+
+    // Auto-adjust percentage input when asset selection changes
+    useEffect(() => {
+        if (selectedAssetMinPercentage > percentAmount && selectedAssetMinPercentage <= remainingPercentage) {
+            setPercentAmount(selectedAssetMinPercentage);
+        }
+    }, [selectedAssetMinPercentage]);
+
+    // Get statistics about min notional data availability
+    const assetsWithMinNotional = availableAssets.filter(a => a.minNotional !== undefined).length;
+    const assetsWithoutMinNotional = availableAssets.length - assetsWithMinNotional;
+
     // If loading, show spinner
     if (isLoading) {
         return (
             <div className="flex justify-center items-center h-40">
                 <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full"></div>
-                <p className="ml-3 text-gray-600">Loading available assets...</p>
+                <p className="ml-3 text-gray-600">Loading asset allocation form...</p>
             </div>
         );
     }
@@ -178,9 +311,6 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                         <p className="text-sm leading-5 text-red-700">
                             {error}
                         </p>
-                        <p className="mt-2 text-sm leading-5 text-red-700">
-                            Using fallback asset data. Your selections may not be reflected in the final subscription.
-                        </p>
                     </div>
                 </div>
             </div>
@@ -189,12 +319,81 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
 
     return (
         <div className="space-y-6">
-            <h2 className="text-xl font-semibold">Choose Your Asset Allocation</h2>
+            <div className="flex justify-between items-center">
+                <h2 className="text-xl font-semibold">Choose Your Asset Allocation</h2>
+                <div className="text-sm text-gray-600">
+                    Total Investment: <span className="font-semibold">${totalInvestmentAmount.toFixed(2)}</span>
+                </div>
+            </div>
+
+            {/* Min notional data status indicator */}
+            {assetsWithoutMinNotional > 0 && (
+                <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded mb-4">
+                    <div className="flex items-start">
+                        <svg className="h-5 w-5 text-blue-500 mt-0.5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                        </svg>
+                        <div>
+                            <h4 className="font-medium">Minimum Order Requirements</h4>
+                            <p className="text-sm mt-1">
+                                {assetsWithMinNotional} of {availableAssets.length} assets have verified minimum order requirements.
+                                {assetsWithoutMinNotional > 0 && (
+                                    <span className="block mt-1">
+                                        {assetsWithoutMinNotional} asset(s) could not be verified and may have order restrictions.
+                                    </span>
+                                )}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Error message */}
             {localError && (
                 <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
                     <p>{localError}</p>
+                </div>
+            )}
+
+            {/* Validation errors for current allocations */}
+            {hasValidationErrors && (
+                <div className="bg-yellow-50 border border-yellow-400 text-yellow-700 px-4 py-3 rounded mb-4">
+                    <div className="flex items-start">
+                        <svg className="h-5 w-5 text-yellow-500 mt-0.5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                        </svg>
+                        <div>
+                            <h4 className="font-medium">Minimum Order Requirements Not Met</h4>
+                            <div className="mt-1 space-y-1">
+                                {allocationValidations.filter(av => !av.validation.isValid).map(av => (
+                                    <p key={av.allocation.assetId} className="text-sm">
+                                        • {av.validation.errorMessage}
+                                    </p>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Validation warnings for current allocations */}
+            {!hasValidationErrors && hasValidationWarnings && (
+                <div className="bg-amber-50 border border-amber-200 text-amber-700 px-4 py-3 rounded mb-4">
+                    <div className="flex items-start">
+                        <svg className="h-5 w-5 text-amber-500 mt-0.5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                        </svg>
+                        <div>
+                            <h4 className="font-medium">Minimum Order Requirements Not Verified</h4>
+                            <div className="mt-1 space-y-1">
+                                {allocationValidations.filter(av => av.validation.warningMessage).map(av => (
+                                    <p key={av.allocation.assetId} className="text-sm">
+                                        • {av.validation.warningMessage}
+                                    </p>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -219,35 +418,58 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                                 key={allocation.assetId}
                                 style={{
                                     width: `${allocation.percentAmount}%`,
-                                    backgroundColor: getAssetColor(allocation.ticker)
+                                    backgroundColor: getAssetColor(allocation.assetTicker)
                                 }}
                                 className="h-full"
-                                title={`${allocation.ticker}: ${allocation.percentAmount.toFixed(1)}%`}
+                                title={`${allocation.assetTicker}: ${allocation.percentAmount.toFixed(1)}%`}
                             />
                         ))}
                     </div>
 
                     {/* Allocation list with edit controls */}
                     <div className="space-y-2">
-                        {allocations.map(allocation => (
-                            <div key={allocation.assetId} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
-                                <div className="flex items-center">
+                        {allocationValidations.map(({ allocation, validation }) => (
+                            <div key={allocation.assetId} className={`flex items-center justify-between p-3 rounded-lg border ${!validation.isValid
+                                    ? 'bg-red-50 border-red-200'
+                                    : validation.warningMessage
+                                        ? 'bg-amber-50 border-amber-200'
+                                        : 'bg-gray-50 border-gray-200'
+                                }`}>
+                                <div className="flex items-center flex-1">
                                     <div
                                         className="w-4 h-4 rounded-full mr-2"
-                                        style={{ backgroundColor: getAssetColor(allocation.ticker) }}
+                                        style={{ backgroundColor: getAssetColor(allocation.assetTicker) }}
                                     />
-                                    <span className="font-medium">{allocation.assetName} ({allocation.ticker})</span>
+                                    <div className="flex-1">
+                                        <span className="font-medium">{allocation.assetName} ({allocation.assetTicker})</span>
+                                        <div className="text-sm text-gray-600">
+                                            ${validation.currentDollarAmount.toFixed(2)}
+                                            {validation.minDollarAmount > 0 ? (
+                                                <span className={validation.isValid ? 'text-green-600' : 'text-red-600'}>
+                                                    {' '}(min: ${validation.minDollarAmount.toFixed(2)})
+                                                </span>
+                                            ) : validation.warningMessage ? (
+                                                <span className="text-amber-600"> (min requirements unknown)</span>
+                                            ) : null}
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className="flex items-center space-x-4">
                                     <div className="flex items-center">
                                         <input
                                             type="number"
-                                            min="1"
+                                            min={validation.minPercentageNeeded || 1}
                                             max="100"
+                                            step="0.01"
                                             value={allocation.percentAmount}
                                             onChange={(e) => handleUpdateAllocation(allocation.assetId, parseFloat(e.target.value))}
-                                            className="w-16 p-1 border border-gray-300 rounded text-center"
+                                            className={`w-20 p-1 border rounded text-center ${!validation.isValid
+                                                    ? 'border-red-300'
+                                                    : validation.warningMessage
+                                                        ? 'border-amber-300'
+                                                        : 'border-gray-300'
+                                                }`}
                                         />
                                         <span className="ml-1">%</span>
                                     </div>
@@ -290,21 +512,33 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                             {filteredAssets.map(asset => (
                                 <option key={asset.id} value={asset.id}>
                                     {asset.name} ({asset.ticker})
+                                    {asset.minNotional !== undefined && ` - Min: $${asset.minNotional.toFixed(2)}`}
+                                    {asset.minNotional === undefined && ' - Min requirements unknown'}
                                 </option>
                             ))}
                         </select>
+
+                        {/* Minimum percentage hint */}
+                        {selectedAssetId && selectedAssetMinPercentage > 0 && (
+                            <p className="mt-1 text-sm text-blue-600">
+                                Minimum allocation: {selectedAssetMinPercentage.toFixed(2)}%
+                                (${calculateDollarAmount(selectedAssetMinPercentage).toFixed(2)})
+                            </p>
+                        )}
                     </div>
 
                     {/* Percentage input */}
                     <div className="flex">
                         <input
                             type="number"
-                            min="1"
+                            min={selectedAssetMinPercentage || 1}
                             max={remainingPercentage}
+                            step="0.01"
                             value={percentAmount}
                             onChange={(e) => setPercentAmount(parseFloat(e.target.value))}
                             className="w-full p-3 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                             disabled={remainingPercentage <= 0 || !selectedAssetId}
+                            placeholder={selectedAssetMinPercentage > 0 ? `Min: ${selectedAssetMinPercentage.toFixed(2)}` : ''}
                         />
                         <div className="bg-gray-100 px-3 flex items-center border-y border-r border-gray-300 rounded-r-lg">
                             %
@@ -312,11 +546,18 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                     </div>
                 </div>
 
+                {/* Dollar amount preview */}
+                {selectedAssetId && percentAmount > 0 && (
+                    <div className="mt-2 text-sm text-gray-600">
+                        Investment amount: ${calculateDollarAmount(percentAmount).toFixed(2)}
+                    </div>
+                )}
+
                 <button
                     type="button"
                     onClick={handleAddAllocation}
-                    disabled={remainingPercentage <= 0 || !selectedAssetId}
-                    className={`mt-3 ${remainingPercentage <= 0 || !selectedAssetId
+                    disabled={remainingPercentage <= 0 || !selectedAssetId || (selectedAssetMinPercentage > 0 && percentAmount < selectedAssetMinPercentage)}
+                    className={`mt-3 ${remainingPercentage <= 0 || !selectedAssetId || (selectedAssetMinPercentage > 0 && percentAmount < selectedAssetMinPercentage)
                         ? 'bg-gray-300 cursor-not-allowed'
                         : 'bg-blue-600 hover:bg-blue-700'
                         } text-white py-2 px-4 rounded-lg transition-colors`}
@@ -332,13 +573,15 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                 </div>
             )}
 
-            {/* Tips for allocation */}
+            {/* Enhanced tips for allocation */}
             <div className="bg-blue-50 p-4 rounded-lg">
                 <h4 className="font-medium text-blue-700 mb-2">Tips for Asset Allocation</h4>
                 <ul className="list-disc list-inside text-sm text-blue-700 space-y-1">
                     <li>Consider diversifying across different types of cryptocurrencies</li>
                     <li>Higher allocations to stable coins may reduce volatility</li>
+                    <li>Each asset has minimum order requirements that must be met</li>
                     <li>Your total allocation must equal 100%</li>
+                    <li>Minimum order amounts are determined by exchange requirements and are fetched in real-time</li>
                 </ul>
             </div>
         </div>

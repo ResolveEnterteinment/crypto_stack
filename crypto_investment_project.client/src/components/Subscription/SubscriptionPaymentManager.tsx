@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { PaymentData } from "../../types/payment";
 import { Subscription } from '../../types/subscription';
-import { AlertTriangle, Check, AlertCircle, Clock, CreditCard } from 'lucide-react';
+import { AlertTriangle, Check, AlertCircle, Clock, CreditCard, RefreshCw, Info, CheckCircle } from 'lucide-react';
 import api from '../../services/api'; // Import the API service
 
 interface ApiResponse<T> {
@@ -11,14 +11,18 @@ interface ApiResponse<T> {
 // Payment status component for displaying subscription payment status
 const PaymentStatusCard = ({
     subscription,
-    onUpdatePaymentMethod
+    onUpdatePaymentMethod,
+    onDataUpdated
 }: {
     subscription: Subscription | null;
     onUpdatePaymentMethod: (subscriptionId: string) => void;
+    onDataUpdated?: () => void;
 }) => {
     const [isLoading, setIsLoading] = useState<boolean>(false);
+    const [isRetrying, setIsRetrying] = useState<boolean>(false);
     const [payments, setPayments] = useState<PaymentData[]>([]);
     const [error, setError] = useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
     useEffect(() => {
         if (subscription?.id) {
@@ -47,6 +51,44 @@ const PaymentStatusCard = ({
             }
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handleRetryUpdate = async () => {
+        if (!subscription?.id) return;
+
+        setIsRetrying(true);
+        setError(null);
+        setSuccessMessage(null);
+
+        try {
+            const response = await api.post(`/payment/fetch-update/${subscription.id}`);
+
+            const { processedCount, message } = response.data;
+
+            // Show success message
+            setSuccessMessage(
+                processedCount > 0
+                    ? `Successfully synced ${processedCount} payment record${processedCount !== 1 ? 's' : ''}`
+                    : 'Payment records are up to date'
+            );
+
+            // Wait a moment for the processing to complete, then refresh
+            setTimeout(async () => {
+                await fetchPaymentData();
+
+                // Notify parent components to refresh their data
+                if (onDataUpdated) {
+                    onDataUpdated();
+                }
+            }, 1500);
+
+        } catch (err: any) {
+            const errorMessage = err.response?.data?.message || err.message || 'Failed to update payment records';
+            setError(errorMessage);
+            console.error('Error updating payment records:', err);
+        } finally {
+            setIsRetrying(false);
         }
     };
 
@@ -94,6 +136,64 @@ const PaymentStatusCard = ({
 
     // Check if there are any failed payments
     const hasFailedPayments = payments.some(payment => payment.status === 'FAILED');
+
+    // Info section for no payment records
+    const renderNoPaymentRecordsInfo = () => (
+        <div className="space-y-4">
+            {successMessage && (
+                <div className="p-4 bg-green-50 border-l-4 border-green-400">
+                    <div className="flex">
+                        <div className="flex-shrink-0">
+                            <CheckCircle className="h-5 w-5 text-green-400" />
+                        </div>
+                        <div className="ml-3">
+                            <p className="text-sm font-medium text-green-800">
+                                {successMessage}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <div className="p-4 bg-blue-50 border-l-4 border-blue-400">
+                <div className="flex">
+                    <div className="flex-shrink-0">
+                        <Info className="h-5 w-5 text-blue-400" />
+                    </div>
+                    <div className="ml-3 flex-1">
+                        <h3 className="text-sm font-medium text-blue-800">
+                            No Payment Records Found
+                        </h3>
+                        <div className="mt-2 text-sm text-blue-700">
+                            <p className="mb-2">
+                                This could happen for several reasons:
+                            </p>
+                            <ul className="list-disc list-inside space-y-1 text-xs">
+                                <li>Your subscription was recently created and the first payment is still being processed</li>
+                                <li>Payment webhook events from Stripe haven't been received yet</li>
+                                <li>There may be a temporary synchronization delay</li>
+                                <li>Your subscription is in a pending state waiting for payment confirmation</li>
+                            </ul>
+                        </div>
+                        <div className="mt-4 flex items-center space-x-3">
+                            <button
+                                type="button"
+                                onClick={handleRetryUpdate}
+                                disabled={isRetrying}
+                                className="inline-flex items-center px-3 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <RefreshCw className={`mr-2 h-4 w-4 ${isRetrying ? 'animate-spin' : ''}`} />
+                                {isRetrying ? 'Updating...' : 'Retry Update'}
+                            </button>
+                            <span className="text-xs text-blue-600">
+                                This will fetch the latest payment records from Stripe
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
 
     return (
         <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -146,7 +246,7 @@ const PaymentStatusCard = ({
                 ) : error ? (
                     <div className="text-center text-red-500 py-4">{error}</div>
                 ) : payments.length === 0 ? (
-                    <div className="text-center text-gray-500 py-4">No payment records found</div>
+                    renderNoPaymentRecordsInfo()
                 ) : (
                     <div className="flow-root">
                         <ul className="divide-y divide-gray-200">
@@ -206,7 +306,13 @@ const PaymentStatusCard = ({
 };
 
 // Main component that handles payment update flow
-const SubscriptionPaymentManager = ({ subscription }: { subscription: Subscription | null }) => {
+const SubscriptionPaymentManager = ({
+    subscription,
+    onDataUpdated
+}: {
+    subscription: Subscription | null;
+    onDataUpdated?: () => void;
+}) => {
     const [updateUrl, setUpdateUrl] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
@@ -272,6 +378,7 @@ const SubscriptionPaymentManager = ({ subscription }: { subscription: Subscripti
                 <PaymentStatusCard
                     subscription={subscription}
                     onUpdatePaymentMethod={handleUpdatePaymentMethod}
+                    onDataUpdated={onDataUpdated}
                 />
             )}
 

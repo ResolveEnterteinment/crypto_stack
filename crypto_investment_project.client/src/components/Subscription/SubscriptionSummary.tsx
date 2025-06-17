@@ -92,7 +92,7 @@ const SubscriptionSummary: React.FC<SubscriptionSummaryProps> = ({
                     {allocations.map(allocation => (
                         <div key={allocation.assetId} className="flex justify-between items-center">
                             <div className="flex items-center">
-                                <span className="font-medium">{allocation.assetName} ({allocation.ticker})</span>
+                                <span className="font-medium">{allocation.assetName} ({allocation.assetTicker})</span>
                             </div>
                             <div className="flex items-center">
                                 <span className="font-medium">{allocation.percentAmount}%</span>

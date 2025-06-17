@@ -1,5 +1,5 @@
 ﻿// src/pages/DashboardPage.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
@@ -12,6 +12,7 @@ import { Subscription } from "../types/subscription";
 import ITransaction from "../interfaces/ITransaction";
 import ApiTestPanel from '../components/DevTools/ApiTestPanel';
 import { Dashboard } from '../types/dashboardTypes';
+import SuccessNotification from '../components/Subscription/PaymentSyncSuccessNotification';
 
 const DashboardPageContent: React.FC = () => {
     // Get authenticated user and navigation
@@ -27,8 +28,85 @@ const DashboardPageContent: React.FC = () => {
     const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
     const [transactions, setTransactions] = useState<ITransaction[]>([]);
     const [transactionsLoading, setTransactionsLoading] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
+    const [successNotification, setSuccessNotification] = useState<{
+        show: boolean;
+        message: string;
+        type?: 'success' | 'error' | 'info';
+    }>({ show: false, message: '', type: 'success' });
 
-    // Fetch data when component mounts
+    // Memoized fetch functions to prevent unnecessary re-renders
+    const fetchDashboardData = useCallback(async () => {
+        try {
+            if (!user?.id) return;
+            const data = await getDashboardData(user.id);
+            setDashboardData(data);
+        } catch (err) {
+            console.error('Error fetching dashboard data:', err);
+            throw err;
+        }
+    }, [user?.id]);
+
+    const fetchSubscriptions = useCallback(async () => {
+        try {
+            if (!user?.id) throw new Error("User ID is missing.");
+            const trimmedUserId = user.id.trim();
+            const data = await getSubscriptions(trimmedUserId);
+            setSubscriptions(data);
+        } catch (err) {
+            console.error('Error fetching subscriptions:', err);
+            throw err;
+        }
+    }, [user?.id]);
+
+    // Enhanced refresh function with better error handling
+    const refreshDashboardData = useCallback(async () => {
+        try {
+            setRefreshing(true);
+            setError(null);
+
+            // Refresh both dashboard data and subscriptions in parallel
+            await Promise.all([
+                fetchDashboardData(),
+                fetchSubscriptions()
+            ]);
+
+            console.log('Dashboard data refreshed successfully');
+        } catch (err) {
+            console.error('Error refreshing dashboard data:', err);
+            setError('Failed to refresh dashboard data. Please try again.');
+
+            // Show error notification
+            setSuccessNotification({
+                show: true,
+                message: 'Failed to refresh dashboard data',
+                type: 'error'
+            });
+
+            throw err; // Re-throw to allow caller to handle
+        } finally {
+            setRefreshing(false);
+        }
+    }, [fetchDashboardData, fetchSubscriptions]);
+
+    // Enhanced data update handler with different success messages
+    const handleDataUpdated = useCallback(async (customMessage?: string) => {
+        try {
+            await refreshDashboardData();
+
+            // Show success notification with custom or default message
+            setSuccessNotification({
+                show: true,
+                message: customMessage || 'Dashboard updated with latest payment information',
+                type: 'success'
+            });
+        } catch (err) {
+            // Error is already handled in refreshDashboardData
+            console.error('Failed to handle data update:', err);
+        }
+    }, [refreshDashboardData]);
+
+    // Initial data fetch
     useEffect(() => {
         if (!user || !user.id) {
             // Clear state explicitly upon logout
@@ -55,37 +133,10 @@ const DashboardPageContent: React.FC = () => {
                 setError('Failed to load dashboard data. Please try again.');
                 setLoading(false);
             });
-    }, [user]);
-
-
-    // Fetch dashboard data
-    const fetchDashboardData = async () => {
-        try {
-            if (!user?.id) return;
-            const data = await getDashboardData(user.id);
-            setDashboardData(data);
-        } catch (err) {
-            console.error('Error fetching dashboard data:', err);
-            throw err;
-        }
-    };
-
-    // Fetch subscriptions
-    const fetchSubscriptions = async () => {
-        try {
-            console.log("User ID before fetching subscriptions:", user?.id);
-            if (!user?.id) throw new Error("User ID is missing.");
-            const trimmedUserId = user.id.trim(); // Trim whitespaces
-            const data = await getSubscriptions(trimmedUserId);
-            setSubscriptions(data);
-        } catch (err) {
-            console.error('Error fetching subscriptions:', err);
-            throw err;
-        }
-    };
+    }, [user, fetchDashboardData, fetchSubscriptions, navigate]);
 
     // Fetch subscription transactions
-    const fetchTransactionHistory = async (subscriptionId: string) => {
+    const fetchTransactionHistory = useCallback(async (subscriptionId: string) => {
         if (!subscriptionId) {
             console.error('Cannot fetch transaction history: Subscription ID is undefined');
             return;
@@ -97,33 +148,34 @@ const DashboardPageContent: React.FC = () => {
             setTransactions(data);
         } catch (err) {
             console.error('Error fetching transactions:', err);
-            // Show a user-friendly error in the modal instead of failing completely
             setTransactions([]);
         } finally {
             setTransactionsLoading(false);
         }
-    };
+    }, []);
 
-    const handleEditSubscription = (id: string) => {
-        // Navigate to subscription edit page
+    const handleEditSubscription = useCallback((id: string) => {
         navigate(`/subscription/edit/${id}`);
-    };
+    }, [navigate]);
 
-    const handleCancelSubscription = async (id: string) => {
+    const handleCancelSubscription = useCallback(async (id: string) => {
         try {
             await updateSubscription(id, { isCancelled: true });
 
-            // Update local state to reflect changes
-            setSubscriptions(subscriptions.map(sub =>
-                sub.id === id ? { ...sub, isCancelled: true } : sub
-            ));
+            // Refresh all data with custom success message
+            await handleDataUpdated('Subscription cancelled successfully');
+
         } catch (err) {
             console.error('Error cancelling subscription:', err);
-            alert('Failed to cancel subscription. Please try again.');
+            setSuccessNotification({
+                show: true,
+                message: 'Failed to cancel subscription. Please try again.',
+                type: 'error'
+            });
         }
-    };
+    }, [handleDataUpdated]);
 
-    const handleViewHistory = async (id: string) => {
+    const handleViewHistory = useCallback(async (id: string) => {
         if (!id) {
             console.error("Cannot view history: Subscription ID is missing");
             return;
@@ -132,23 +184,54 @@ const DashboardPageContent: React.FC = () => {
         setCurrentSubscriptionId(id);
         setHistoryModalOpen(true);
         await fetchTransactionHistory(id);
-    };
+    }, [fetchTransactionHistory]);
+
+    // Enhanced subscription cards rendering with memoization
+    const renderSubscriptionCards = useCallback(() => {
+        return subscriptions.map((subscription) => (
+            <SubscriptionCard
+                key={subscription.id}
+                subscription={subscription}
+                onEdit={handleEditSubscription}
+                onCancel={handleCancelSubscription}
+                onViewHistory={handleViewHistory}
+                onDataUpdated={() => handleDataUpdated()} // Pass the callback
+            />
+        ));
+    }, [subscriptions, handleEditSubscription, handleCancelSubscription, handleViewHistory, handleDataUpdated]);
+
+    // Hide notification handler
+    const handleHideNotification = useCallback(() => {
+        setSuccessNotification({ show: false, message: '', type: 'success' });
+    }, []);
 
     // Calculate profit/loss percentage
-    const calculateProfitPercentage = () => {
+    const calculateProfitPercentage = useCallback(() => {
         if (!dashboardData) return 0;
 
         const { totalInvestments, portfolioValue } = dashboardData;
         if (!totalInvestments || totalInvestments === 0) return 0;
 
         return ((portfolioValue - totalInvestments) / totalInvestments) * 100;
-    };
+    }, [dashboardData]);
 
     const profitPercentage = calculateProfitPercentage();
     const isProfitable = profitPercentage >= 0;
 
     // Find current subscription details for the modal
     const currentSubscription = subscriptions.find(sub => sub.id === currentSubscriptionId);
+
+    // Close transaction modal handler
+    const handleCloseTransactionModal = useCallback(() => {
+        setHistoryModalOpen(false);
+        setTransactions([]);
+        setCurrentSubscriptionId(null);
+    }, []);
+
+    // Manual refresh handler for retry button
+    const handleManualRefresh = useCallback(async () => {
+        await handleDataUpdated('Dashboard data refreshed successfully');
+    }, [handleDataUpdated]);
 
     if (loading) {
         return (
@@ -172,12 +255,31 @@ const DashboardPageContent: React.FC = () => {
                     </div>
                     <h2 className="text-2xl font-bold mb-4">Error Loading Dashboard</h2>
                     <p className="text-gray-600 mb-6">{error}</p>
-                    <button
-                        onClick={() => window.location.reload()}
-                        className="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
-                    >
-                        Retry
-                    </button>
+                    <div className="flex space-x-3">
+                        <button
+                            onClick={handleManualRefresh}
+                            disabled={refreshing}
+                            className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {refreshing ? (
+                                <span className="flex items-center justify-center">
+                                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    Refreshing...
+                                </span>
+                            ) : (
+                                'Retry'
+                            )}
+                        </button>
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="flex-1 bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700 transition-colors"
+                        >
+                            Reload Page
+                        </button>
+                    </div>
                 </div>
             </div>
         );
@@ -185,6 +287,19 @@ const DashboardPageContent: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-gray-50 relative top-5 py-8 px-4 lg:px-10">
+            {/* Refreshing Indicator */}
+            {refreshing && (
+                <div className="fixed top-20 right-4 z-40 bg-blue-100 border border-blue-200 rounded-lg p-3 shadow-lg">
+                    <div className="flex items-center space-x-2">
+                        <svg className="animate-spin h-4 w-4 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span className="text-sm font-medium text-blue-800">Refreshing dashboard...</span>
+                    </div>
+                </div>
+            )}
+
             {/* Summary Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                 {/* Total Investment Card */}
@@ -274,25 +389,36 @@ const DashboardPageContent: React.FC = () => {
             <div className="mb-8">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-2xl font-bold">Your Subscriptions</h2>
-                    <button
-                        onClick={() => navigate('/subscription/new')}
-                        className="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors text-sm font-medium"
-                    >
-                        New Subscription
-                    </button>
+                    <div className="flex space-x-3">
+                        <button
+                            onClick={handleManualRefresh}
+                            disabled={refreshing}
+                            className="bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {refreshing ? (
+                                <span className="flex items-center">
+                                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    Refreshing
+                                </span>
+                            ) : (
+                                'Refresh'
+                            )}
+                        </button>
+                        <button
+                            onClick={() => navigate('/subscription/new')}
+                            className="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors text-sm font-medium"
+                        >
+                            New Subscription
+                        </button>
+                    </div>
                 </div>
 
                 {subscriptions.length > 0 ? (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                        {subscriptions.map((subscription) => (
-                            <SubscriptionCard
-                                key={subscription.id}
-                                subscription={subscription}
-                                onEdit={handleEditSubscription}
-                                onCancel={handleCancelSubscription}
-                                onViewHistory={handleViewHistory}
-                            />
-                        ))}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {renderSubscriptionCards()}
                     </div>
                 ) : (
                     <div className="bg-white shadow-md rounded-lg p-8 text-center">
@@ -324,11 +450,7 @@ const DashboardPageContent: React.FC = () => {
                                 )}
                             </h3>
                             <button
-                                onClick={() => {
-                                    setHistoryModalOpen(false);
-                                    setTransactions([]);
-                                    setCurrentSubscriptionId(null); // Reset the ID when closing
-                                }}
+                                onClick={handleCloseTransactionModal}
                                 className="text-gray-500 hover:text-gray-700"
                             >
                                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -380,11 +502,7 @@ const DashboardPageContent: React.FC = () => {
                         <div className="mt-6">
                             <button
                                 className="w-full bg-blue-600 text-white py-3 rounded-md hover:bg-blue-700 font-medium"
-                                onClick={() => {
-                                    setHistoryModalOpen(false);
-                                    setTransactions([]);
-                                    setCurrentSubscriptionId(null); // Reset the ID when closing
-                                }}
+                                onClick={handleCloseTransactionModal}
                             >
                                 Close
                             </button>
@@ -392,6 +510,14 @@ const DashboardPageContent: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* Success/Error Notification */}
+            <SuccessNotification
+                show={successNotification.show}
+                message={successNotification.message}
+                type={successNotification.type}
+                onClose={handleHideNotification}
+            />
         </div>
     );
 };

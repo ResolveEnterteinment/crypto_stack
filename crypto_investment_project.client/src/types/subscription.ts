@@ -7,6 +7,7 @@ export interface Subscription {
     interval: string;
     amount: number;
     currency: string;
+    lastPayment: Date | string;
     nextDueDate: Date | string;
     endDate: Date | string;
     totalInvestments: number;

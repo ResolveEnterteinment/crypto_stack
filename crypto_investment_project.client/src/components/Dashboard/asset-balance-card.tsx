@@ -2,6 +2,7 @@
 import React from 'react';
 import { useNavigate } from "react-router-dom";
 import { AssetHolding } from '../../types/dashboardTypes';
+import { AssetColors } from '../../types/assetTypes';
 
 interface AssetBalanceCardProps {
     assetHoldings: AssetHolding[];
@@ -10,25 +11,10 @@ interface AssetBalanceCardProps {
 const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) => {
     const navigate = useNavigate();
 
-    // Define colors for different cryptocurrencies
-    const assetColors: Record<string, string> = {
-        BTC: '#F7931A',   // Bitcoin orange
-        ETH: '#627EEA',   // Ethereum blue
-        USDT: '#26A17B',  // Tether green
-        USDC: '#2775CA',  // USD Coin blue
-        BNB: '#F3BA2F',   // Binance Coin yellow
-        XRP: '#23292F',   // Ripple dark gray
-        ADA: '#0033AD',   // Cardano blue
-        SOL: '#14F195',   // Solana green
-        DOGE: '#C3A634',  // Dogecoin gold
-        DOT: '#E6007A',   // Polkadot pink
-        // Add more cryptocurrency colors as needed
-    };
-
     // Fallback color for assets not in the list
     const getAssetColor = (ticker: string | undefined): string => {
         if (!ticker) return '#6B7280'; // Gray fallback if ticker is undefined
-        return assetColors[ticker] || '#6B7280'; // Gray fallback
+        return AssetColors[ticker] || '#6B7280'; // Gray fallback
     };
 
     // Calculate total value to determine proportions

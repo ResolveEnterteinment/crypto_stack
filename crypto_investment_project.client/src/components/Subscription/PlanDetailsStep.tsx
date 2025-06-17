@@ -1,5 +1,6 @@
 // src/components/Subscription/PlanDetailsStep.jsx
 import React from 'react';
+import { Allocation } from '../../types/subscription';
 
 const INTERVALS = [
     { value: 'ONCE', label: 'One-time payment' },
@@ -9,19 +10,28 @@ const INTERVALS = [
     { value: 'YEARLY', label: 'Yearly' }
 ];
 
-const PlanDetailsStep = ({ formData, updateFormData }) => {
-    const handleIntervalChange = (e) => {
+interface PlanDetailsStepProps {
+    formData: {
+        interval: string;
+        amount: number;
+        endDate: Date | null;
+    };
+    updateFormData: any;
+}
+
+const PlanDetailsStep: React.FC<PlanDetailsStepProps> = ({ formData, updateFormData }) => {
+    const handleIntervalChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         updateFormData('interval', e.target.value);
     };
 
-    const handleAmountChange = (e) => {
+    const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const value = parseFloat(e.target.value);
         if (!isNaN(value) && value > 0) {
             updateFormData('amount', value);
         }
     };
 
-    const handleEndDateChange = (e) => {
+    const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const date = e.target.value ? new Date(e.target.value) : null;
         updateFormData('endDate', date);
     };

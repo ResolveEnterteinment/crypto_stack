@@ -146,9 +146,46 @@ namespace Infrastructure.Services.Asset
                     });
         }
 
+        /// <summary>
+        /// Gets multiple assets by their ticker symbols
+        /// </summary>
+        /// <param name="tickers">Collection of ticker symbols to search for</param>
+        /// <returns>List of matching assets</returns>
         public async Task<ResultWrapper<List<AssetData>>> GetManyByTickersAsync(IEnumerable<string> tickers)
         {
-            return await GetManyAsync(Builders<AssetData>.Filter.AnyIn("Ticker", tickers));
+            try
+            {
+                if (tickers == null || !tickers.Any())
+                {
+                    return ResultWrapper<List<AssetData>>.Success(new List<AssetData>());
+                }
+
+                // Convert to array and normalize tickers (uppercase, trim, remove duplicates)
+                var normalizedTickers = tickers
+                    .Where(t => !string.IsNullOrWhiteSpace(t))
+                    .Select(t => t.Trim().ToUpperInvariant())
+                    .Distinct()
+                    .ToArray();
+
+                if (normalizedTickers.Length == 0)
+                {
+                    return ResultWrapper<List<AssetData>>.Success(new List<AssetData>());
+                }
+
+                // 🔧 FIX: Use Filter.In instead of Filter.AnyIn
+                // AnyIn is for array fields, In is for simple field matching
+                var filter = Builders<AssetData>.Filter.In(a => a.Ticker, normalizedTickers);
+
+                // Alternative syntax if strongly-typed doesn't work:
+                // var filter = Builders<AssetData>.Filter.In("Ticker", normalizedTickers);
+
+                return await GetManyAsync(filter);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Error fetching assets by tickers: {ErrorMessage}", ex.Message);
+                return ResultWrapper<List<AssetData>>.FromException(ex);
+            }
         }
 
         public async Task<ResultWrapper<AssetData>> GetByTickerAsync(string ticker)

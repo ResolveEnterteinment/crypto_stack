@@ -61,11 +61,11 @@ namespace Infrastructure.Services.Exchange
                 PlacedExchangeOrder placedOrder;
 
                 // Execute the order based on side
-                if (side == Domain.Constants.OrderSide.Buy)
+                if (side == OrderSide.Buy)
                 {
                     placedOrder = await exchange.PlaceSpotMarketBuyOrder(symbol, quantity, paymentProviderId);
                 }
-                else if (side == Domain.Constants.OrderSide.Sell)
+                else if (side == OrderSide.Sell)
                 {
                     placedOrder = await exchange.PlaceSpotMarketSellOrder(symbol, quantity, paymentProviderId);
                 }
@@ -162,6 +162,49 @@ namespace Infrastructure.Services.Exchange
                     ex,
                     "Error getting previous orders sum for asset {Ticker} with payment ID {PaymentId}",
                     asset?.Ticker, payment?.PaymentProviderId);
+
+                return ResultWrapper<decimal>.FromException(ex);
+            }
+        }
+
+        public async Task<ResultWrapper<decimal>> GetMinNotional(
+            IExchange exchange,
+            AssetData asset
+            )
+        {
+            try
+            {
+                // Input validation
+                if (exchange == null)
+                    throw new ArgumentNullException(nameof(exchange));
+
+                if (asset == null)
+                    throw new ArgumentNullException(nameof(asset));
+
+                // Log the operation
+                _logger.LogInformation(
+                    "Checking min notional for asset {Ticker}",
+                    asset.Ticker, asset.Ticker);
+
+                // Get previous filled orders
+                var previousFilledSum = 0m;
+                var minNotionaResult = await exchange.GetMinNotional(asset.Ticker);
+
+                if (minNotionaResult == null || !minNotionaResult.IsSuccess)
+                {
+                    throw new Exception(
+                        $"Failed to fetch min notional for asset {asset.Ticker}: " +
+                        $"{minNotionaResult.ErrorMessage}");
+                }
+
+                return ResultWrapper<decimal>.Success(minNotionaResult.Data);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Error getting min notional for asset {Ticker}",
+                    asset?.Ticker);
 
                 return ResultWrapper<decimal>.FromException(ex);
             }

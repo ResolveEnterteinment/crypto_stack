@@ -2,30 +2,18 @@ import React, { useState } from 'react';
 import { SubscriptionCardProps, Allocation } from '../../types/subscription';
 import { Modal } from 'antd';
 import SubscriptionPaymentManager from '../Subscription/SubscriptionPaymentManager';
+import { AssetColors } from '../../types/assetTypes';
 
 
-const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
+const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () => void }> = ({
     subscription,
     onEdit,
     onCancel,
-    onViewHistory
+    onViewHistory,
+    onDataUpdated
 }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const [showPaymentModal, setShowPaymentModal] = useState(false);
-
-    const assetColors: Record<string, string> = {
-        BTC: '#F7931A',   // Bitcoin orange
-        ETH: '#627EEA',   // Ethereum blue
-        USDT: '#26A17B',  // Tether green
-        USDC: '#2775CA',  // USD Coin blue
-        BNB: '#F3BA2F',   // Binance Coin yellow
-        XRP: '#23292F',   // Ripple dark gray
-        ADA: '#0033AD',   // Cardano blue
-        SOL: '#14F195',   // Solana green
-        DOGE: '#C3A634',  // Dogecoin gold
-        DOT: '#E6007A',   // Polkadot pink
-        // Add more cryptocurrency colors as needed
-    };
 
     // Format date
     const formatDate = (dateString: string | Date): string => {
@@ -67,12 +55,30 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
         }
     };
 
+    // Handle payment modal close and potential refresh
+    const handlePaymentModalClose = () => {
+        setShowPaymentModal(false);
+    };
+
+    // Handle data update callback from payment manager
+    const handlePaymentDataUpdated = () => {
+        // Close modal after successful update
+        setTimeout(() => {
+            setShowPaymentModal(false);
+        }, 2000);
+
+        // Notify parent component to refresh
+        if (onDataUpdated) {
+            onDataUpdated();
+        }
+    };
+
     return (
-        <div className={`bg-white shadow-lg rounded-xl p-6 relative transition-all duration-200 ${subscription.isCancelled ? 'opacity-75' : ''}`}>
+        <div className={`bg-white shadow-lg rounded-xl p-6 relative transition-all duration-200 ${subscription.isCancelled && 'opacity-75'}`}>
             {/* Status badge */}
-            <div className={`absolute top-4 right-4 px-2 py-1 text-xs font-semibold rounded-full ${subscription.isCancelled ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+            <div className={`absolute top-4 right-4 px-2 py-1 text-xs font-semibold rounded-full ${subscription.isCancelled ? 'bg-red-100 text-red-800' : subscription.status == 'PENDING' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-800'
                 }`}>
-                {subscription.isCancelled ? 'Cancelled' : 'Active'}
+                {subscription.status}
             </div>
 
             {/* Subscription header */}
@@ -86,7 +92,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
             {/* Progress to next payment */}
             <div className="mb-6">
                 <div className="flex justify-between text-xs text-gray-500 mb-1">
-                    <span>Last payment</span>
+                    <span>Last payment: {subscription.lastPayment ? formatDate(subscription.lastPayment) : "N/A"}</span>
                     <span>Next payment: {formatDate(subscription.nextDueDate)}</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2.5">
@@ -136,7 +142,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
                                         key={alloc.assetId}
                                         style={{
                                             width: `${percentage}%`,
-                                            backgroundColor: assetColors[alloc.assetTicker] || '#6B7280'
+                                            backgroundColor: AssetColors[alloc.assetTicker] || '#6B7280'
                                         }}
                                         className="h-full"
                                         title={`${alloc.assetTicker}: ${percentage.toFixed(1)}%`}
@@ -151,7 +157,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
                                     <div className="flex items-center">
                                         <div
                                             className="w-3 h-3 rounded-full mr-2"
-                                            style={{ backgroundColor: assetColors[alloc.assetTicker] || '#6B7280' }}
+                                            style={{ backgroundColor: AssetColors[alloc.assetTicker] || '#6B7280' }}
                                         />
                                         <span className="font-medium">
                                             {(alloc.assetName || alloc.assetTicker) && <span className="text-gray-500 ml-1">{alloc.assetName} ({alloc.assetTicker})</span>}
@@ -199,11 +205,14 @@ const SubscriptionCard: React.FC<SubscriptionCardProps> = ({
             <Modal
                 title="Payment Status"
                 visible={showPaymentModal}
-                onCancel={() => setShowPaymentModal(false)}
+                onCancel={handlePaymentModalClose}
                 footer={null}
                 width={600}
             >
-                <SubscriptionPaymentManager subscription={subscription} />
+                <SubscriptionPaymentManager
+                    subscription={subscription}
+                    onDataUpdated={handlePaymentDataUpdated}
+                />
             </Modal>
         </div>
     );

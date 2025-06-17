@@ -106,7 +106,7 @@ const csrfTokenManager = {
 const encryptionManager = {
     enabled: false,
 
-    initialize: async (encryptionKey?: string): Promise<boolean> => {
+    initialize: async (encryptionKey: string | null): Promise<boolean> => {
         try {
             if (encryptionManager.enabled) {
                 console.debug("✅ Encryption already initialized");
@@ -217,7 +217,7 @@ apiClient.interceptors.request.use(
         (config as any)._requestStartTime = Date.now();
 
         // Add encryption for request data
-        if (encryptionManager.shouldEncrypt(config.url) && config.data) {
+        if (API_CONFIG.ENCRYPTION.ENABLED && encryptionManager.shouldEncrypt(config.url) && config.data) {
             try {
                 const dataToEncrypt = typeof config.data === 'string' ? config.data : JSON.stringify(config.data);
                 const encryptedPayload = await encryptionService.encrypt(dataToEncrypt);
@@ -417,7 +417,7 @@ const api = {
     isCsrfProtectionActive: (): boolean => !!csrfTokenManager.getToken(),
 
     // Encryption management
-    enableEncryption: async (key?: string): Promise<boolean> => {
+    enableEncryption: async (key: string | null): Promise<boolean> => {
         return encryptionManager.initialize(key);
     },
 
@@ -430,7 +430,7 @@ const api = {
     },
 
     // Initialize API services
-    initialize: async (encryptionKey?: string): Promise<void> => {
+    initialize: async (encryptionKey: string | null): Promise<void> => {
         console.info("🚀 Initializing API services...");
 
         try {

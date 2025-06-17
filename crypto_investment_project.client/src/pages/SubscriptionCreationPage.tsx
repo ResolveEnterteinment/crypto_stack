@@ -10,8 +10,8 @@ import { getSupportedAssets } from '../services/asset';
 import { createSubscription } from '../services/subscription';
 import { initiatePayment } from '../services/payment';
 import { formatApiError } from '../utils/apiErrorHandler';
-import IAsset from '../interfaces/IAsset';
-import IAllocation from '../interfaces/IAllocation';
+import { Asset } from '../types/assetTypes';
+import { Allocation } from '../types/subscription';
 
 // Error feedback component with improved UX
 const ErrorFeedback: React.FC<{ error: string | null; onDismiss: () => void }> = ({ error, onDismiss }) => {
@@ -48,7 +48,7 @@ const SubscriptionCreationPage: React.FC = () => {
     const [currentStep, setCurrentStep] = useState<number>(1);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
-    const [availableAssets, setAvailableAssets] = useState<IAsset[]>([]);
+    const [availableAssets, setAvailableAssets] = useState<Asset[]>([]);
     const [paymentProcessing, setPaymentProcessing] = useState<boolean>(false);
     const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
@@ -59,7 +59,7 @@ const SubscriptionCreationPage: React.FC = () => {
         amount: 100,
         currency: 'USD',
         endDate: null as Date | null,
-        allocations: [] as IAllocation[]
+        allocations: [] as Allocation[]
     });
 
     // Reset error when changing steps

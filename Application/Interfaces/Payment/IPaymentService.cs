@@ -65,5 +65,20 @@ namespace Application.Interfaces.Payment
         Task<ResultWrapper<IEnumerable<PaymentData>>> GetPaymentsForSubscriptionAsync(Guid subscriptionId);
         Task<ResultWrapper<int>> GetFailedPaymentCountAsync(Guid subscriptionId);
         Task<ResultWrapper<PaymentData>> GetLatestPaymentAsync(Guid subscriptionId);
+
+        /// <summary>
+        /// Fetches payment records from Stripe for a subscription and processes any missing records
+        /// </summary>
+        /// <param name="stripeSubscriptionId">The Stripe subscription ID</param>
+        /// <returns>Number of missing payment records that were processed</returns>
+        Task<ResultWrapper<int>> FetchPaymentsBySubscriptionAsync(string stripeSubscriptionId);
+
+        /// <summary>
+        /// Searches for Stripe subscriptions by metadata
+        /// </summary>
+        /// <param name="metadataKey">The metadata key to search for</param>
+        /// <param name="metadataValue">The metadata value to search for</param>
+        /// <returns>The first matching Stripe subscription ID, or null if not found</returns>
+        Task<ResultWrapper<string?>> SearchStripeSubscriptionByMetadataAsync(string metadataKey, string metadataValue);
     }
 }

@@ -1,7 +1,8 @@
-import IAllocation from '../../interfaces/IAllocation';
+import { AssetColors } from "../../types/assetTypes";
+import { Allocation } from "../../types/subscription";
 
 // Define interval display mapping
-const INTERVAL_DISPLAY = {
+const INTERVAL_DISPLAY: Record<string, string> = {
     ONCE: 'One-time payment',
     DAILY: 'Daily',
     WEEKLY: 'Weekly',
@@ -9,22 +10,17 @@ const INTERVAL_DISPLAY = {
     YEARLY: 'Yearly'
 };
 
-// Define asset colors for visualization
-const ASSET_COLORS = {
-    BTC: '#F7931A',   // Bitcoin orange
-    ETH: '#627EEA',   // Ethereum blue
-    USDT: '#26A17B',  // Tether green
-    USDC: '#2775CA',  // USD Coin blue
-    BNB: '#F3BA2F',   // Binance Coin yellow
-    XRP: '#23292F',   // Ripple dark gray
-    ADA: '#0033AD',   // Cardano blue
-    SOL: '#14F195',   // Solana green
-    DOGE: '#C3A634',  // Dogecoin gold
-    DOT: '#E6007A',   // Polkadot pink
-    DEFAULT: '#6B7280' // Gray
-};
+interface ReviewStepProps {
+    formData: {
+        interval: string;
+        amount: number;
+        currency: string;
+        endDate: Date | null;
+        allocations: Omit<Allocation, 'id'>[];
+    };
+}
 
-const ReviewStep = ({ formData }) => {
+const ReviewStep: React.FC<ReviewStepProps> = ({ formData }) => {
     const { interval, amount, currency, endDate, allocations } = formData;
 
     // Format date for display
@@ -41,22 +37,33 @@ const ReviewStep = ({ formData }) => {
     const calculateAnnualAmount = () => {
         if (interval === 'ONCE') return amount;
 
-        const multipliers = {
-            'DAILY': 365,
-            'WEEKLY': 52,
-            'MONTHLY': 12,
-            'YEARLY': 1
-        };
-
-        return amount * (multipliers[interval] || 0);
+        switch (interval) {
+            case "ONCE":
+                return amount;
+                break;
+            case "DAILY":
+                return amount * 365;
+                break;
+            case "WEEKLY":
+                return amount * 52;
+                break;
+            case "MONTHLY":
+                return amount * 12;
+                break;
+            case "YEARLY":
+                return amount;
+                break;
+            default:
+                throw new Error("Wrong interval.");
+        }
     };
 
     // Get estimated annual investment
     const annualAmount = calculateAnnualAmount();
 
     // Get color for asset based on ticker
-    const getAssetColor = (ticker) => {
-        return ASSET_COLORS[ticker] || ASSET_COLORS.DEFAULT;
+    const getAssetColor = (ticker:string) => {
+        return AssetColors[ticker] || AssetColors.DEFAULT;
     };
 
     // Calculate fees
@@ -91,7 +98,7 @@ const ReviewStep = ({ formData }) => {
                         <>
                             <div>
                                 <p className="text-sm text-gray-500">End Date</p>
-                                <p className="font-medium">{formatDate(endDate)}</p>
+                                <p className="font-medium">{endDate ? formatDate(endDate) : "N/A"}</p>
                             </div>
                             <div>
                                 <p className="text-sm text-gray-500">Est. Annual Investment</p>
@@ -117,12 +124,12 @@ const ReviewStep = ({ formData }) => {
 
                 {/* Visual representation of allocation */}
                 <div className="mb-4 h-8 bg-gray-200 rounded-full overflow-hidden flex">
-                    {allocations.map((allocation: IAllocation) => (
+                    {allocations.map((allocation: Allocation) => (
                         <div
                             key={allocation.assetId}
                             style={{
                                 width: `${allocation.percentAmount}%`,
-                                backgroundColor: getAssetColor(allocation.ticker)
+                                backgroundColor: getAssetColor(allocation.assetTicker)
                             }}
                             className="h-full"
                         />
@@ -131,14 +138,14 @@ const ReviewStep = ({ formData }) => {
 
                 {/* Allocation details */}
                 <div className="space-y-3 mt-4">
-                    {allocations.map((allocation: IAllocation) => (
+                    {allocations.map((allocation: Allocation) => (
                         <div key={allocation.assetId} className="flex justify-between items-center border-b border-gray-200 pb-2">
                             <div className="flex items-center">
                                 <div
                                     className="w-4 h-4 rounded-full mr-2"
-                                    style={{ backgroundColor: getAssetColor(allocation.ticker) }}
+                                    style={{ backgroundColor: getAssetColor(allocation.assetTicker) }}
                                 />
-                                <span className="font-medium">{allocation.assetName} ({allocation.ticker})</span>
+                                <span className="font-medium">{allocation.assetName} ({allocation.assetTicker})</span>
                             </div>
                             <div className="flex items-center">
                                 <span className="font-medium">{allocation.percentAmount}%</span>
