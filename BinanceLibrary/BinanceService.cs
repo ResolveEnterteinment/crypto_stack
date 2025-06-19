@@ -652,24 +652,19 @@ namespace BinanceLibrary
             }
         }
 
-        /// <summary>
-        /// Gets minimum notional values for multiple assets simultaneously
-        /// </summary>
-        /// <param name="tickers">Array of asset tickers to get minimum notionals for</param>
-        /// <returns>Dictionary mapping symbols to their minimum notional values</returns>
         public async Task<ResultWrapper<Dictionary<string, decimal>>> GetMinNotionals(string[] tickers)
         {
-            if (tickers == null || tickers.Length == 0)
-                throw new ArgumentException("Tickers array cannot be null or empty", nameof(tickers));
+            if (tickers.Any(t => string.IsNullOrWhiteSpace(t)))
+                throw new ArgumentException("Ticker cannot be null or empty");
 
             try
             {
-                _logger.LogInformation("Fetching minimum notionals for {Count} tickers: {Tickers}",
-                    tickers.Length, string.Join(", ", tickers));
+                var symbols = tickers.Select(t => $"{t}{_reserveAssetTicker}");
+                _logger.LogInformation("Fetching minimum notional for {Symbols}", string.Join(',', symbols));
 
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    // Get exchange info which contains trading rules and filters for all symbols
+                    // Get exchange info which contains trading rules and filters
                     var exchangeInfoResult = await _binanceClient.SpotApi.ExchangeData.GetExchangeInfoAsync();
                     if (!exchangeInfoResult.Success || exchangeInfoResult.Data?.Symbols == null)
                     {
@@ -678,69 +673,31 @@ namespace BinanceLibrary
                         throw new ExchangeApiException(errorMessage, Name);
                     }
 
-                    var result = new Dictionary<string, decimal>();
+                    // Find the specific symbol in the exchange info
+                    var symbolsInfo = exchangeInfoResult.Data.Symbols
+                        .Where(s => symbols.Contains(s.Name));
 
-                    // Process each ticker
-                    foreach (var ticker in tickers)
+                    if (symbolsInfo == null || !symbolsInfo.Any())
                     {
-                        var symbol = $"{ticker}{_reserveAssetTicker}";
-
-                        try
-                        {
-                            // Find the specific symbol in the exchange info
-                            var symbolInfo = exchangeInfoResult.Data.Symbols
-                                .FirstOrDefault(s => s.Name.Equals(symbol, StringComparison.OrdinalIgnoreCase));
-
-                            if (symbolInfo == null)
-                            {
-                                _logger.LogWarning("Symbol {Symbol} not found in Binance exchange info", symbol);
-                                continue; // Skip this ticker instead of failing the entire operation
-                            }
-
-                            // Look for MIN_NOTIONAL filter in the symbol's filters using the specific filter type
-                            var minNotionalFilter = symbolInfo.Filters?
-                                .OfType<Binance.Net.Objects.Models.Spot.BinanceSymbolMinNotionalFilter>()
-                                .FirstOrDefault();
-
-                            if (minNotionalFilter == null)
-                            {
-                                _logger.LogWarning("MIN_NOTIONAL filter not found for {Symbol}, using default value of 10", symbol);
-                                result[symbol] = 10m; // Default fallback value
-                                continue;
-                            }
-
-                            // Extract the minimum notional value from the filter
-                            var minNotional = minNotionalFilter.MinNotional;
-
-                            if (minNotional <= 0)
-                            {
-                                _logger.LogWarning("Invalid minimum notional value ({MinNotional}) for {Symbol}, using default value of 10",
-                                    minNotional, symbol);
-                                result[symbol] = 10m; // Default fallback value
-                            }
-                            else
-                            {
-                                result[symbol] = minNotional;
-                                _logger.LogInformation("Minimum notional for {Symbol}: {MinNotional}", symbol, minNotional);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError("Error processing minimum notional for ticker {Ticker}: {Message}", ticker, ex.Message);
-                            // Continue with other tickers instead of failing the entire operation
-                            continue;
-                        }
+                        var errorMessage = $"Symbols {string.Join(',', symbols)} not found in Binance exchange info";
+                        _logger.LogError(errorMessage);
+                        throw new ExchangeApiException(errorMessage, Name);
                     }
 
-                    _logger.LogInformation("Successfully retrieved minimum notionals for {Count}/{Total} symbols",
-                        result.Count, tickers.Length);
+                    // Extract the minimum notional value from the filter
+                    var minNotionals = new Dictionary<string, decimal>();
+                    foreach (var s in symbolsInfo)
+                    {
+                        minNotionals.Add(s.Name, s.NotionalFilter?.MinNotional ?? 0m);
+                    }
 
-                    return ResultWrapper<Dictionary<string, decimal>>.Success(result);
+                    _logger.LogInformation("Minimum notionals retrieved for {Count} symbols", minNotionals.Count);
+                    return ResultWrapper<Dictionary<string, decimal>>.Success(minNotionals);
                 });
             }
             catch (Exception ex) when (ex is not ExchangeApiException)
             {
-                var errorMessage = $"Error fetching minimum notionals for tickers: {ex.Message}";
+                var errorMessage = $"Error fetching minimum notional for tickers: {ex.Message}";
                 _logger.LogError(errorMessage);
                 return ResultWrapper<Dictionary<string, decimal>>.FromException(
                     new ExchangeApiException(errorMessage, Name, ex));
