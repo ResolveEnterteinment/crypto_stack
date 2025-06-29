@@ -54,7 +54,6 @@ namespace crypto_investment_project.Server.Controllers
         /// <returns>Checkout session URL</returns>
         [HttpPost("create-checkout-session")]
         [Authorize]
-        //[IgnoreAntiforgeryToken]
         [EnableRateLimiting("standard")]
         public async Task<IActionResult> CreateCheckoutSession([FromBody] CheckoutSessionRequest request)
         {
@@ -127,9 +126,9 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // Set default return and cancel URLs if not provided
-                    var appBaseUrl = _configuration["AppSettings:BaseUrl"] ?? "https://example.com";
-                    string returnUrl = request.ReturnUrl ?? $"{appBaseUrl}/payment/success?subscription_id={subscriptionId}&amount={request.Amount}&currency={request.Currency ?? "USD"}";
-                    string cancelUrl = request.CancelUrl ?? $"{appBaseUrl}/payment/cancel?subscription_id={subscriptionId}";
+                    var appBaseUrl = _configuration["PaymentService:BaseUrl"] ?? "https://localhost:7144";
+                    string returnUrl = request.ReturnUrl;
+                    string cancelUrl = request.CancelUrl;
 
                     // Create Stripe checkout session
                     var sessionResult = await _paymentService.CreateCheckoutSessionAsync(new CreateCheckoutSessionDto

@@ -16,6 +16,7 @@
     <Folder Include="public\models\" />
     <Folder Include="src\components\DevTools\" />
     <Folder Include="src\components\LandingPage\ui\" />
+    <Folder Include="src\components\Payment\" />
     <Folder Include="src\components\Withdrawal\" />
   </ItemGroup>
 </Project>

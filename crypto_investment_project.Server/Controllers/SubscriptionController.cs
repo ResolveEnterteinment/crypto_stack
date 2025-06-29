@@ -1,13 +1,18 @@
 using Application.Contracts.Requests.Subscription;
 using Application.Extensions;
 using Application.Interfaces;
+using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
+using Domain.Constants;
 using Domain.DTOs;
 using Domain.Exceptions;
+using Domain.Models.Subscription;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Stripe;
+using StripeLibrary;
 using System.Diagnostics;
 using System.Security.Claims;
 
@@ -19,6 +24,7 @@ namespace crypto_investment_project.Server.Controllers
     public class SubscriptionController : ControllerBase
     {
         private readonly ISubscriptionService _subscriptionService;
+        private readonly IPaymentService _paymentService;
         private readonly IValidator<SubscriptionCreateRequest> _createValidator;
         private readonly IValidator<SubscriptionUpdateRequest> _updateValidator;
         private readonly ILogger<SubscriptionController> _logger;
@@ -27,6 +33,7 @@ namespace crypto_investment_project.Server.Controllers
 
         public SubscriptionController(
             ISubscriptionService subscriptionService,
+            IPaymentService paymentService,
             IValidator<SubscriptionCreateRequest> createValidator,
             IValidator<SubscriptionUpdateRequest> updateValidator,
             IIdempotencyService idempotencyService,
@@ -34,6 +41,7 @@ namespace crypto_investment_project.Server.Controllers
             ILogger<SubscriptionController> logger)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
+            _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _createValidator = createValidator ?? throw new ArgumentNullException(nameof(createValidator));
             _updateValidator = updateValidator ?? throw new ArgumentNullException(nameof(updateValidator));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
@@ -53,7 +61,6 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="404">If the user is not found</response>
         [HttpGet]
         [Route("user/{user}")]
-        //[IgnoreAntiforgeryToken]
         [Authorize]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(StatusCodes.Status200OK)]
@@ -250,7 +257,8 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         /// <summary>
-        /// Updates an existing subscription
+        /// Updates an existing subscription (amount, endDate, allocations only)
+        /// Automatically syncs amount and endDate changes with Stripe
         /// </summary>
         /// <param name="updateRequest">The updated subscription details</param>
         /// <param name="id">The ID of the subscription to update</param>
@@ -267,7 +275,6 @@ namespace crypto_investment_project.Server.Controllers
         [Route("update/{id}")]
         [Authorize]
         [EnableRateLimiting("heavyOperations")]
-        //[ValidateAntiForgeryToken]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -283,8 +290,7 @@ namespace crypto_investment_project.Server.Controllers
             using (_logger.BeginScope(new Dictionary<string, object>
             {
                 ["SubscriptionId"] = id,
-                ["Operation"] = "UpdateSubscription",
-                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                ["UpdateRequest"] = updateRequest,
                 ["IdempotencyKey"] = idempotencyKey
             }))
             {
@@ -314,14 +320,16 @@ namespace crypto_investment_project.Server.Controllers
                             new { message = "Request already processed" });
                     }
 
-                    // Get the subscription to check ownership
+                    // Get the subscription to check ownership and current values
                     var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
                     if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                     {
                         _logger.LogWarning("Subscription not found: {SubscriptionId}", id);
                         return NotFound(new { message = "Subscription not found" });
                     }
+
                     var subscription = subscriptionResult.Data;
+
                     // Authorization check - verify current user owns this subscription or is admin
                     var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
                     var isAdmin = User.IsInRole("ADMIN");
@@ -350,23 +358,70 @@ namespace crypto_investment_project.Server.Controllers
                         return UnprocessableEntity(new { message = "Validation failed", errors });
                     }
 
-                    // Process the request
-                    var subscriptionUpdateResult = await _subscriptionService.UpdateAsync(subscriptionId, updateRequest);
+                    // Determine what needs to be updated
+                    bool requiresStripeUpdate = RequiresStripeUpdate(subscription, updateRequest);
+                    bool requiresLocalUpdate = RequiresLocalUpdate(subscription, updateRequest);
 
-                    if (!subscriptionUpdateResult.IsSuccess)
+                    var updateResults = new
                     {
-                        throw new DomainException(subscriptionUpdateResult.ErrorMessage, "SUBSCRIPTION_UPDATE_FAILED");
+                        localUpdated = false,
+                        stripeUpdated = false,
+                        modifiedCount = 0L
+                    };
+
+                    // Update Stripe subscription if needed (amount or endDate changes)
+                    if (requiresStripeUpdate)
+                    {
+                        var stripeService = _paymentService.Providers["Stripe"] as IStripeService;
+                        if (stripeService == null)
+                            return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable, $"Stripe service not available for subscription {id} update")
+                                .ToActionResult(this);
+
+                        var stripeUpdateResult = await stripeService.UpdateSubscriptionAsync(
+                            subscription.ProviderSubscriptionId,
+                            subscription.Id.ToString(),
+                            updateRequest.Amount,
+                            updateRequest.EndDate);
+
+                        if (!stripeUpdateResult.IsSuccess)
+                        {
+                            return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable, $"Failed to update Stripe subscription for {id}: {stripeUpdateResult.ErrorMessage}")
+                                .ToActionResult(this);
+                        }
+
+                        updateResults = updateResults with { stripeUpdated = true };
+                        _logger.LogInformation("Successfully updated Stripe subscription for {SubscriptionId}", id);
+                    }
+
+                    // Update local subscription if needed (always for allocations)
+                    if (requiresLocalUpdate)
+                    {
+                        var subscriptionUpdateResult = await _subscriptionService.UpdateAsync(subscriptionId, updateRequest);
+
+                        if (!subscriptionUpdateResult.IsSuccess)
+                        {
+                            throw new DomainException(subscriptionUpdateResult.ErrorMessage, "SUBSCRIPTION_UPDATE_FAILED");
+                        }
+
+                        updateResults = updateResults with
+                        {
+                            localUpdated = true,
+                            modifiedCount = subscriptionUpdateResult.Data.ModifiedCount
+                        };
                     }
 
                     // Store the result for idempotency
-                    await _idempotencyService.StoreResultAsync(idempotencyKey, subscriptionUpdateResult.Data);
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, updateResults.modifiedCount);
 
-                    _logger.LogInformation("Successfully updated subscription {SubscriptionId}", id);
+                    _logger.LogInformation("Successfully processed subscription {SubscriptionId} update: Local={LocalUpdated}, Stripe={StripeUpdated}",
+                        id, updateResults.localUpdated, updateResults.stripeUpdated);
 
                     return Ok(new
                     {
                         message = "Subscription updated successfully",
-                        modifiedCount = subscriptionUpdateResult.Data
+                        modifiedCount = updateResults.modifiedCount,
+                        localUpdated = updateResults.localUpdated,
+                        stripeUpdated = updateResults.stripeUpdated
                     });
                 }
                 catch (Exception ex)
@@ -376,6 +431,39 @@ namespace crypto_investment_project.Server.Controllers
                     throw;
                 }
             }
+        }
+
+        /// <summary>
+        /// Determines if the subscription update requires Stripe synchronization
+        /// Only amount and endDate changes require Stripe updates
+        /// </summary>
+        private bool RequiresStripeUpdate(SubscriptionData currentSubscription, SubscriptionUpdateRequest updateRequest)
+        {
+            // Check if amount changed
+            if (updateRequest.Amount.HasValue && updateRequest.Amount.Value != currentSubscription.Amount)
+            {
+                return true;
+            }
+
+            // Check if end date changed
+            if (updateRequest.EndDate != currentSubscription.EndDate)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Determines if the subscription update requires local database updates
+        /// Amount, endDate, and allocation changes require local updates
+        /// </summary>
+        private bool RequiresLocalUpdate(SubscriptionData currentSubscription, SubscriptionUpdateRequest updateRequest)
+        {
+            // Always update locally if any field is provided
+            return updateRequest.Amount.HasValue ||
+                   updateRequest.EndDate != currentSubscription.EndDate ||
+                   (updateRequest.Allocations != null && updateRequest.Allocations.Any());
         }
 
         /// <summary>
@@ -394,7 +482,6 @@ namespace crypto_investment_project.Server.Controllers
         [Route("cancel/{id}")]
         [Authorize]
         [EnableRateLimiting("standard")]
-        //[ValidateAntiForgeryToken]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -408,7 +495,6 @@ namespace crypto_investment_project.Server.Controllers
             using (_logger.BeginScope(new Dictionary<string, object>
             {
                 ["SubscriptionId"] = id,
-                ["Operation"] = "CancelSubscription",
                 ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
                 ["IdempotencyKey"] = idempotencyKey
             }))
@@ -460,11 +546,34 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // Process the request
-                    var result = await _subscriptionService.CancelAsync(subscriptionId);
+
+                    if (subscription.Status == SubscriptionStatus.Active)
+                    {
+                        //First try to cancel stripe subscription
+                        var stripeService = _paymentService.Providers["Stripe"] as IStripeService;
+
+                        var stripeCancelResult = await stripeService.CancelSubscription(subscription.ProviderSubscriptionId);
+
+                        if (stripeCancelResult == null || !stripeCancelResult.IsSuccess)
+                        {
+                            throw new DatabaseException($"Failed to cancel Stripe subscription {id}");
+                        }
+                    }
+
+                    var result = new ResultWrapper();
+                    if(subscription.Status == SubscriptionStatus.Canceled || subscription.Status == SubscriptionStatus.Pending)
+                    {
+                        result = await _subscriptionService.DeleteAsync(subscriptionId);
+                    }
+                    else
+                    {
+                        result = await _subscriptionService.CancelAsync(subscriptionId);
+                    }
+                        
 
                     if (result == null || !result.IsSuccess)
                     {
-                        throw new DatabaseException($"Failed to cancel subscription {id}");
+                        throw new DatabaseException($"Failed to cancel domain subscription {id}");
                     }
 
                     // Store the result for idempotency

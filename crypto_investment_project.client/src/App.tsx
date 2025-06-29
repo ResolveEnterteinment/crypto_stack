@@ -14,6 +14,8 @@ import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import { AuthProvider } from "./context/AuthContext";
 import { NotificationProvider } from "./context/NotificationContext";
+import PaymentCancelPage from "./pages/PaymentCancelPage";
+import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 
 const App: React.FC = () => {
     return (
@@ -39,6 +41,20 @@ const App: React.FC = () => {
                         <Route path="/subscription/new" element={
                             <ProtectedRoute>
                                 <SubscriptionCreationPage />
+                            </ProtectedRoute>
+                        } />
+
+                        {/* Payment checkout success */}
+                        <Route path="/payment/checkout/success" element={
+                            <ProtectedRoute>
+                                <PaymentSuccessPage />
+                            </ProtectedRoute>
+                        } />
+
+                        {/* Payment checkout cancelled */}
+                        <Route path="/payment/checkout/cancel" element={
+                            <ProtectedRoute>
+                                <PaymentCancelPage />
                             </ProtectedRoute>
                         } />
 

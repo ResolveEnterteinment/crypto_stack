@@ -13,7 +13,6 @@ const PaymentSuccessPage: React.FC = () => {
     const [paymentDetails, setPaymentDetails] = useState<any>(null);
 
     // Get parameters from URL
-    const sessionId = searchParams.get('session_id');
     const subscriptionId = searchParams.get('subscription_id');
 
     useEffect(() => {
@@ -47,7 +46,7 @@ const PaymentSuccessPage: React.FC = () => {
         };
 
         fetchPaymentDetails();
-    }, [user, navigate, sessionId, subscriptionId, searchParams]);
+    }, [user, navigate, subscriptionId, searchParams]);
 
     // Handler functions
     const handleViewDashboard = () => {
@@ -61,11 +60,6 @@ const PaymentSuccessPage: React.FC = () => {
     if (loading) {
         return (
             <>
-                <Navbar
-                    showProfile={() => navigate('/profile')}
-                    showSettings={() => navigate('/settings')}
-                    logout={() => { }}
-                />
                 <div className="min-h-screen bg-gray-50 flex justify-center items-center">
                     <div className="text-center">
                         <div className="w-16 h-16 border-4 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
@@ -78,11 +72,6 @@ const PaymentSuccessPage: React.FC = () => {
 
     return (
         <>
-            <Navbar
-                showProfile={() => navigate('/profile')}
-                showSettings={() => navigate('/settings')}
-                logout={() => { }}
-            />
             <div className="min-h-screen bg-gray-50 flex justify-center items-center p-4">
                 <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
                     <div className="text-center mb-6">

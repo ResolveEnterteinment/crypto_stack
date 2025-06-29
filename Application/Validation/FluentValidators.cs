@@ -179,13 +179,6 @@ namespace Application.Validation
                     .LessThan(100000).WithMessage("Amount cannot exceed 100,000");
             });
 
-            When(x => !string.IsNullOrEmpty(x.Interval), () =>
-            {
-                RuleFor(x => x.Interval)
-                    .Must(interval => SubscriptionInterval.AllValues.Contains(interval))
-                    .WithMessage($"Interval must be one of: {string.Join(", ", SubscriptionInterval.AllValues)}");
-            });
-
             When(x => x.EndDate.HasValue, () =>
             {
                 RuleFor(x => x.EndDate.Value)

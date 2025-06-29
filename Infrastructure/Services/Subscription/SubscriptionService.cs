@@ -129,7 +129,7 @@ namespace Infrastructure.Services.Subscription
             }
         }
 
-        public async Task<ResultWrapper> UpdateAsync(Guid id, SubscriptionUpdateRequest request)
+        public async Task<ResultWrapper<CrudResult>> UpdateAsync(Guid id, SubscriptionUpdateRequest request)
         {
             try
             {
@@ -163,9 +163,8 @@ namespace Infrastructure.Services.Subscription
                     }
                     updateFields["Allocations"] = allocs;
                 }
-                if (!string.IsNullOrWhiteSpace(request.Interval))
-                    updateFields["Interval"] = request.Interval;
-                if (request.Amount.HasValue)
+
+                if (request.Amount.HasValue && request.Amount > 0)
                     updateFields["Amount"] = request.Amount.Value;
                 if (request.EndDate.HasValue)
                     updateFields["EndDate"] = request.EndDate.Value;
@@ -173,11 +172,16 @@ namespace Infrastructure.Services.Subscription
                 // Execute update
                 var result = await UpdateAsync(id, updateFields);
 
-                return ResultWrapper.Success();
+                if(result == null || !result.IsSuccess)
+                {
+                    throw new DatabaseException($"Failed to update subscription {id}: {result?.ErrorMessage ?? "Unknown error"}");
+                }
+
+                return result;
             }
             catch (Exception ex)
             {
-                return ResultWrapper.FromException(ex);
+                return ResultWrapper<CrudResult>.FromException(ex);
             }
         }
 
@@ -220,7 +224,15 @@ namespace Infrastructure.Services.Subscription
         {
             var result = await UpdateSubscriptionStatusAsync(subscriptionId, SubscriptionStatus.Canceled);
             if (result == null || !result.IsSuccess)
-                return ResultWrapper.Failure(result.Reason, result.ErrorMessage);
+                return ResultWrapper.Failure(result?.Reason ?? FailureReason.DatabaseError, result?.ErrorMessage ?? "Update canceled result returned null");
+            return ResultWrapper.Success();
+        }
+
+        public async Task<ResultWrapper> DeleteAsync(Guid subscriptionId)
+        {
+            var result = await UpdateSubscriptionStatusAsync(subscriptionId, SubscriptionStatus.Deleted);
+            if (result == null || !result.IsSuccess)
+                return ResultWrapper.Failure(result?.Reason ?? FailureReason.DatabaseError, result?.ErrorMessage ?? "Update deleted result returned null");
             return ResultWrapper.Success();
         }
 
@@ -252,11 +264,28 @@ namespace Infrastructure.Services.Subscription
                 }
             );
 
-        public Task<ResultWrapper<List<SubscriptionDto>>> GetAllByUserIdAsync(Guid userId) =>
+        public Task<ResultWrapper<List<SubscriptionDto>>> GetAllByUserIdAsync(Guid userId, string? statusFilter = null) =>
             SafeExecute(
                 async () =>
                 {
-                    var filter = Builders<SubscriptionData>.Filter.Eq(x => x.UserId, userId);
+                    if (!string.IsNullOrWhiteSpace(statusFilter) && !SubscriptionStatus.AllValues.Contains(statusFilter))
+                    {
+                        throw new ArgumentException($"Invalid ststus filter. Must be one of: {string.Join(",", SubscriptionStatus.AllValues)}");
+
+                    }
+
+                    FilterDefinition<SubscriptionData>[] filters = [
+                        Builders<SubscriptionData>.Filter.Eq(x => x.UserId, userId),
+                        Builders<SubscriptionData>.Filter.Not(Builders<SubscriptionData>.Filter.Eq(x => x.Status, SubscriptionStatus.Deleted)),
+                        ];
+
+                    if (!string.IsNullOrWhiteSpace(statusFilter))
+                    {
+                        filters.Append(Builders<SubscriptionData>.Filter.Eq(x => x.Status, statusFilter));
+                    }
+
+                    var filter = Builders<SubscriptionData>.Filter.And(filters);
+
                     var allWr = await _repository.GetAllAsync(filter);
                     if (allWr == null)
                     {

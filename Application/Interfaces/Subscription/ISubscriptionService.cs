@@ -18,12 +18,13 @@ namespace Application.Interfaces.Subscription
         INotificationHandler<SubscriptionReactivationRequestedEvent>
     {
         Task<ResultWrapper<CrudResult>> CreateAsync(SubscriptionCreateRequest request);
-        Task<ResultWrapper> UpdateAsync(Guid id, SubscriptionUpdateRequest request);
+        Task<ResultWrapper<CrudResult>> UpdateAsync(Guid id, SubscriptionUpdateRequest request);
         Task<ResultWrapper<List<AllocationDto>>> GetAllocationsAsync(Guid subscriptionId);
-        Task<ResultWrapper<List<SubscriptionDto>>> GetAllByUserIdAsync(Guid userId);
+        Task<ResultWrapper<List<SubscriptionDto>>> GetAllByUserIdAsync(Guid userId, string? statusFilter = null);
         Task<ResultWrapper<CrudResult>> UpdateSubscriptionStatusAsync(Guid subscriptionId, string status);
         Task<ResultWrapper> ReactivateSubscriptionAsync(Guid subscriptionId);
         Task<ResultWrapper> CancelAsync(Guid subscriptionId);
+        Task<ResultWrapper> DeleteAsync(Guid subscriptionId);
         Task Handle(CheckoutSessionCompletedEvent notification, CancellationToken cancellationToken);
         Task Handle(SubscriptionCreatedEvent notification, CancellationToken cancellationToken);
         Task Handle(PaymentReceivedEvent notification, CancellationToken cancellationToken);

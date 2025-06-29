@@ -1,16 +1,20 @@
 // src/pages/PaymentCancelPage.tsx
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import Navbar from '../components/Navbar';
+import * as paymentService from '../services/payment';
+import { PaymentRequestData } from '../services/payment';
+import { LoadingOutlined, RedoOutlined } from '@ant-design/icons';
+import { formatApiError } from '../utils/apiErrorHandler';
 
 const PaymentCancelPage: React.FC = () => {
     const navigate = useNavigate();
     const { user } = useAuth();
     const [searchParams] = useSearchParams();
+    const [retrying, setRetrying] = useState(false);
 
     // Get subscription ID from URL parameters
-    const subscriptionId = searchParams.get('subscription_id');
+    const paymentData: PaymentRequestData | null = JSON.parse(decodeURIComponent(searchParams.get('payment_data') ?? ""));
 
     useEffect(() => {
         // Check if user is authenticated
@@ -20,13 +24,20 @@ const PaymentCancelPage: React.FC = () => {
     }, [user, navigate]);
 
     // Handler functions
-    const handleRetry = () => {
+    const handleRetry = async () => {
         // If we have the subscription ID, navigate back to the edit page
-        if (subscriptionId) {
-            navigate(`/subscription/edit/${subscriptionId}`);
-        } else {
-            // Otherwise, start a new subscription
-            navigate('/subscription/new');
+        try {
+            setRetrying(true);
+            var checkoutUrl = await paymentService.initiatePayment(paymentData!);
+            // Redirect to checkout
+            window.location.href = checkoutUrl;
+        } catch (error: any) {
+            console.error('Payment retry error:', error);
+            // Format user-friendly error message
+            const errorMessage = formatApiError(error);
+            throw new Error(`Payment retry failed: ${errorMessage}`);
+        } finally {
+            setRetrying(false);
         }
     };
 
@@ -36,11 +47,6 @@ const PaymentCancelPage: React.FC = () => {
 
     return (
         <>
-            <Navbar
-                showProfile={() => navigate('/profile')}
-                showSettings={() => navigate('/settings')}
-                logout={() => { }}
-            />
             <div className="min-h-screen bg-gray-50 flex justify-center items-center p-4">
                 <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full">
                     <div className="text-center mb-6">
@@ -93,7 +99,15 @@ const PaymentCancelPage: React.FC = () => {
                             onClick={handleRetry}
                             className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors"
                         >
-                            Try Again
+                            {retrying ? (
+                                <>
+                                    <LoadingOutlined /> Trying again...
+                                </>) : (
+                                <>
+                                    <RedoOutlined className="mr-1" />
+                                    Try Again
+                                </>
+                            )}
                         </button>
                         <button
                             onClick={handleBackToDashboard}

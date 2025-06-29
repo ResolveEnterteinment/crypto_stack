@@ -28,3 +28,9 @@ export interface SubscriptionCardProps {
     onCancel: (id: string) => void;
     onViewHistory: (id: string) => void;
 }
+
+export const SubscriptionStatus: Record<string, string> = {
+    ACTIVE: 'ACTIVE',
+    CANCELLED: 'CANCELLED',
+    PENDING: 'PENDING'
+}

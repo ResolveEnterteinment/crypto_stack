@@ -1,4 +1,4 @@
-﻿// src/pages/DashboardPage.tsx
+﻿// src/pages/DashboardPage.tsx - Updated to use inline editing
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
@@ -7,7 +7,7 @@ import PortfolioChart from "../components/Dashboard/portfolio-chart";
 import AssetBalanceCard from "../components/Dashboard/asset-balance-card";
 import SubscriptionCard from "../components/Dashboard/subscription-card";
 import { getDashboardData } from "../services/dashboard";
-import { getSubscriptions, getTransactions, updateSubscription } from "../services/subscription";
+import { getSubscriptions, getTransactions, cancelSubscription } from "../services/subscription";
 import { Subscription } from "../types/subscription";
 import ITransaction from "../interfaces/ITransaction";
 import ApiTestPanel from '../components/DevTools/ApiTestPanel';
@@ -97,7 +97,7 @@ const DashboardPageContent: React.FC = () => {
             // Show success notification with custom or default message
             setSuccessNotification({
                 show: true,
-                message: customMessage || 'Dashboard updated with latest payment information',
+                message: customMessage || 'Dashboard updated with latest information',
                 type: 'success'
             });
         } catch (err) {
@@ -154,13 +154,17 @@ const DashboardPageContent: React.FC = () => {
         }
     }, []);
 
-    const handleEditSubscription = useCallback((id: string) => {
-        navigate(`/subscription/edit/${id}`);
-    }, [navigate]);
+    // Handle edit completion (inline editing via modal)
+    const handleEditComplete = useCallback(async (subscriptionId: string) => {
+        console.log('Edit completed for subscription:', subscriptionId);
+        
+        // Refresh data after successful edit
+        await handleDataUpdated('Subscription updated successfully');
+    }, [handleDataUpdated]);
 
     const handleCancelSubscription = useCallback(async (id: string) => {
         try {
-            await updateSubscription(id, { isCancelled: true });
+            await cancelSubscription(id);
 
             // Refresh all data with custom success message
             await handleDataUpdated('Subscription cancelled successfully');
@@ -192,13 +196,13 @@ const DashboardPageContent: React.FC = () => {
             <SubscriptionCard
                 key={subscription.id}
                 subscription={subscription}
-                onEdit={handleEditSubscription}
+                onEdit={handleEditComplete} // This is now handled by the modal in the component
                 onCancel={handleCancelSubscription}
                 onViewHistory={handleViewHistory}
                 onDataUpdated={() => handleDataUpdated()} // Pass the callback
             />
         ));
-    }, [subscriptions, handleEditSubscription, handleCancelSubscription, handleViewHistory, handleDataUpdated]);
+    }, [subscriptions, handleEditComplete, handleCancelSubscription, handleViewHistory, handleDataUpdated]);
 
     // Hide notification handler
     const handleHideNotification = useCallback(() => {

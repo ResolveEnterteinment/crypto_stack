@@ -1052,7 +1052,10 @@ namespace Infrastructure.Services
             if (!Guid.TryParse(userId, out var uid)) throw new ArgumentException("Invalid userId");
             var wrUser = await _userService.GetByIdAsync(uid);
             var existingCustomer = wrUser.Data?.PaymentProviderCustomerId;
-            if (!string.IsNullOrEmpty(existingCustomer)) return existingCustomer;
+
+            var isCustomerValid = !string.IsNullOrEmpty(existingCustomer) && await _stripeService.CheckCustomerExists(existingCustomer);
+
+            if (isCustomerValid) return existingCustomer!;
 
             var stripeProvider = _stripeService;
             var search = await stripeProvider.SearchCustomersAsync(new() { ["query"] = $"email:'{email}'" });

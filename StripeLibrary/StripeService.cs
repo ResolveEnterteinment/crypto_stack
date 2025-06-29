@@ -82,20 +82,6 @@ namespace StripeLibrary
         }
 
         /// <summary>
-        /// Determines if a Stripe exception is retryable based on its HTTP status code.
-        /// </summary>
-        /// <param name="ex">The Stripe exception to check.</param>
-        /// <returns>True if the exception is retryable; otherwise, false.</returns>
-        private bool IsRetryableStripeException(StripeException ex)
-        {
-            // Retry on rate limits, server errors and network issues
-            return ex.HttpStatusCode == System.Net.HttpStatusCode.TooManyRequests ||
-                   ex.HttpStatusCode == System.Net.HttpStatusCode.ServiceUnavailable ||
-                   ex.HttpStatusCode == System.Net.HttpStatusCode.GatewayTimeout ||
-                   ex.HttpStatusCode == System.Net.HttpStatusCode.InternalServerError;
-        }
-
-        /// <summary>
         /// Searches for customers in Stripe based on search options
         /// </summary>
         /// <param name="searchOptions">Dictionary of search options (e.g. query, limit)</param>
@@ -152,6 +138,31 @@ namespace StripeLibrary
                 _logger.LogError(ex, "Error searching for customers in Stripe: {Message}", ex.Message);
                 throw new PaymentApiException("An unexpected error occurred while searching for customers", "Stripe");
             }
+        }
+
+        public async Task<bool> CheckCustomerExists(string customerId)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(customerId))
+                {
+                    throw new ArgumentNullException(nameof(customerId), "Customer ID cannot be null or empty");
+                }
+                // Attempt to retrieve the customer
+                var customer = await _customerService.GetAsync(customerId);
+                return customer != null; // If no exception is thrown, customer exists
+            }
+            catch (Stripe.StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error checking if customer exists: {Message}, {Type}", ex.Message, ex.StripeError?.Type);
+                return false; // If an exception occurs, customer does not exist
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking if customer exists in Stripe: {Message}", ex.Message);
+                throw new PaymentApiException("An unexpected error occurred while checking if customer exists", "Stripe");
+            }
+
         }
 
         /// <summary>
@@ -238,6 +249,166 @@ namespace StripeLibrary
             {
                 _logger.LogError(ex, "Error creating customer in Stripe: {Message}", ex.Message);
                 throw new PaymentApiException("An unexpected error occurred while creating a customer", "Stripe");
+            }
+        }
+
+        /// <summary>
+        /// Updates a Stripe subscription with new amount and/or end date
+        /// This method handles the business logic for subscription updates
+        /// </summary>
+        /// <param name="stripeSubscriptionId">The Stripe subscription ID</param>
+        /// <param name="localSubscriptionId">The local subscription ID for metadata lookup</param>
+        /// <param name="newAmount">New subscription amount (optional)</param>
+        /// <param name="newEndDate">New subscription end date (optional)</param>
+        /// <returns>Result of the update operation</returns>
+        public async Task<ResultWrapper> UpdateSubscriptionAsync(
+            string stripeSubscriptionId,
+            string localSubscriptionId,
+            decimal? newAmount = null,
+            DateTime? newEndDate = null)
+        {
+            using var activity = new Activity("StripeService.UpdateSubscription").Start();
+            activity.SetTag("StripeSubscriptionId", stripeSubscriptionId);
+            activity.SetTag("LocalSubscriptionId", localSubscriptionId);
+
+            try
+            {
+                _logger.LogInformation("Updating Stripe subscription {StripeSubscriptionId} for local subscription {LocalSubscriptionId}",
+                    stripeSubscriptionId, localSubscriptionId);
+
+                // Validate parameters
+                if (!ValidateSubscriptionUpdateParameters(newAmount, newEndDate))
+                {
+                    return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid subscription update parameters");
+                }
+
+                // If no Stripe subscription ID provided, try to find it using metadata
+                var effectiveStripeSubscriptionId = stripeSubscriptionId;
+                if (string.IsNullOrEmpty(effectiveStripeSubscriptionId))
+                {
+                    _logger.LogInformation("No Stripe subscription ID provided, searching by metadata for local subscription {LocalSubscriptionId}",
+                        localSubscriptionId);
+
+                    var searchResult = await FindStripeSubscriptionByMetadataAsync("subscriptionId", localSubscriptionId);
+                    if (searchResult.IsSuccess && !string.IsNullOrEmpty(searchResult.Data))
+                    {
+                        effectiveStripeSubscriptionId = searchResult.Data;
+                        _logger.LogInformation("Found Stripe subscription {StripeSubscriptionId} for local subscription {LocalSubscriptionId}",
+                            effectiveStripeSubscriptionId, localSubscriptionId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("No Stripe subscription found for local subscription {LocalSubscriptionId}. Cannot update.",
+                            localSubscriptionId);
+                        return ResultWrapper.Failure(FailureReason.NotFound,
+                            "No Stripe subscription found. The subscription may not have been properly created with Stripe.");
+                    }
+                }
+
+                return await _retryPolicy.ExecuteAsync(async (context) =>
+                {
+                    // Get current Stripe subscription
+                    var currentSubscription = await _subscriptionService.GetAsync(effectiveStripeSubscriptionId);
+                    if (currentSubscription == null)
+                    {
+                        return ResultWrapper.Failure(FailureReason.NotFound, "Stripe subscription not found");
+                    }
+
+                    var updateResult = ResultWrapper.Success();
+
+                    // Update amount if provided
+                    if (newAmount.HasValue)
+                    {
+                        var amountUpdateResult = await UpdateSubscriptionAmountAsync(effectiveStripeSubscriptionId, newAmount.Value);
+                        if (!amountUpdateResult.IsSuccess)
+                        {
+                            return amountUpdateResult;
+                        }
+                    }
+
+                    // Update end date if provided
+                    if (newEndDate.HasValue)
+                    {
+                        var endDateUpdateResult = await UpdateSubscriptionEndDateAsync(effectiveStripeSubscriptionId, newEndDate.Value);
+                        if (!endDateUpdateResult.IsSuccess)
+                        {
+                            return endDateUpdateResult;
+                        }
+                    }
+
+                    _logger.LogInformation("Successfully updated Stripe subscription {StripeSubscriptionId}: Amount={AmountUpdated}, EndDate={EndDateUpdated}",
+                        effectiveStripeSubscriptionId, newAmount.HasValue, newEndDate.HasValue);
+
+                    return ResultWrapper.Success();
+
+                }, new Context("UpdateSubscription"));
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error updating subscription {StripeSubscriptionId}: {Message}",
+                    stripeSubscriptionId, ex.Message);
+                return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable, $"Stripe error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating Stripe subscription {StripeSubscriptionId}", stripeSubscriptionId);
+                return ResultWrapper.FromException(ex);
+            }
+        }
+        /// <summary>
+        /// Gets detailed information about a Stripe subscription for troubleshooting
+        /// </summary>
+        /// <param name="stripeSubscriptionId">The Stripe subscription ID</param>
+        /// <returns>Detailed subscription information</returns>
+        public async Task<ResultWrapper<StripeSubscriptionDetails>> GetSubscriptionDetailsAsync(string stripeSubscriptionId)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(stripeSubscriptionId))
+                {
+                    return ResultWrapper<StripeSubscriptionDetails>.Failure(FailureReason.ValidationError,
+                        "Stripe subscription ID is required");
+                }
+
+                var subscription = await _subscriptionService.GetAsync(stripeSubscriptionId, new SubscriptionGetOptions
+                {
+                    Expand = new List<string> { "latest_invoice", "customer", "items.data.price" }
+                });
+
+                if (subscription == null)
+                {
+                    return ResultWrapper<StripeSubscriptionDetails>.Failure(FailureReason.NotFound,
+                        "Stripe subscription not found");
+                }
+
+                var details = new StripeSubscriptionDetails
+                {
+                    Id = subscription.Id,
+                    Status = subscription.Status,
+                    CustomerId = subscription.CustomerId,
+                    CurrentPeriodStart = subscription.CurrentPeriodStart,
+                    CurrentPeriodEnd = subscription.CurrentPeriodEnd,
+                    CancelAt = subscription.CancelAt,
+                    CanceledAt = subscription.CanceledAt,
+                    Amount = subscription.Items.Data.FirstOrDefault()?.Price?.UnitAmount / 100m ?? 0,
+                    Currency = subscription.Items.Data.FirstOrDefault()?.Price?.Currency ?? "usd",
+                    Interval = subscription.Items.Data.FirstOrDefault()?.Price?.Recurring?.Interval ?? "month",
+                    Metadata = subscription.Metadata ?? new Dictionary<string, string>()
+                };
+
+                return ResultWrapper<StripeSubscriptionDetails>.Success(details);
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error getting subscription details for {StripeSubscriptionId}: {Message}",
+                    stripeSubscriptionId, ex.Message);
+                return ResultWrapper<StripeSubscriptionDetails>.Failure(FailureReason.ThirdPartyServiceUnavailable,
+                    $"Stripe error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting Stripe subscription details for {StripeSubscriptionId}", stripeSubscriptionId);
+                return ResultWrapper<StripeSubscriptionDetails>.FromException(ex);
             }
         }
 
@@ -984,6 +1155,227 @@ namespace StripeLibrary
             }
         }
 
+        public async Task<ResultWrapper> CancelSubscription(string subscriptionId)
+        {
+            if (string.IsNullOrEmpty(subscriptionId))
+            {
+                return ResultWrapper.Failure(FailureReason.ValidationError, "Subscription ID is required");
+            }
+
+            try
+            {
+                _logger.LogInformation("Cancelling Stripe subscription {SubscriptionId}", subscriptionId);
+
+                return await _retryPolicy.ExecuteAsync(async (context) =>
+                {
+                    // Get current subscription to ensure it exists
+                    var subscription = await _subscriptionService.GetAsync(subscriptionId);
+                    if (subscription == null)
+                    {
+                        return ResultWrapper.Failure(FailureReason.NotFound, "Stripe subscription not found");
+                    }
+
+                    // Cancel immediately (at_period_end=false)
+                    var cancelOptions = new SubscriptionCancelOptions
+                    {
+                        InvoiceNow = false,
+                        Prorate = false
+                    };
+
+                    // Execute the cancellation
+                    await _subscriptionService.CancelAsync(subscriptionId, cancelOptions);
+
+                    _logger.LogInformation("Successfully cancelled Stripe subscription {SubscriptionId}", subscriptionId);
+                    return ResultWrapper.Success("Subscription cancelled successfully");
+
+                }, new Context("CancelSubscription"));
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error cancelling subscription {SubscriptionId}: {Message}",
+                    subscriptionId, ex.Message);
+                return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable,
+                    $"Failed to cancel subscription: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cancelling Stripe subscription {SubscriptionId}", subscriptionId);
+                return ResultWrapper.FromException(ex);
+            }
+        }
+
+
+        #region Helpers
+        private string ConvertIntervalToStripeFormat(string interval)
+        {
+            // Map your interval constants to Stripe's expected values
+            return interval switch
+            {
+                "DAILY" => "day",
+                "WEEKLY" => "week",
+                "MONTHLY" => "month",
+                "YEARLY" => "year",
+                _ => "month" // Default to month
+            };
+        }
+
+        /// <summary>
+        /// Updates the amount of a Stripe subscription by creating a new price and updating the subscription item
+        /// The change takes effect at the next billing cycle to avoid immediate charges
+        /// </summary>
+        /// <param name="stripeSubscriptionId">The Stripe subscription ID</param>
+        /// <param name="newAmount">The new subscription amount</param>
+        /// <returns>Result of the update operation</returns>
+        private async Task<ResultWrapper> UpdateSubscriptionAmountAsync(string stripeSubscriptionId, decimal newAmount)
+        {
+            try
+            {
+                _logger.LogInformation("Updating Stripe subscription {StripeSubscriptionId} amount to {Amount} (effective next billing cycle)",
+                    stripeSubscriptionId, newAmount);
+
+                // Get current subscription
+                var subscription = await _subscriptionService.GetAsync(stripeSubscriptionId);
+                if (subscription == null)
+                {
+                    return ResultWrapper.Failure(FailureReason.NotFound, "Stripe subscription not found");
+                }
+
+                var subscriptionItem = subscription.Items.Data.FirstOrDefault();
+                if (subscriptionItem == null)
+                {
+                    return ResultWrapper.Failure(FailureReason.ValidationError, "No subscription items found");
+                }
+
+                // Check if amount actually changed
+                var currentAmount = (decimal)(subscriptionItem.Price.UnitAmount ?? 0) / 100m;
+                if (Math.Abs(currentAmount - newAmount) < 0.01m)
+                {
+                    _logger.LogInformation("Stripe subscription {StripeSubscriptionId} amount unchanged ({Amount}), skipping update",
+                        stripeSubscriptionId, newAmount);
+                    return ResultWrapper.Success();
+                }
+
+                // Create new price with updated amount
+                var priceService = new PriceService();
+                var newPrice = await priceService.CreateAsync(new PriceCreateOptions
+                {
+                    Currency = subscriptionItem.Price.Currency,
+                    UnitAmount = (long)(newAmount * 100), // Convert to cents
+                    Recurring = new PriceRecurringOptions
+                    {
+                        Interval = subscriptionItem.Price.Recurring.Interval,
+                        IntervalCount = subscriptionItem.Price.Recurring.IntervalCount
+                    },
+                    ProductData = new PriceProductDataOptions
+                    {
+                        Name = "Investment Subscription",
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["original_subscription_id"] = stripeSubscriptionId,
+                            ["updated_at"] = DateTime.UtcNow.ToString("O"),
+                            ["previous_amount"] = currentAmount.ToString("F2")
+                        }
+                    }
+                });
+
+                // Update the subscription item with no proration to avoid immediate charges
+                var subscriptionItemService = new SubscriptionItemService();
+                await subscriptionItemService.UpdateAsync(subscriptionItem.Id, new SubscriptionItemUpdateOptions
+                {
+                    Price = newPrice.Id,
+                    ProrationBehavior = "none" // No immediate charge - change takes effect next billing cycle
+                });
+
+                _logger.LogInformation("Successfully updated Stripe subscription {StripeSubscriptionId} amount from {OldAmount} to {NewAmount} (effective next billing cycle)",
+                    stripeSubscriptionId, currentAmount, newAmount);
+
+                return ResultWrapper.Success();
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error updating subscription amount for {StripeSubscriptionId}: {Message}",
+                    stripeSubscriptionId, ex.Message);
+                return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable, $"Stripe error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating Stripe subscription amount for {StripeSubscriptionId}", stripeSubscriptionId);
+                return ResultWrapper.FromException(ex);
+            }
+        }
+
+        /// <summary>
+        /// Updates the end date of a Stripe subscription by setting the cancel_at timestamp
+        /// </summary>
+        /// <param name="stripeSubscriptionId">The Stripe subscription ID</param>
+        /// <param name="newEndDate">The new subscription end date</param>
+        /// <returns>Result of the update operation</returns>
+        private async Task<ResultWrapper> UpdateSubscriptionEndDateAsync(string stripeSubscriptionId, DateTime newEndDate)
+        {
+            try
+            {
+                _logger.LogInformation("Updating Stripe subscription {StripeSubscriptionId} end date to {EndDate}",
+                    stripeSubscriptionId, newEndDate);
+
+                // Update the subscription with the new cancellation date
+                var subscription = await _subscriptionService.UpdateAsync(stripeSubscriptionId, new SubscriptionUpdateOptions
+                {
+                    CancelAt = newEndDate,
+                    ProrationBehavior = "none", // Don't prorate for date changes
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["end_date_updated_at"] = DateTime.UtcNow.ToString("O"),
+                        ["original_end_date"] = newEndDate.ToString("O")
+                    }
+                });
+
+                _logger.LogInformation("Successfully updated Stripe subscription {StripeSubscriptionId} end date to {EndDate}",
+                    stripeSubscriptionId, newEndDate);
+
+                return ResultWrapper.Success();
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error updating subscription end date for {StripeSubscriptionId}: {Message}",
+                    stripeSubscriptionId, ex.Message);
+                return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable, $"Stripe error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating Stripe subscription end date for {StripeSubscriptionId}", stripeSubscriptionId);
+                return ResultWrapper.FromException(ex);
+            }
+        }
+
+        /// <summary>
+        /// Finds a Stripe subscription by searching metadata (wrapper around existing search method)
+        /// </summary>
+        /// <param name="metadataKey">The metadata key to search for</param>
+        /// <param name="metadataValue">The metadata value to search for</param>
+        /// <returns>The Stripe subscription ID if found</returns>
+        private async Task<ResultWrapper<string>> FindStripeSubscriptionByMetadataAsync(string metadataKey, string metadataValue)
+        {
+            try
+            {
+                var subscriptions = await SearchSubscriptionsByMetadataAsync(metadataKey, metadataValue);
+                var subscription = subscriptions.FirstOrDefault();
+
+                if (subscription != null)
+                {
+                    return ResultWrapper<string>.Success(subscription.Id);
+                }
+
+                return ResultWrapper<string>.Failure(FailureReason.NotFound,
+                    $"No Stripe subscription found with {metadataKey}={metadataValue}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error finding Stripe subscription by metadata {MetadataKey}={MetadataValue}",
+                    metadataKey, metadataValue);
+                return ResultWrapper<string>.FromException(ex);
+            }
+        }
+
         /// <summary>
         /// Retrieves a subscription from Stripe.
         /// </summary>
@@ -1022,19 +1414,42 @@ namespace StripeLibrary
             }
         }
 
-        // Helper method to convert your interval format to Stripe's format
-        private string ConvertIntervalToStripeFormat(string interval)
+        /// <summary>
+        /// Determines if a Stripe exception is retryable based on its HTTP status code.
+        /// </summary>
+        /// <param name="ex">The Stripe exception to check.</param>
+        /// <returns>True if the exception is retryable; otherwise, false.</returns>
+        private bool IsRetryableStripeException(StripeException ex)
         {
-            // Map your interval constants to Stripe's expected values
-            return interval switch
-            {
-                "DAILY" => "day",
-                "WEEKLY" => "week",
-                "MONTHLY" => "month",
-                "YEARLY" => "year",
-                _ => "month" // Default to month
-            };
+            // Retry on rate limits, server errors and network issues
+            return ex.HttpStatusCode == System.Net.HttpStatusCode.TooManyRequests ||
+                   ex.HttpStatusCode == System.Net.HttpStatusCode.ServiceUnavailable ||
+                   ex.HttpStatusCode == System.Net.HttpStatusCode.GatewayTimeout ||
+                   ex.HttpStatusCode == System.Net.HttpStatusCode.InternalServerError;
         }
 
+        /// <summary>
+        /// Validates subscription update parameters
+        /// </summary>
+        /// <param name="newAmount">The new amount (optional)</param>
+        /// <param name="newEndDate">The new end date (optional)</param>
+        /// <returns>True if parameters are valid</returns>
+        private bool ValidateSubscriptionUpdateParameters(decimal? newAmount, DateTime? newEndDate)
+        {
+            if (newAmount.HasValue && newAmount.Value <= 0)
+            {
+                _logger.LogWarning("Invalid subscription amount: {Amount}", newAmount.Value);
+                return false;
+            }
+
+            if (newEndDate.HasValue && newEndDate.Value <= DateTime.UtcNow)
+            {
+                _logger.LogWarning("Invalid subscription end date: {EndDate} (must be in the future)", newEndDate.Value);
+                return false;
+            }
+
+            return true;
+        }
+        #endregion Helpers
     }
 }

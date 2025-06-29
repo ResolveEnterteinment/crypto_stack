@@ -1,7 +1,7 @@
-import IAllocation from "./IAllocation";
+import { Allocation } from "../types/subscription";
 
 export default interface IUpdateSubscriptionRequest {
-    allocations?: IAllocation[];
+    allocations?: Allocation[];
     interval?: string;
     amount?: number;
     currency?: string;

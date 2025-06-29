@@ -69,20 +69,13 @@ export const initiatePayment = async (paymentData: PaymentRequestData): Promise<
         const headers: Record<string, string> = {
             'X-Idempotency-Key': idempotencyKey
         };
-        /*
-        // Get CSRF token if available
-        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
-        if (csrfToken) {
-            headers['X-CSRF-TOKEN'] = csrfToken;
-        }
-        */
         // Build the return URLs with query parameters
         const baseUrl = window.location.origin;
         const returnUrl = paymentData.returnUrl ||
-            `${baseUrl}/payment/success?subscription_id=${paymentData.subscriptionId}&amount=${paymentData.amount}&currency=${paymentData.currency || 'USD'}`;
-        const cancelUrl = paymentData.cancelUrl ||
-            `${baseUrl}/payment/cancel?subscription_id=${paymentData.subscriptionId}`;
+            `${baseUrl}/payment/checkout/success?subscription_id=${paymentData.subscriptionId}&amount=${paymentData.amount}&currency=${paymentData.currency || 'USD'}`;
+        const cancelUrl = paymentData.cancelUrl ? paymentData.cancelUrl + `&payment_data=${encodeURIComponent(JSON.stringify(paymentData))}` :
+            `${baseUrl}/payment/checkout/cancel?subscription_id=${paymentData.subscriptionId}`;
 
         const response = await api.post('/Payment/create-checkout-session', {
             subscriptionId: paymentData.subscriptionId,

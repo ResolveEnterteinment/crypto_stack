@@ -8,7 +8,7 @@ import AssetAllocationStep from '../components/Subscription/AssetAllocationStep'
 import ReviewStep from '../components/Subscription/ReviewStep';
 import { getSupportedAssets } from '../services/asset';
 import { createSubscription } from '../services/subscription';
-import { initiatePayment } from '../services/payment';
+import { initiatePayment, PaymentRequestData } from '../services/payment';
 import { formatApiError } from '../utils/apiErrorHandler';
 import { Asset } from '../types/assetTypes';
 import { Allocation } from '../types/subscription';
@@ -42,7 +42,7 @@ const ErrorFeedback: React.FC<{ error: string | null; onDismiss: () => void }> =
     );
 };
 
-const SubscriptionCreationPage: React.FC = () => {
+const SubscriptionCreationPageContent: React.FC = () => {
     const navigate = useNavigate();
     const { user, isAuthenticated } = useAuth();
     const [currentStep, setCurrentStep] = useState<number>(1);
@@ -248,7 +248,7 @@ const SubscriptionCreationPage: React.FC = () => {
 
             // Initialize payment with the subscription ID
             try {
-                const paymentRequest = {
+                const paymentRequest : PaymentRequestData = {
                     subscriptionId,
                     userId: formData.userId,
                     amount: formData.amount,
@@ -256,8 +256,8 @@ const SubscriptionCreationPage: React.FC = () => {
                     isRecurring: formData.interval !== 'ONCE',
                     interval: formData.interval,
                     // Add return URLs with better error handling
-                    returnUrl: window.location.origin + `/payment/success?subscription_id=${subscriptionId}&amount=${formData.amount}&currency=${formData.currency}`,
-                    cancelUrl: window.location.origin + `/payment/cancel?subscription_id=${subscriptionId}`
+                    returnUrl: window.location.origin + `/payment/checkout/success?subscription_id=${subscriptionId}&amount=${formData.amount}&currency=${formData.currency}`,
+                    cancelUrl: window.location.origin + `/payment/checkout/cancel?subscription_id=${subscriptionId}`
                 };
 
                 const checkoutUrl = await initiatePayment(paymentRequest);
@@ -299,11 +299,6 @@ const SubscriptionCreationPage: React.FC = () => {
     if (!isAuthenticated || !user) {
         return (
             <>
-                <Navbar
-                    showProfile={() => navigate('/profile')}
-                    showSettings={() => navigate('/settings')}
-                    logout={() => { }}
-                />
                 <div className="min-h-screen bg-gray-50 flex justify-center items-center p-4">
                     <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full text-center">
                         <h1 className="text-2xl font-bold text-gray-800 mb-4">Authentication Required</h1>
@@ -326,11 +321,6 @@ const SubscriptionCreationPage: React.FC = () => {
     if (isLoading) {
         return (
             <>
-                <Navbar
-                    showProfile={() => navigate('/profile')}
-                    showSettings={() => navigate('/settings')}
-                    logout={() => { }}
-                />
                 <div className="min-h-screen bg-gray-50 flex justify-center items-center">
                     <div className="text-center">
                         <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
@@ -343,11 +333,6 @@ const SubscriptionCreationPage: React.FC = () => {
 
     return (
         <>
-            <Navbar
-                showProfile={() => navigate('/profile')}
-                showSettings={() => navigate('/settings')}
-                logout={() => { }}
-            />
             <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
                 <div className="max-w-4xl mx-auto">
                     {/* Page header */}
@@ -504,6 +489,17 @@ const SubscriptionCreationPage: React.FC = () => {
             </div>
         </>
     );
+};
+
+const SubscriptionCreationPage: React.FC = () => {
+    return (
+        <>
+            <Navbar />
+            <div className="relative top-5">
+                <SubscriptionCreationPageContent />
+            </div>
+        </>
+    )
 };
 
 export default SubscriptionCreationPage;
