@@ -3,23 +3,15 @@
     public static class KycStatus
     {
         public const string NotStarted = "NOT_STARTED";
-        public const string InProgress = "IN_PROGRESS";
-        public const string Pending = "PENDING_VERIFICATION";
+        public const string Pending = "PENDING";
         public const string Approved = "APPROVED";
         public const string Rejected = "REJECTED";
         public const string NeedsReview = "NEEDS_REVIEW";
-        public const string AdditionalInfoRequired = "ADDITIONAL_INFO_REQUIRED";
         public const string Expired = "EXPIRED";
+        public const string Blocked = "BLOCKED";
 
-        public static string[] AllValues = [
-            NotStarted,
-            InProgress,
-            Pending,
-            Approved,
-            Rejected,
-            NeedsReview,
-            AdditionalInfoRequired,
-            Expired
-            ];
+        public static readonly string[] AllValues = {
+            NotStarted, Pending, Approved, Rejected, NeedsReview, Expired, Blocked
+        };
     }
 }

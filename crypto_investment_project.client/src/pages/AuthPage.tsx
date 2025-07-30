@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../services/api";
+import { AxiosResponse } from "axios";
 
 const AuthPage: React.FC = () => {
     const { user, login } = useAuth();
@@ -78,7 +79,7 @@ const AuthPage: React.FC = () => {
         setIsLoading(true);
 
         try {
-            const response = await api.safeRequest('post', "/v1/auth/login",
+            const response: AxiosResponse<{ accessToken: string, emailConfirmed: boolean, userId: string, username: string, message: string, success: boolean }> = await api.post("/v1/auth/login",
                 { email, password },
                 {
                     headers: {
@@ -87,17 +88,17 @@ const AuthPage: React.FC = () => {
                 }
             );
 
-            console.log("AuthPage::handleLogin => data: ", response);
+            console.log("AuthPage::handleLogin => response: ", response);
 
             if (response.data.success) {
                 login(response.data);
                 navigate("/dashboard");
             } else {
                 // Check if the error is specifically about unconfirmed email
-                if (response.message === "Email is not confirmed") {
+                if (response.data.message === "Email is not confirmed") {
                     setUnconfirmedEmailLogin(true);
                 } else {
-                    setError(response.message || "Login failed. Please try again.");
+                    setError(response.data.message || "Login failed. Please try again.");
                 }
             }
         } catch (err: any) {

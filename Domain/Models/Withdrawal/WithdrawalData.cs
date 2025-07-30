@@ -8,6 +8,7 @@ namespace Domain.Models.Withdrawal
         public Guid UserId { get; set; }
         public required string RequestedBy { get; set; } // User's identity (email, etc.)
         public decimal Amount { get; set; }
+        public decimal Value { get; set; }
         public required string Currency { get; set; }
         public required string WithdrawalMethod { get; set; } // Bank, crypto, etc.
         public required string WithdrawalAddress { get; set; } // Bank account or crypto address

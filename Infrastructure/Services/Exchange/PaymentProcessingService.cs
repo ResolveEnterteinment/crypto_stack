@@ -392,7 +392,7 @@ namespace Infrastructure.Services.Exchange
                                 AssetId = alloc.AssetId,
                                 Ticker = alloc.AssetTicker,
                                 Available = placedOrder.QuantityFilled,
-                                LastUpdated = DateTime.UtcNow
+                                UpdatedAt = DateTime.UtcNow
                             };
 
                             var updateBalanceResult = await _balanceService.UpsertBalanceAsync(

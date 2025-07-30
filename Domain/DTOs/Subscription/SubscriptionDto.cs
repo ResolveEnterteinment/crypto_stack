@@ -10,6 +10,7 @@ namespace Domain.DTOs.Subscription
         public required string Interval { get; set; }
         public required int Amount { get; set; } = 0;
         public required string Currency { get; set; }
+        public required DateTime? LastPayment { get; set; }
         public required DateTime NextDueDate { get; set; }
         public required decimal TotalInvestments { get; set; } = 0;
         public DateTime? EndDate { get; set; } = null;

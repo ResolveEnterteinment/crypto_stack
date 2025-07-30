@@ -19,7 +19,7 @@ builder.Services
     .AddAuthenticationServices(builder.Configuration)
     .AddCoreServices(builder.Environment)
     .AddKycServices(builder.Configuration)
-    .AddRateLimitingPolicies()
+    .AddRateLimitingPolicies(builder.Environment)
     .AddApiVersioningSupport()
     .AddHealthChecksServices(builder.Configuration)
     .ConfigureCorsPolicy(builder.Environment, builder.Configuration)
@@ -45,7 +45,6 @@ app.UseActivityNaming();
 app.UseTraceUserEnrichment();
 app.UseTraceException();
 app.UseTraceIdResponse();
-app.UseKycRequirement();
 
 // Static files and development tools
 app.UseDefaultFiles();
@@ -76,6 +75,7 @@ Console.WriteLine("✅ CSRF protection configured");
 
 // Authentication and authorization
 app.UseAuthentication();
+app.UseKycRequirement();
 app.UseAuthorization();
 Console.WriteLine("✅ Authentication configured");
 

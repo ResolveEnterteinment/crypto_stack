@@ -9,7 +9,7 @@ namespace Domain.DTOs.Balance
         public decimal Locked { get; set; }
         public decimal Total { get; set; }
         public AssetDto? Asset { get; set; }
-        public DateTime LastUpdated { get; set; }
+        public DateTime UpdatedAt { get; set; }
 
         public BalanceDto(BalanceData balance)
         {
@@ -17,7 +17,7 @@ namespace Domain.DTOs.Balance
             Locked = balance.Locked;
             Total = balance.Total;
             Asset = new AssetDto(balance.Asset!);
-            LastUpdated = balance.LastUpdated;
+            UpdatedAt = balance.UpdatedAt ?? DateTime.Now;
         }
     }
 }

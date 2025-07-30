@@ -8,6 +8,5 @@ namespace Domain.Models.Dashboard
         public decimal TotalInvestments { get; set; }
         public IEnumerable<AssetHoldingDto> AssetHoldings { get; set; }
         public decimal PortfolioValue { get; set; }
-        public DateTime LastUpdated { get; set; }
     }
 }

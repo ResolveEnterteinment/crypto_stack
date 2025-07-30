@@ -41,7 +41,8 @@ namespace Infrastructure.Services.Base
 
         public Task<T?> GetOneAsync(FilterDefinition<T> filter, CancellationToken ct = default)
         {
-            return Collection.Find(filter).FirstOrDefaultAsync(ct);
+            return Collection.Find(filter)
+                .FirstOrDefaultAsync(ct);
         }
 
         public Task<T?> GetOneAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken ct = default)
@@ -192,7 +193,7 @@ namespace Infrastructure.Services.Base
             int pageSize = 20,
             CancellationToken cancellationToken = default)
         {
-            var totalCount = await CountAsync(filter, cancellationToken);
+            var totalCount = (int) await CountAsync(filter, cancellationToken);
 
             var items = await Collection.Find(filter)
                 .Sort(sortDefinition)
@@ -213,6 +214,8 @@ namespace Infrastructure.Services.Base
         {
             var updates = Builders<T>.Update;
             var updateDefs = new List<UpdateDefinition<T>>();
+            // Always update the UpdatedAt field to the current UTC time
+            updateDefs.Add(updates.Set("UpdatedAt", DateTime.UtcNow));
 
             if (updatedFields is IDictionary<string, object> dict)
             {

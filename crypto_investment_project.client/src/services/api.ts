@@ -323,11 +323,18 @@ apiClient.interceptors.response.use(
 );
 
 // API wrapper interface
-interface ApiResponse<T> {
-    data: T;
+export interface ApiResponse<T> {
     success: boolean;
-    statusCode: number;
+    data: T;
     message?: string;
+    timestamp: Date;
+}
+
+export interface ClientResponse<T> {
+    success: boolean;
+    data: T;
+    message?: string;
+    statusCode: number;
     errors?: Record<string, string[]>;
     totalCount?: number;
 }
@@ -335,6 +342,33 @@ interface ApiResponse<T> {
 // Enhanced API wrapper
 const api = {
     instance: apiClient,
+    kycSessionId: null as string | null, // Add the missing property
+
+    setKycSession(sessionId: string): void {
+        this.kycSessionId = sessionId;
+    },
+
+    clearKycSession(): void {
+        this.kycSessionId = null;
+    },
+
+    getHeaders(): Record<string, string> {
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+        };
+
+        const token = localStorage.getItem('authToken');
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        // Add KYC session header if available
+        if (this.kycSessionId) {
+            headers['X-KYC-Session'] = this.kycSessionId;
+        }
+
+        return headers;
+    },
 
     setHeader: (name: string, value: string): void => {
         apiClient.defaults.headers.common[name] = value;
@@ -354,23 +388,48 @@ const api = {
 
     // HTTP methods
     async get<T = any>(url: string, config?: any): Promise<AxiosResponse<T>> {
-        return apiClient.get<T>(url, config);
+        // Add KYC session header if available and not already in config
+        const finalConfig = { ...config };
+        if (this.kycSessionId && (!finalConfig.headers || !finalConfig.headers['X-KYC-Session'])) {
+            finalConfig.headers = { ...finalConfig.headers, 'X-KYC-Session': this.kycSessionId };
+        }
+        return apiClient.get<T>(url, finalConfig);
     },
 
     async post<T = any>(url: string, data?: any, config?: any): Promise<AxiosResponse<T>> {
-        return apiClient.post<T>(url, data, config);
+        // Add KYC session header if available and not already in config
+        const finalConfig = { ...config };
+        if (this.kycSessionId && (!finalConfig.headers || !finalConfig.headers['X-KYC-Session'])) {
+            finalConfig.headers = { ...finalConfig.headers, 'X-KYC-Session': this.kycSessionId };
+        }
+        return apiClient.post<T>(url, data, finalConfig);
     },
 
     async put<T = any>(url: string, data?: any, config?: any): Promise<AxiosResponse<T>> {
-        return apiClient.put<T>(url, data, config);
+        // Add KYC session header if available and not already in config
+        const finalConfig = { ...config };
+        if (this.kycSessionId && (!finalConfig.headers || !finalConfig.headers['X-KYC-Session'])) {
+            finalConfig.headers = { ...finalConfig.headers, 'X-KYC-Session': this.kycSessionId };
+        }
+        return apiClient.put<T>(url, data, finalConfig);
     },
 
     async delete<T = any>(url: string, config?: any): Promise<AxiosResponse<T>> {
-        return apiClient.delete<T>(url, config);
+        // Add KYC session header if available and not already in config
+        const finalConfig = { ...config };
+        if (this.kycSessionId && (!finalConfig.headers || !finalConfig.headers['X-KYC-Session'])) {
+            finalConfig.headers = { ...finalConfig.headers, 'X-KYC-Session': this.kycSessionId };
+        }
+        return apiClient.delete<T>(url, finalConfig);
     },
 
     async patch<T = any>(url: string, data?: any, config?: any): Promise<AxiosResponse<T>> {
-        return apiClient.patch<T>(url, data, config);
+        // Add KYC session header if available and not already in config
+        const finalConfig = { ...config };
+        if (this.kycSessionId && (!finalConfig.headers || !finalConfig.headers['X-KYC-Session'])) {
+            finalConfig.headers = { ...finalConfig.headers, 'X-KYC-Session': this.kycSessionId };
+        }
+        return apiClient.patch<T>(url, data, finalConfig);
     },
 
     // Safe request wrapper
@@ -379,24 +438,34 @@ const api = {
         url: string,
         data?: any,
         config?: any
-    ): Promise<ApiResponse<T>> {
+    ): Promise<ClientResponse<T>> {
         try {
-            let response: AxiosResponse<T>;
+            let response: AxiosResponse<any>;
+
+            // Add KYC session header if available and not already in config
+            const finalConfig = { ...config };
+            if (this.kycSessionId && (!finalConfig.headers || !finalConfig.headers['X-KYC-Session'])) {
+                finalConfig.headers = { ...finalConfig.headers, 'X-KYC-Session': this.kycSessionId };
+            }
 
             switch (method) {
-                case 'get': response = await this.get<T>(url, config); break;
-                case 'post': response = await this.post<T>(url, data, config); break;
-                case 'put': response = await this.put<T>(url, data, config); break;
-                case 'delete': response = await this.delete<T>(url, config); break;
-                case 'patch': response = await this.patch<T>(url, data, config); break;
+                case 'get': response = await this.get<ApiResponse<T>>(url, finalConfig); break;
+                case 'post': response = await this.post<ApiResponse<T>>(url, data, finalConfig); break;
+                case 'put': response = await this.put<ApiResponse<T>>(url, data, finalConfig); break;
+                case 'delete': response = await this.delete<ApiResponse<T>>(url, finalConfig); break;
+                case 'patch': response = await this.patch<ApiResponse<T>>(url, data, finalConfig); break;
                 default: throw new Error(`Unsupported method: ${method}`);
             }
 
+
+            console.log("api::safeRequest => response: ", response);
             return {
-                data: response.data,
+                data: response.data &&
+                    typeof response.data === 'object' &&
+                    response.data.hasOwnProperty('data') ? response.data.data : response.data,
                 success: true,
                 statusCode: response.status,
-                message: response.statusText,
+                message: response.statusText || response.data?.message || 'Request completed',
                 totalCount: parseInt(response.headers['x-total-count'] || '0')
             };
         } catch (error: any) {

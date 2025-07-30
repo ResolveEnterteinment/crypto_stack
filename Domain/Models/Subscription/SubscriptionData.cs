@@ -11,6 +11,7 @@ namespace Domain.Models.Subscription
         public required string Interval { get; set; }
         public required int Amount { get; set; } = 0;
         public required string Currency { get; set; }
+        public DateTime? LastPayment { get; set; }
         public DateTime? NextDueDate { get; set; }
         public decimal? TotalInvestments { get; set; } = 0m;
         public DateTime? EndDate { get; set; } = null;

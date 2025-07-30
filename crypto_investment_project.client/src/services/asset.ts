@@ -19,10 +19,12 @@ export const getSupportedAssets = async (): Promise<Asset[]> => {
     }
 
     try {
-        const response = await api.get('/Asset/supported');
-
+        const response = await api.safeRequest('get', '/Asset/supported');
+        console.log("assetsService::getSupportedAssets => response: ", response)
         // Reset failure counter on success
         apiFailureCount = 0;
+        if (response == null || !response.success || response.data == null)
+            throw "Failed to get supported networks";
 
         // Process and validate response
         const assets: Asset[] = Array.isArray(response.data) ? response.data : [];

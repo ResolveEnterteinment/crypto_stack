@@ -24,7 +24,8 @@ namespace Application.Interfaces.Exchange
         /// <summary>
         /// Gets exchange balance with caching
         /// </summary>
-        public Task<ResultWrapper<ExchangeBalance>> GetCachedExchangeBalanceAsync(string exchange, string ticker);
+        Task<ResultWrapper<ExchangeBalance>> GetCachedExchangeBalanceAsync(string exchange, string ticker);
+        Task<ResultWrapper<decimal>> GetCachedAssetPriceAsync(string ticker);
 
         /// <summary>
         /// Retrieves all pending exchange orders that need reconciliation.
@@ -44,7 +45,7 @@ namespace Application.Interfaces.Exchange
         /// <param name="pageSize">Items per page.</param>
         /// <param name="cancellationToken">Optional cancellation token.</param>
         /// <returns>A collection of exchange orders matching the criteria.</returns>
-        public Task<ResultWrapper<PaginatedResult<ExchangeOrderData>>> GetOrdersAsync(
+        Task<ResultWrapper<PaginatedResult<ExchangeOrderData>>> GetOrdersAsync(
             Guid? userId = null,
             Guid? subscriptionId = null,
             string status = null,

@@ -10,6 +10,7 @@ namespace Domain.Constants
     {
         // General errors
         Unknown,
+        NullReturnValue,
         ValidationError,
         NotFound,
         Unauthorized,
@@ -20,6 +21,8 @@ namespace Domain.Constants
         OrderExecutionFailed,
         ExchangeApiError,
         PaymentProcessingError,
+        KYCFetchError,
+        SecurityError,
         AssetFetchError,
         BalanceFetchError,
         ResourceNotFound,
@@ -86,6 +89,7 @@ namespace Domain.Constants
                 FailureReason.OrderExecutionFailed => 400, // Bad Request
                 FailureReason.ExchangeApiError => 502, // Bad Gateway
                 FailureReason.PaymentProcessingError => 400, // Bad Request
+                FailureReason.KYCFetchError => 400, // Bad Request
                 FailureReason.AssetFetchError => 400, // Bad Request
                 FailureReason.BalanceFetchError => 400, // Bad Request
                 FailureReason.DatabaseError => 500, // Internal Server Error

@@ -9,6 +9,6 @@ namespace Application.Contracts.Responses.Balance
         public decimal Locked { get; set; }
         public decimal Total { get; set; }
         public required AssetDto Asset { get; set; }
-        public DateTime LastUpdated { get; set; }
+        public DateTime UpdatedAt { get; set; }
     }
 }

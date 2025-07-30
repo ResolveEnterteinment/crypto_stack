@@ -1,8 +1,29 @@
-// src/components/Dashboard/asset-balance-card.tsx
 import React from 'react';
 import { useNavigate } from "react-router-dom";
+import {
+    Card,
+    Typography,
+    Space,
+    Button,
+    Progress,
+    Row,
+    Col,
+    Divider,
+    Empty,
+    Tooltip,
+    Badge
+} from 'antd';
+import {
+    WalletOutlined,
+    DollarOutlined,
+    BarChartOutlined,
+    ArrowRightOutlined,
+    TransactionOutlined
+} from '@ant-design/icons';
 import { AssetHolding } from '../../types/dashboardTypes';
 import { AssetColors } from '../../types/assetTypes';
+
+const { Title, Text } = Typography;
 
 interface AssetBalanceCardProps {
     assetHoldings: AssetHolding[];
@@ -26,9 +47,7 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
     const totalValue = calculateTotal();
 
     // Handle withdraw click
-    const handleWithdraw = (assetId: string | undefined) => {
-        if (assetId == null || assetId == undefined)
-            console.error("Invalid asset id");
+    const handleWithdraw = () => {
         navigate(`/withdraw`);
     };
 
@@ -51,75 +70,211 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
         }
     };
 
+    // Format percentage for progress bar
+    const formatPercentage = (value: number, total: number): number => {
+        if (total === 0) return 0;
+        return Math.round((value / total) * 100);
+    };
+
     return (
-        <div className="bg-white shadow rounded-lg p-4 h-full">
-            <h2 className="text-xl font-semibold mb-4">Asset Holdings</h2>
+        <Card
+            style={{
+                height: '100%',
+                background: 'rgba(255, 255, 255, 0.9)',
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '16px',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+            }}
+            hoverable
+        >
+            {/* Header */}
+            <div style={{ marginBottom: '20px' }}>
+                <Row justify="space-between" align="middle">
+                    <Col>
+                        <Space align="center">
+                            <div style={{
+                                background: 'linear-gradient(135deg, #4caf50 0%, #00bcd4 100%)',
+                                padding: '8px',
+                                borderRadius: '8px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                            }}>
+                                <WalletOutlined style={{color: 'white' }} />
+                                
+                            </div>
+                            <Title level={4} style={{ margin: 0 }}>
+                                Asset Holdings
+                            </Title>
+                        </Space>
+                    </Col>
+                    {/* Action */}
+                    <Col>
+                        <Button
+                            size="large"
+                            onClick={handleWithdraw}
+                            icon={<TransactionOutlined />}
+                        >
+                            Withdraw
+                        </Button>
+                    </Col>
+                </Row>
+            </div>
 
             {assetHoldings && assetHoldings.length > 0 ? (
                 <>
-                    {/* Bar chart visualization */}
-                    <div className="mb-4 h-4 bg-gray-200 rounded-full overflow-hidden flex">
-                        {assetHoldings.map((holding) => {
-                            // Calculate percentage width for the bar
-                            const percentage = (holding.value / totalValue) * 100;
-                            return (
-                                <div
-                                    key={holding.id}
-                                    style={{
-                                        width: `${percentage}%`,
-                                        backgroundColor: getAssetColor(holding.ticker)
-                                    }}
-                                    className="h-full"
-                                    title={`${holding.ticker || 'Unknown'}: ${percentage.toFixed(1)}%`}
-                                />
-                            );
-                        })}
-                    </div>
-
-                    {/* List of balances */}
-                    <div className="space-y-3">
-                        {assetHoldings.map((holding) => (
-                            <div key={holding.id} className="flex justify-between items-center">
-                                <div className="flex items-center">
-                                    <div
-                                        className="w-3 h-3 rounded-full mr-2"
-                                        style={{ backgroundColor: getAssetColor(holding.ticker) }}
-                                    />
-                                    <span className="font-medium">
-                                        <span className="text-gray-500 ml-1">
-                                            {holding.name || 'Unknown'}
-                                            ({holding.ticker || 'N/A'})
-                                        </span>
-                                    </span>
-                                </div>
-                                <div className="font-bold">{formatAmount(holding.total)}</div>
-                                <div className="font-bold">${holding.value.toFixed(2)}</div>
-                                <div className="font-bold">
-                                    <button
-                                        onClick={() => handleWithdraw(holding.id)}
-                                        className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 px-4 rounded-md text-sm font-medium transition-colors"
+                    {/* Portfolio Distribution Visualization */}
+                    <div style={{ marginBottom: '24px' }}>
+                        <Text type="secondary" style={{ fontSize: '12px', marginBottom: '8px', display: 'block' }}>
+                            Portfolio Distribution
+                        </Text>
+                        <div style={{
+                            height: '8px',
+                            background: '#f5f5f5',
+                            borderRadius: '4px',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            marginBottom: '8px'
+                        }}>
+                            {assetHoldings.map((holding) => {
+                                const percentage = (holding.value / totalValue) * 100;
+                                return (
+                                    <Tooltip
+                                        key={holding.id}
+                                        title={`${holding.ticker}: ${percentage.toFixed(1)}% ($${holding.value.toFixed(2)})`}
                                     >
-                                        Withdraw
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-
-                    {/* Total */}
-                    <div className="mt-4 pt-3 border-t border-gray-200">
-                        <div className="flex justify-between items-center">
-                            <span className="font-medium">Total Assets</span>
-                            <span className="font-bold">{assetHoldings.length} tokens</span>
+                                        <div
+                                            style={{
+                                                width: `${percentage}%`,
+                                                backgroundColor: getAssetColor(holding.ticker),
+                                                height: '100%',
+                                                cursor: 'pointer'
+                                            }}
+                                        />
+                                    </Tooltip>
+                                );
+                            })}
                         </div>
                     </div>
+
+                    {/* Asset List */}
+                    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                        {assetHoldings.map((holding, index) => {
+                            const percentage = formatPercentage(holding.value, totalValue);
+
+                            return (
+                                <div key={holding.id}>
+                                    <Card
+                                        size="small"
+                                        style={{
+                                            background: 'linear-gradient(135deg, #fafafa 0%, #f0f0f0 100%)',
+                                            border: '1px solid #e8e8e8',
+                                            borderRadius: '8px'
+                                        }}
+                                        bodyStyle={{ padding: '12px' }}
+                                    >
+                                        <Row align="middle" gutter={[16, 8]}>
+                                            {/* Asset Info */}
+                                            <Col xs={24} sm={8}>
+                                                <Space align="center">
+                                                    <div
+                                                        style={{
+                                                            width: '12px',
+                                                            height: '12px',
+                                                            backgroundColor: getAssetColor(holding.ticker),
+                                                            borderRadius: '50%',
+                                                            flexShrink: 0
+                                                        }}
+                                                    />
+                                                    <div>
+                                                        <Text strong style={{ fontSize: '14px' }}>
+                                                            {holding.ticker || 'N/A'}
+                                                        </Text>
+                                                        <br />
+                                                        <Text
+                                                            type="secondary"
+                                                            style={{ fontSize: '12px' }}
+                                                        >
+                                                            {holding.name || 'Unknown'}
+                                                        </Text>
+                                                    </div>
+                                                </Space>
+                                            </Col>
+
+                                            {/* Amount */}
+                                            <Col xs={12} sm={6}>
+                                                <div style={{ textAlign: 'center' }}>
+                                                    <Text strong style={{ fontSize: '13px', display: 'block' }}>
+                                                        {formatAmount(holding.total)}
+                                                    </Text>
+                                                    <Text type="secondary" style={{ fontSize: '11px' }}>
+                                                        Balance
+                                                    </Text>
+                                                </div>
+                                            </Col>
+
+                                            {/* Value */}
+                                            <Col xs={12} sm={6}>
+                                                <div style={{ textAlign: 'center' }}>
+                                                    <Text strong style={{ fontSize: '13px', display: 'block', color: '#52c41a' }}>
+                                                        ${holding.value.toFixed(2)}
+                                                    </Text>
+                                                    <Text type="secondary" style={{ fontSize: '11px' }}>
+                                                        {percentage}%
+                                                    </Text>
+                                                </div>
+                                            </Col>
+                                        </Row>
+                                    </Card>
+
+                                    {index < assetHoldings.length - 1 && (
+                                        <div style={{ margin: '4px 0' }} />
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </Space>
+
+                    <Divider style={{ margin: '20px 0' }} />
+
+                    {/* Summary Footer */}
+                    <Row justify="space-between" align="middle">
+                        <Col>
+                            <Space align="center">
+                                <BarChartOutlined style={{ color: '#1890ff' }} />
+                                <Text strong>Total Portfolio</Text>
+                            </Space>
+                        </Col>
+                        <Col>
+                            <Space direction="vertical" size={0} style={{ textAlign: 'right' }}>
+                                <Text strong style={{ fontSize: '16px', color: '#52c41a' }}>
+                                    ${totalValue.toFixed(2)}
+                                </Text>
+                                <Text type="secondary" style={{ fontSize: '12px' }}>
+                                    {assetHoldings.length} {assetHoldings.length === 1 ? 'asset' : 'assets'}
+                                </Text>
+                            </Space>
+                        </Col>
+                    </Row>
                 </>
             ) : (
-                <div className="flex justify-center items-center h-32 text-gray-400">
-                    No assets found
-                </div>
+                <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={
+                        <div style={{ textAlign: 'center' }}>
+                            <Title level={5} style={{ color: '#8c8c8c', marginBottom: '8px' }}>
+                                No Assets Found
+                            </Title>
+                            <Text type="secondary" style={{ fontSize: '14px' }}>
+                                Start investing to see your asset holdings here
+                            </Text>
+                        </div>
+                    }
+                    style={{ padding: '40px 20px' }}
+                />
             )}
-        </div>
+        </Card>
     );
 };
 

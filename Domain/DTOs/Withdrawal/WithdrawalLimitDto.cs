@@ -1,8 +1,11 @@
-﻿namespace Domain.DTOs.Withdrawal
+﻿using Domain.Constants.KYC;
+
+namespace Domain.DTOs.Withdrawal
 {
     public class WithdrawalLimitDto
     {
-        public string KycLevel { get; set; }
+        public string KycLevel { get; set; } = Domain.Constants.KYC.KycLevel.None;
+        public string Currency { get; set; } = "USD";
         public decimal DailyLimit { get; set; }
         public decimal MonthlyLimit { get; set; }
         public decimal DailyRemaining { get; set; }

@@ -1,5 +1,6 @@
 // crypto_investment_project.Server/Controllers/WithdrawalController.cs
 using Application.Contracts.Requests.Withdrawal;
+using Application.Extensions;
 using Application.Interfaces.Withdrawal;
 using Domain.Constants.Withdrawal;
 using Domain.DTOs.Withdrawal;
@@ -48,6 +49,27 @@ namespace crypto_investment_project.Server.Controllers
             }
         }
 
+        [HttpGet("limits/user/{user}")]
+        [Authorize(Roles = "ADMIN")]
+        public async Task<IActionResult> GetWithdrawalLimits(string user)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(user) || !Guid.TryParse(user, out var userId))
+                {
+                    return BadRequest(new { message = "Invalid user ID" });
+                }
+
+                var result = await _withdrawalService.GetUserWithdrawalLimitsAsync(userId);
+                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : Ok(result.Data);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting withdrawal limits");
+                return StatusCode(500, new { message = "An error occurred while retrieving withdrawal limits" });
+            }
+        }
+
         [HttpGet("networks/{assetTicker}")]
         public async Task<IActionResult> GetSupportedNetworks(string assetTicker)
         {
@@ -59,6 +81,36 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 var result = await _withdrawalService.GetSupportedNetworksAsync(assetTicker);
+
+                if (!result.IsSuccess)
+                {
+                    return BadRequest(new { message = result.ErrorMessage });
+                }
+
+                return Ok(new
+                {
+                    isSuccess = true,
+                    data = result.Data
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting supported networks");
+                return StatusCode(500, new { message = "An error occurred while retrieving supported networks" });
+            }
+        }
+
+        [HttpGet("minimum/{assetTicker}")]
+        public async Task<IActionResult> GetMinimumWithdrawalAmount(string assetTicker)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(assetTicker))
+                {
+                    return BadRequest(new { message = "Invalid asset ticker" });
+                }
+
+                var result = await _withdrawalService.GetMinimumWithdrawalThresholdAsync(assetTicker);
 
                 if (!result.IsSuccess)
                 {
@@ -103,6 +155,32 @@ namespace crypto_investment_project.Server.Controllers
             {
                 _logger.LogError(ex, "Error getting supported networks");
                 return StatusCode(500, new { message = "An error occurred while retrieving supported networks" });
+            }
+        }
+
+        [HttpPost("can-withdraw")]
+        [Authorize]
+        public async Task<IActionResult> CanUserWithdraw([FromBody] CanUserWithdrawRequest request)
+        {
+            try
+            {
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var parsedUserId))
+                {
+                    return BadRequest(new { message = "Invalid user ID" });
+                }
+
+                var result = await _withdrawalService.CanUserWithdrawAsync(parsedUserId, request.Amount, request.Ticker);
+                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : 
+                    Ok(new {
+                        data= result.Data,
+                        message= result.DataMessage,
+                    });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error requesting withdrawal");
+                return StatusCode(500, new { message = "An error occurred while processing withdrawal request" });
             }
         }
 

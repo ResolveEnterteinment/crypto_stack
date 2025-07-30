@@ -4,17 +4,43 @@ import { WithdrawalLimits, WithdrawalRequest, Withdrawal, NetworkDto, Withdrawal
 const withdrawalService = {
     // Get user withdrawal levels
     getLevels: async (): Promise<WithdrawalLimits> => {
-        const response = await api.safeRequest('get', '/withdrawal/limits');
+        const response = await api.safeRequest<WithdrawalLimits>('get', '/withdrawal/limits');
         console.log("withdrawalService::getLevels => response: ", response)
-        if (response == null || response.data == null || response.success != true)
+        if (response == null || response.data == null || !response.success)
             throw "Failed to get withdrawal limits";
         return response.data;
     },
-    getSupportedNetworks: async (assetTicker:string): Promise<NetworkDto[]> => {
-        const response = await api.safeRequest('get', `/withdrawal/networks/${assetTicker}`);
-        if (response == null || response.success != true || response.data == null)
+    getUserLevels: async (userId: string): Promise<WithdrawalLimits> => {
+        const response = await api.safeRequest<WithdrawalLimits>('get', `/withdrawal/limits/user/${userId}`);
+        console.log("withdrawalService::getLevels => response: ", response)
+        if (response == null || response.data == null || !response.success)
+            throw "Failed to get withdrawal limits";
+        return response.data;
+    },
+    getSupportedNetworks: async (assetTicker: string): Promise<NetworkDto[]> => {
+        const response = await api.safeRequest<NetworkDto[]>('get', `/withdrawal/networks/${assetTicker}`);
+        console.log("withdrawalService::getSupportedNetworks => response: ", response)
+        if (response == null || !response.success || response.data == null)
             throw "Failed to get supported networks";
-        return response.data.data;
+        return response.data;
+    },
+    getMinimumWithdrawalAmount: async (assetTicker: string): Promise<number> => {
+        const response = await api.safeRequest<number>('get', `/withdrawal/minimum/${assetTicker}`);
+        console.log("withdrawalService::getMinimumWithdrawalAmount => response: ", response)
+        if (response == null || response.data == null || !response.success)
+            throw "Failed to get minimum withdrawal amount";
+        return response.data;
+    },
+    canUserWithdraw: async (amount: number, ticker: string): Promise<{ data: boolean, message: string | undefined }> => {
+        const response = await api.safeRequest<boolean>('post', `/withdrawal/can-withdraw`,
+            {
+                amount: amount,
+                ticker: ticker
+            });
+        console.log("withdrawalService::canUserWithdraw => response: ", response)
+        if (response == null || response.data == null || !response.success)
+            throw "Failed to check user withdrawal eligibility";
+        return { data: response.data, message: response.message };
     },
     requestWithdrawal: async (data: WithdrawalRequest): Promise<Withdrawal> => {
         const response = await api.safeRequest('post', '/withdrawal/request', data);

@@ -13,13 +13,32 @@ export const getBalance = async (ticker: string): Promise<Balance | null> => {
     return response.data;
 };
 
+export const getUserBalance = async (userId: string, ticker: string): Promise<Balance | null> => {
+    if (!ticker) {
+        console.error("getBalances called with undefined ticker");
+        return null;
+    }
+
+    if (!userId) {
+        console.error("getBalances called with undefined user id");
+        return null;
+    }
+    const response = await api.safeRequest('get', `/Balance/user/${userId}/asset/${ticker}`);
+    console.log("BalanceService::getUserBalance => response: ", response);
+    if (response == null || response.data == null || response.success != true)
+        throw `Failed to get ${ticker} balance for user ID ${userId}`;
+    return response.data;
+};
+
 export const getBalances = async (userId: string): Promise<Balance[] | []>  => {
     if (!userId) {
         console.error("getBalances called with undefined userId");
         return [];
     }
-    const { data } = await api.get(`/Balance/user/${userId}`);
-    return data;
+    const response = await api.safeRequest('get', `/Balance/user/${userId}`);
+    if (response == null || response.data == null || response.success != true)
+        throw `Failed to get balances for user ID ${userId}`;
+    return response.data;
 };
 
 export const getTotalInvestments = async (userId: string) => {

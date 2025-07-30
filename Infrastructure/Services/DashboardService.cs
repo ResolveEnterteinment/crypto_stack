@@ -209,14 +209,14 @@ namespace Infrastructure.Services
                 // Upsert by userId
                 var filter = Builders<DashboardData>.Filter.Eq(d => d.UserId, userId);
                 var existingWr = await GetOneAsync(filter);
-                var fields = new { TotalInvestments = total, AssetHoldings = assets, PortfolioValue = portfolio, LastUpdated = DateTime.UtcNow };
+                var fields = new { TotalInvestments = total, AssetHoldings = assets, PortfolioValue = portfolio};
                 if (existingWr.Data != null)
                 {
                     _ = await UpdateAsync(existingWr.Data.Id, fields);
                 }
                 else
                 {
-                    var newData = new DashboardData { UserId = userId, TotalInvestments = total, AssetHoldings = assets, PortfolioValue = portfolio, LastUpdated = DateTime.UtcNow };
+                    var newData = new DashboardData { UserId = userId, TotalInvestments = total, AssetHoldings = assets, PortfolioValue = portfolio};
                     _ = await InsertAsync(newData);
                 }
                 return ResultWrapper.Success();

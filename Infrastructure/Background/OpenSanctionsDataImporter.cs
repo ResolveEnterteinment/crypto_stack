@@ -134,7 +134,7 @@ namespace Infrastructure.Background
                 Countries = entity.Properties?.Country?.ToList() ?? [],
                 IsPep = entity.Schema == "Person" && (entity.Properties?.Topics?.Contains("pep") ?? false),
                 IsSanctioned = entity.Properties?.Topics?.Contains("sanction") ?? false,
-                LastUpdated = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
                 RawData = JsonSerializer.Serialize(entity)
             };
         }
@@ -179,7 +179,6 @@ namespace Infrastructure.Background
         public List<string> Countries { get; set; } = [];
         public bool IsPep { get; set; }
         public bool IsSanctioned { get; set; }
-        public DateTime LastUpdated { get; set; }
         public required string RawData { get; set; }
     }
 }

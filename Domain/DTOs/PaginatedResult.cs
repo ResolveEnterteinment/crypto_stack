@@ -19,7 +19,7 @@
         /// <summary>
         /// The total number of items across all pages.
         /// </summary>
-        public long TotalCount { get; set; }
+        public int TotalCount { get; set; }
 
         /// <summary>
         /// The total number of pages.

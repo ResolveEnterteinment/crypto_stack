@@ -361,11 +361,14 @@ namespace Domain.Exceptions
         /// </summary>
         /// <param name="message">The error message.</param>
         /// <param name="exchange">The exchange.</param>
-        public ExchangeApiException(string message, string exchange)
+        public ExchangeApiException(string message, string exchange = "")
             : base(message, "EXCHANGE_API_ERROR")
         {
-            Exchange = exchange;
-            _ = AddContext("Exchange", exchange);
+            if (!string.IsNullOrEmpty(exchange))
+            {
+                Exchange = exchange;
+                _ = AddContext("Exchange", exchange);
+            }
         }
 
         /// <summary>

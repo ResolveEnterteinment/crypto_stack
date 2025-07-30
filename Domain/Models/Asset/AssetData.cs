@@ -1,5 +1,8 @@
-﻿namespace Domain.Models.Asset
+﻿using Domain.Attributes;
+
+namespace Domain.Models.Asset
 {
+    [BsonCollection("assets")]
     public class AssetData : BaseEntity
     {
         public required string Name { get; set; }

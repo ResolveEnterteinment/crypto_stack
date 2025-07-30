@@ -24,6 +24,7 @@ using Infrastructure.Services.Payment;
 using Infrastructure.Services.Subscription;
 using Infrastructure.Services.Withdrawal;
 using MediatR;
+using Microsoft.AspNetCore.DataProtection;
 using MongoDB.Driver;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
@@ -37,13 +38,15 @@ public static class CoreServicesExtensions
     public static IServiceCollection AddCoreServices(this IServiceCollection services, IWebHostEnvironment environment)
     {
         // Register additional dependencies
-        _ = services.AddDataProtection();
-        _ = services.AddSingleton(TimeProvider.System);
-        _ = services.AddHttpClient();
-        _ = services.AddMemoryCache();
+        services.AddDataProtection()
+            .SetApplicationName("CryptoInvestmentProject")
+            .SetDefaultKeyLifetime(TimeSpan.FromDays(90));
+        services.AddSingleton(TimeProvider.System);
+        services.AddHttpClient();
+        services.AddMemoryCache();
 
         // Configure MongoDB client with connection pooling
-        _ = services.AddSingleton<IMongoClient>(provider =>
+        services.AddSingleton<IMongoClient>(provider =>
         {
             var settings = provider.GetRequiredService<IConfiguration>().GetSection("MongoDB").Get<MongoDbSettings>();
             if (settings == null || string.IsNullOrEmpty(settings.ConnectionString))

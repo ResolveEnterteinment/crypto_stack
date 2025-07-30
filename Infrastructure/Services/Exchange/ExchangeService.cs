@@ -24,6 +24,7 @@ namespace Infrastructure.Services.Exchange
         private readonly Dictionary<string, IExchange> _exchanges = new(StringComparer.OrdinalIgnoreCase);
         private readonly IOptions<ExchangeServiceSettings> _settings;
         private readonly AsyncRetryPolicy _retryPolicy;
+        private readonly IAssetService _assetService;
 
         private static readonly TimeSpan PriceCacheDuration = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan BalanceCacheDuration = TimeSpan.FromMinutes(2);
@@ -64,6 +65,7 @@ namespace Infrastructure.Services.Exchange
                 FiatAssetId = fid;
             else
                 Logger.LogError("Invalid PlatformFiatAssetId");
+            _assetService = assetService ?? throw new ArgumentNullException(nameof(_assetService));
         }
 
         private void InitExchanges(IDictionary<string, ExchangeSettings> cfg)
@@ -90,6 +92,23 @@ namespace Infrastructure.Services.Exchange
             }
         }
 
+        public async Task<ResultWrapper<decimal>> GetCachedAssetPriceAsync(string ticker)
+        {
+            try
+            {
+                var assetResult = await _assetService.GetByTickerAsync(ticker);
+                if (assetResult == null || !assetResult.IsSuccess)
+                    throw new AssetFetchException();
+                var asset = assetResult.Data;
+                var exch = asset.Exchange;
+                return await GetCachedAssetPriceAsync(exch, ticker);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<decimal>.FromException(ex);
+            }
+            
+        }
         public Task<ResultWrapper<decimal>> GetCachedAssetPriceAsync(string exch, string ticker)
         {
             if (string.IsNullOrEmpty(exch) || string.IsNullOrEmpty(ticker))
@@ -105,11 +124,11 @@ namespace Infrastructure.Services.Exchange
                         throw new ValidationException($"Unknown exchange {exch}", new() { ["exchange"] = [exch] });
 
                     var pr = await inst.GetAssetPrice(ticker);
-                    if (!pr.IsSuccess) throw new BalanceFetchException(pr.ErrorMessage);
+                    if (!pr.IsSuccess) throw new AssetFetchException(pr.ErrorMessage);
                     return pr.Data;
                 },
                 PriceCacheDuration,
-                () => new BalanceFetchException($"Failed price {exch}:{ticker}"));
+                () => new AssetFetchException($"Failed price {exch}:{ticker}"));
         }
 
         public Task<ResultWrapper<ExchangeBalance>> GetCachedExchangeBalanceAsync(string exch, string ticker)

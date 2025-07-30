@@ -1,23 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Tag, Button, Card, Tooltip, Modal, Alert, Skeleton, Typography, message, Space } from 'antd';
+import { Table, Tag, Button, Card, Tooltip, Modal, Alert, Skeleton, Typography, message, Space, Spin } from 'antd';
 import { ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, CopyOutlined } from '@ant-design/icons';
-//import { useAuth } from '../../context/AuthContext';
 import { WithdrawalResponse } from '../../types/withdrawal';
 import withdrawalService from '../../services/withdrawalService';
 
 const { Text } = Typography;
 
-/*interface AuthContextType {
-    user: any;
-    // Add other auth properties as needed
-}*/
+interface WithdrawalHistoryProps {
+    onWithdrawalCancelled?: () => void;
+}
 
-const WithdrawalHistory: React.FC = () => {
-    //const { user } = useAuth() as AuthContextType;
+const WithdrawalHistory: React.FC<WithdrawalHistoryProps> = ({ onWithdrawalCancelled }) => {
     const [withdrawals, setWithdrawals] = useState<WithdrawalResponse[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [cancelLoadingMap, setCancelLoadingMap] = useState<Record<string, boolean>>({});
+    const [cancelModalOpen, setCancelModalOpen] = useState<boolean>(false);
     const [confirmModalOpen, setConfirmModalOpen] = useState<boolean>(false);
     const [withdrawalToCancel, setWithdrawalToCancel] = useState<string | null>(null);
 
@@ -47,6 +45,10 @@ const WithdrawalHistory: React.FC = () => {
             if (success) {
                 await fetchWithdrawalHistory();
                 message.success('Withdrawal request has been cancelled successfully.');
+                // Trigger refresh of withdrawal limits
+                if (onWithdrawalCancelled) {
+                    onWithdrawalCancelled();
+                }
             } else {
                 throw new Error('Failed to cancel withdrawal request');
             }
@@ -59,21 +61,21 @@ const WithdrawalHistory: React.FC = () => {
         }
     };
 
-    const handleCancelWithdrawal = (withdrawalId: string): void => {
-        setWithdrawalToCancel(withdrawalId);
-        setConfirmModalOpen(true);
-    };
-
     const handleConfirmCancel = async (): Promise<void> => {
         if (withdrawalToCancel) {
-            setConfirmModalOpen(false);
+            setCancelModalOpen(false);
             await cancelWithdrawal(withdrawalToCancel);
             setWithdrawalToCancel(null);
         }
     };
 
-    const handleCancelModal = (): void => {
-        setConfirmModalOpen(false);
+    const handleCancelWithdrawal = (withdrawalId: string): void => {
+        setWithdrawalToCancel(withdrawalId);
+        setCancelModalOpen(true);
+    };
+
+    const handleCloseCancelModal = (): void => {
+        setCancelModalOpen(false);
         setWithdrawalToCancel(null);
     };
 
@@ -93,9 +95,9 @@ const WithdrawalHistory: React.FC = () => {
         }
     };
 
-    const formatAddress = (address: string): string => {
+    const formatHashString = (address: string, count: number = 4): string => {
         if (!address || address.length <= 8) return address;
-        return `${address.slice(0, 6)}...${address.slice(-4)}`;
+        return `${address.slice(0, count + 2)}...${address.slice(-count)}`;
     };
 
     const getStatusTag = (status: string): React.ReactNode => {
@@ -161,9 +163,12 @@ const WithdrawalHistory: React.FC = () => {
             ellipsis: false,
             render: (text: string) => text ? (
                 <Tooltip title={text} placement="top">
-                    <Space size="small">
+                    <Space size="small" onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(text);
+                    }}>
                         <span style={{ fontFamily: 'monospace', fontSize: '13px' }}>
-                            {formatAddress(text)}
+                            {formatHashString(text)}
                         </span>
                         <Button
                             type="text"
@@ -192,8 +197,32 @@ const WithdrawalHistory: React.FC = () => {
             key: 'transactionHash',
             ellipsis: true,
             render: (text: string) => text ? (
-                <Tooltip title={text}>
-                    <span>{text?.substring(0, 15)}...</span>
+                <Tooltip title={text} placement="top">
+                    <Space size="small" onClick={(e) => {
+                        e.stopPropagation();
+                        copyToClipboard(text);
+                    }}>
+                        <span style={{ fontFamily: 'monospace', fontSize: '13px' }}>
+                            {formatHashString(text)}
+                        </span>
+                        <Button
+                            type="text"
+                            size="small"
+                            icon={<CopyOutlined />}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                copyToClipboard(text);
+                            }}
+                            style={{
+                                padding: '0 4px',
+                                height: '20px',
+                                width: '20px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                            }}
+                        />
+                    </Space>
                 </Tooltip>
             ) : '-',
         },
@@ -225,50 +254,53 @@ const WithdrawalHistory: React.FC = () => {
     }
 
     return (
-        <Card title="Withdrawal History" className="max-w-6xl mx-auto my-5">
-            {error && (
-                <Alert
-                    message="Error"
-                    description={error}
-                    type="error"
-                    showIcon
-                    className="mb-4"
-                    closable
-                    onClose={() => setError(null)}
-                />
-            )}
+        <Spin spinning={loading} tip="Loading Transaction History..." className="max-w-3xl mx-auto my-5" >
+            <Card title="Withdrawal History" className="max-w-6xl mx-auto my-5">
+                {error && (
+                    <Alert
+                        message="Error"
+                        description={error}
+                        type="error"
+                        showIcon
+                        className="mb-4"
+                        closable
+                        onClose={() => setError(null)}
+                    />
+                )}
 
-            {withdrawals && withdrawals.length > 0 ? (
-                <Table
-                    dataSource={withdrawals}
-                    columns={columns}
-                    rowKey="id"
-                    pagination={{ pageSize: 10 }}
-                    scroll={{ x: 800 }}
-                />
-            ) : (
-                <div className="text-center py-10">
-                    <Text type="secondary">No withdrawal history found.</Text>
-                </div>
-            )}
+                {withdrawals && withdrawals.length > 0 ? (
+                    <Table
+                        dataSource={withdrawals}
+                        columns={columns}
+                        rowKey="id"
+                        pagination={{ pageSize: 10 }}
+                        scroll={{ x: 800 }}
+                    />
+                ) : (
+                    <div className="text-center py-10">
+                        <Text type="secondary">No withdrawal history found.</Text>
+                    </div>
+                )}
 
-            {/* Confirmation modal */}
-            <Modal
-                title="Cancel Withdrawal Request"
-                open={confirmModalOpen}
-                onOk={handleConfirmCancel}
-                onCancel={handleCancelModal}
-                okText="Yes, Cancel"
-                cancelText="No"
-                okType="danger"
-                confirmLoading={withdrawalToCancel ? cancelLoadingMap[withdrawalToCancel] : false}
-            >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <ExclamationCircleOutlined style={{ color: '#faad14', fontSize: '16px' }} />
-                    <span>Are you sure you want to cancel this withdrawal request? This action cannot be undone.</span>
-                </div>
-            </Modal>
-        </Card>
+                {/* Cancel confirmation modal */}
+                <Modal
+                    title="Cancel Withdrawal Request"
+                    open={cancelModalOpen}
+                    onOk={handleConfirmCancel}
+                    onCancel={handleCloseCancelModal}
+                    okText="Yes, Cancel"
+                    cancelText="No"
+                    okType="danger"
+                    confirmLoading={withdrawalToCancel ? cancelLoadingMap[withdrawalToCancel] : false}
+                >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <ExclamationCircleOutlined style={{ color: '#faad14', fontSize: '16px' }} />
+                        <span>Are you sure you want to cancel this withdrawal request? This action cannot be undone.</span>
+                    </div>
+                </Modal>
+
+            </Card>
+        </Spin>
     );
 };
 

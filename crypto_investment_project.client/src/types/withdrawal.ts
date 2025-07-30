@@ -29,6 +29,8 @@ export interface Withdrawal {
         accountHolder?: string;
         accountNumber?: string;
         routingNumber?: string;
+        memo?: string;
+        network?: string;
     };
 }
 

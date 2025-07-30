@@ -1,10 +1,11 @@
+using System;
 using System.Threading.RateLimiting;
 
 namespace crypto_investment_project.Server.Configuration;
 
 public static class RateLimitingExtensions
 {
-    public static IServiceCollection AddRateLimitingPolicies(this IServiceCollection services)
+    public static IServiceCollection AddRateLimitingPolicies(this IServiceCollection services, IHostEnvironment environment) // Add IHostEnvironment as a parameter
     {
         services.AddRateLimiter(options =>
         {
@@ -87,13 +88,13 @@ public static class RateLimitingExtensions
                     }));
 
             // KYC API rate limits
-            options.AddPolicy("kycEndpoints", httpContext =>
+            options.AddPolicy("KycEndpoints", httpContext =>
                 RateLimitPartition.GetFixedWindowLimiter(
                     partitionKey: GetClientIpAddress(httpContext),
                     factory: _ => new FixedWindowRateLimiterOptions
                     {
                         AutoReplenishment = true,
-                        PermitLimit = 20,
+                        PermitLimit = environment.IsDevelopment() ? 1000 : 20,
                         QueueLimit = 0,
                         Window = TimeSpan.FromMinutes(10)
                     }));

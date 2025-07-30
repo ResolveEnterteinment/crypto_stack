@@ -4,6 +4,7 @@ using Application.Interfaces.Base;
 using Application.Interfaces.Logging;
 using Domain.Constants.Asset;
 using Domain.DTOs;
+using Domain.DTOs.Dashboard;
 using Domain.Events;
 using Domain.Exceptions;
 using Domain.Models.Balance;
@@ -81,21 +82,28 @@ namespace Infrastructure.Services
             );
         }
 
-        public Task<ResultWrapper<BalanceData>> GetUserBalanceByTickerAsync(Guid userId, string ticker)
+        public Task<ResultWrapper<BalanceData?>> GetUserBalanceByTickerAsync(Guid userId, string ticker)
         {
             return SafeExecute(
-                        async () =>
-                        {
-                            if (userId == Guid.Empty)
-                            {
-                                throw new ArgumentException("Invalid userId");
-                            }
+                async () =>
+                {
+                    if (userId == Guid.Empty)
+                    {
+                        throw new ArgumentException("Invalid userId");
+                    }
 
-                            var filter = Builders<BalanceData>.Filter.Where(b => b.UserId == userId && b.Ticker == ticker);
-                            var balance = await _repository.GetOneAsync(filter);
-                            return balance ?? throw new DatabaseException("Failed to fetch user balance for " + ticker);
-                        }
-                    );
+                    var filter = Builders<BalanceData>.Filter.And([
+                        Builders<BalanceData>.Filter.Eq(b => b.UserId, userId),
+                    Builders<BalanceData>.Filter.Eq(b => b.Ticker, ticker)]);
+
+                    var balance = await _repository.GetOneAsync(filter);
+
+                    return balance ?? new BalanceData { 
+                        UserId = userId,
+                        AssetId = Guid.Empty,
+                        Ticker = ticker
+                    };
+                });
         }
         public Task<ResultWrapper<List<BalanceData>>> FetchBalancesWithAssetsAsync(Guid userId, string? assetType = null)
         {
@@ -130,7 +138,7 @@ namespace Infrastructure.Services
                             Locked = bal.Locked,
                             Total = bal.Total,
                             Asset = assetWr,
-                            LastUpdated = bal.LastUpdated
+                            UpdatedAt = bal.UpdatedAt
                         });
                     }
 
@@ -166,7 +174,7 @@ namespace Infrastructure.Services
                     ["Available"] = existing.Available + updateBalance.Available,
                     ["Locked"] = existing.Locked + updateBalance.Locked,
                     ["Total"] = existing.Total + updateBalance.Available + updateBalance.Locked,
-                    ["LastUpdated"] = DateTime.UtcNow
+                    ["UpdatedAt"] = DateTime.UtcNow
                 };
                 if (!string.IsNullOrWhiteSpace(updateBalance.Ticker))
                 {
@@ -186,7 +194,7 @@ namespace Infrastructure.Services
             {
                 updateBalance.UserId = userId;
                 updateBalance.Total = updateBalance.Available + updateBalance.Locked;
-                updateBalance.LastUpdated = DateTime.UtcNow;
+                updateBalance.UpdatedAt = DateTime.UtcNow;
 
                 var insertWr = await InsertAsync(updateBalance);
                 if (!insertWr.IsSuccess)

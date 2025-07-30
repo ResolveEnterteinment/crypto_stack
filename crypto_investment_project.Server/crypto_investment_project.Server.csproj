@@ -37,6 +37,7 @@
     <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
     <PackageReference Include="Serilog.Enrichers.Process" Version="3.0.0" />
     <PackageReference Include="Serilog.Enrichers.Thread" Version="4.0.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.10" />
     <PackageReference Include="Stripe.net" Version="47.4.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
   </ItemGroup>
@@ -50,6 +51,7 @@
 
   <ItemGroup>
     <Folder Include="Middleware\" />
+    <Folder Include="secure\uploads\kyc\" />
   </ItemGroup>
 
 </Project>

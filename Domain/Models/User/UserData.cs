@@ -1,5 +1,4 @@
-﻿// Domain/Models/KYC/KycData.cs
-using Domain.Attributes;
+﻿using Domain.Attributes;
 
 namespace Domain.Models.User
 {
@@ -10,7 +9,7 @@ namespace Domain.Models.User
         public string Email { get; set; }
         public string PaymentProviderCustomerId { get; set; }
         public bool IsKycVerified { get; set; } = false;
-        public string KycLevel { get; set; } = Domain.Constants.KYC.KycLevel.None;
+        public string KycLevel { get; set; } = Constants.KYC.KycLevel.None;
         public DateTime? KycVerifiedAt { get; set; }
     }
 }

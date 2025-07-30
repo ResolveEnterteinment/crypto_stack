@@ -1,15 +1,20 @@
 ﻿// Infrastructure/Services/WithdrawalService.cs
+using Application.Contracts.Requests.Withdrawal;
 using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
+using Application.Interfaces.Exchange;
 using Application.Interfaces.KYC;
 using Application.Interfaces.Logging;
 using Application.Interfaces.Network;
 using Application.Interfaces.Withdrawal;
+using Domain.Constants;
 using Domain.Constants.KYC;
 using Domain.Constants.Withdrawal;
 using Domain.DTOs;
+using Domain.DTOs.Exchange;
 using Domain.DTOs.Network;
+using Domain.DTOs.Settings;
 using Domain.DTOs.Withdrawal;
 using Domain.Events;
 using Domain.Exceptions;
@@ -17,14 +22,17 @@ using Domain.Models.Balance;
 using Domain.Models.Transaction;
 using Domain.Models.Withdrawal;
 using Infrastructure.Services.Base;
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services.Withdrawal
 {
     public class WithdrawalService : BaseService<WithdrawalData>, IWithdrawalService
     {
+        private readonly IOptions<WithdrawalServiceSettings> _settings;
         private readonly IKycService _kycService;
         private readonly IUserService _userService;
+        private readonly IExchangeService _exchangeService;
         private readonly INotificationService _notificationService;
         private readonly INetworkService _networkService;
         private readonly IAssetService _assetService;
@@ -35,10 +43,12 @@ namespace Infrastructure.Services.Withdrawal
             ICrudRepository<WithdrawalData> repository,
             ICacheService<WithdrawalData> cacheService,
             IMongoIndexService<WithdrawalData> indexService,
+            IOptions<WithdrawalServiceSettings> settings,
             ILoggingService logger,
             IEventService eventService,
             IKycService kycService,
             IUserService userService,
+            IExchangeService exchangeService,
             INetworkService networkService,
             IAssetService assetService,
             IBalanceService balanceService,
@@ -67,8 +77,10 @@ namespace Infrastructure.Services.Withdrawal
             }
         )
         {
+            _settings = settings ?? throw new ArgumentNullException(nameof(settings));
             _kycService = kycService ?? throw new ArgumentNullException(nameof(kycService));
             _userService = userService ?? throw new ArgumentNullException(nameof(userService));
+            _exchangeService = exchangeService ?? throw new ArgumentException(nameof(exchangeService));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _networkService = networkService ?? throw new ArgumentNullException(nameof(networkService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
@@ -81,12 +93,13 @@ namespace Infrastructure.Services.Withdrawal
             try
             {
                 // Get user's KYC status
-                var kycResult = await _kycService.GetUserKycStatusAsync(userId, KycStatus.Approved);
+                var kycResult = await _kycService.GetUserKycStatusAsync(userId);
                 if (!kycResult.IsSuccess)
+                if (kycResult == null || !kycResult.IsSuccess)
                 {
                     return ResultWrapper<WithdrawalLimitDto>.Failure(
-                        kycResult.Reason,
-                        kycResult.ErrorMessage);
+                        kycResult?.Reason ?? FailureReason.KYCFetchError,
+                        kycResult?.ErrorMessage ?? "Kyc fetch result returned null");
                 }
 
                 var kycData = kycResult.Data;
@@ -218,7 +231,7 @@ namespace Infrastructure.Services.Withdrawal
                 }
 
                 // Check if user can withdraw this amount
-                var canWithdrawResult = await CanUserWithdrawAsync(request.UserId, request.Amount);
+                var canWithdrawResult = await CanUserWithdrawAsync(request.UserId, request.Amount, request.Currency);
                 if (!canWithdrawResult.IsSuccess)
                 {
                     return ResultWrapper<WithdrawalRequestDto>.Failure(
@@ -267,6 +280,10 @@ namespace Infrastructure.Services.Withdrawal
                 // Get user info
                 var userResult = await _userService.GetAsync(request.UserId);
 
+                var exchangeRateResult = await _exchangeService.GetCachedAssetPriceAsync(request.Currency);
+                decimal exchangeRate = exchangeRateResult?.Data ?? 0;
+
+
                 // Create withdrawal record
                 var withdrawal = new WithdrawalData
                 {
@@ -274,6 +291,7 @@ namespace Infrastructure.Services.Withdrawal
                     UserId = request.UserId,
                     RequestedBy = userResult?.Email ?? request.UserId.ToString(),
                     Amount = request.Amount,
+                    Value = request.Amount * exchangeRate,
                     Currency = request.Currency,
                     WithdrawalMethod = request.WithdrawalMethod,
                     WithdrawalAddress = request.WithdrawalAddress,
@@ -491,7 +509,7 @@ namespace Infrastructure.Services.Withdrawal
                     AssetId = asset.Id,
                     Ticker = asset.Ticker,
                     Available = -withdrawal.Amount,
-                    LastUpdated = DateTime.UtcNow
+                    UpdatedAt = DateTime.UtcNow
                 };
 
                 var updateBalanceResult = await _balanceService.UpsertBalanceAsync(
@@ -583,8 +601,8 @@ namespace Infrastructure.Services.Withdrawal
                         $"Failed to get withdrawal totals: {result.ErrorMessage}");
                 }
 
-                var total = result.Data?.Sum(w => w.Amount) ?? 0m;
-                return ResultWrapper<decimal>.Success(total);
+                var totalValues = result.Data?.Sum(w => w.Value) ?? 0m;
+                return ResultWrapper<decimal>.Success(totalValues);
             }
             catch (Exception ex)
             {
@@ -619,7 +637,29 @@ namespace Infrastructure.Services.Withdrawal
             }
         }
 
-        public async Task<ResultWrapper<bool>> CanUserWithdrawAsync(Guid userId, decimal amount)
+        public async Task<ResultWrapper<decimal>> GetMinimumWithdrawalThresholdAsync (string assetTicker)
+        {
+            try
+            {
+                var rate = await _exchangeService.GetCachedAssetPriceAsync(assetTicker);
+
+                if (rate is null || !rate.IsSuccess)
+                {
+                    throw new ExchangeApiException(rate?.ErrorMessage ?? "Rate fetch result returned null");
+                }
+                var minimumWithdrawalValue = _settings.Value.MinimumWithdrawalValue;
+                var minimumWithdrawalThreshold = Math.Round(minimumWithdrawalValue / rate.Data, 18, MidpointRounding.AwayFromZero);
+
+                return ResultWrapper<decimal>.Success(minimumWithdrawalThreshold);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error getting minimum withdrawal threshold: {ex.Message}");
+                return ResultWrapper<decimal>.FromException(ex);
+            }
+        }
+
+        public async Task<ResultWrapper<bool>> CanUserWithdrawAsync(Guid userId, decimal amount, string ticker)
         {
             try
             {
@@ -634,14 +674,48 @@ namespace Infrastructure.Services.Withdrawal
 
                 var limits = limitsResult.Data;
 
+                // Get withdrawal asset rate
+                var rateResult = await _exchangeService.GetCachedAssetPriceAsync(ticker);
+
+                if (rateResult is null || !rateResult.IsSuccess)
+                {
+                    throw new ExchangeApiException(rateResult?.ErrorMessage ?? "Rate fetch result returned null");
+                }
+
+                decimal rate = rateResult.Data;
+                decimal withdrawalValue = amount * rate;
+
+                // Check if the amount is below minimum threshold
+                if (limits.DailyRemaining < _settings.Value.MinimumWithdrawalValue)
+                {
+                    return ResultWrapper<bool>.Success(false,
+                        $"Remaining withdrawal limit is less than minimum threshold.");
+                }
+                else if (withdrawalValue < _settings.Value.MinimumWithdrawalValue)
+                {
+                    var minimumAmount = Math.Round(_settings.Value.MinimumWithdrawalValue/rate, 8, MidpointRounding.AwayFromZero);
+                    return ResultWrapper<bool>.Success(false,
+                        $"Minimum withdrawal value is {_settings.Value.MinimumWithdrawalValue:N2} {_settings.Value.MinimumWithdrawalTicker} or {minimumAmount:F8} {ticker}");
+                }
+
                 // Check if the amount exceeds any limits
-                return amount > limits.DailyRemaining
-                    ? ResultWrapper<bool>.Success(false,
-                        $"Daily withdrawal limit exceeded. Remaining: {limits.DailyRemaining}")
-                    : amount > limits.MonthlyRemaining
-                    ? ResultWrapper<bool>.Success(false,
-                        $"Monthly withdrawal limit exceeded. Remaining: {limits.MonthlyRemaining}")
-                    : ResultWrapper<bool>.Success(true);
+
+                else if (withdrawalValue > limits.DailyRemaining)
+                {
+                    var maximumAmount = Math.Round(limits.DailyRemaining / rate, 8, MidpointRounding.ToZero);
+                    return ResultWrapper<bool>.Success(false,
+                        $"Daily withdrawal limit exceeded. Maximum withdrawal amount is {limits.DailyRemaining:N2} {_settings.Value.MinimumWithdrawalTicker} or {maximumAmount:F8} {ticker}");
+                }
+
+                else if (withdrawalValue > limits.MonthlyRemaining)
+                {
+                    var maximumAmount = Math.Round(limits.MonthlyRemaining / rate, 8, MidpointRounding.ToZero);
+                    return ResultWrapper<bool>.Success(false,
+                        $"Monthly withdrawal limit exceeded. Maximum withdrawal amount is {limits.MonthlyRemaining:N2} {_settings.Value.MinimumWithdrawalTicker} or {maximumAmount:F8} {ticker}");
+                }
+
+                
+                return ResultWrapper<bool>.Success(true);
             }
             catch (Exception ex)
             {

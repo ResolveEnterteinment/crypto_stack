@@ -162,6 +162,7 @@ namespace Infrastructure.Services.Base
 
             var result = await SafeExecute(async () =>
             {
+                entity.UpdatedAt = DateTime.UtcNow;
                 var crudResult = await _repository.InsertAsync(entity, ct);  // returns CrudResult with AffectedIds, etc.
                 if (crudResult == null || !crudResult.IsSuccess)
                 {

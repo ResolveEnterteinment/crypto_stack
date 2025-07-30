@@ -308,6 +308,15 @@ namespace Infrastructure.Services.Subscription
                                 PercentAmount = a.PercentAmount
                             });
                         }
+                        var lastPayment = sub.LastPayment;
+
+                        if (sub.LastPayment == null)
+                        {
+                            var latestPayment = await _paymentService.GetLatestPaymentAsync(sub.Id);
+                            lastPayment = latestPayment?.Data?.CreatedAt;
+                        }
+                        
+                        
                         list.Add(new SubscriptionDto
                         {
                             Id = sub.Id,
@@ -316,6 +325,7 @@ namespace Infrastructure.Services.Subscription
                             Interval = sub.Interval,
                             Amount = sub.Amount,
                             Currency = sub.Currency,
+                            LastPayment = lastPayment,
                             NextDueDate = sub.NextDueDate!.Value,
                             TotalInvestments = sub.TotalInvestments!.Value,
                             EndDate = sub.EndDate,
@@ -503,6 +513,7 @@ namespace Infrastructure.Services.Subscription
                 // Update subscription
                 var updatedFields = new Dictionary<string, object>
                 {
+                    ["LastPayment"] = payment.CreatedAt,
                     ["NextDueDate"] = nextDueDate,
                     ["TotalInvestments"] = newQuantity,
                     ["Status"] = SubscriptionStatus.Active

@@ -7,7 +7,7 @@ export interface Balance {
     total: number;
     value: number;
     asset: Asset;
-    lastUpdated: Date;
+    updatedAt: Date;
 }
 
 export interface PortfolioBalance {
