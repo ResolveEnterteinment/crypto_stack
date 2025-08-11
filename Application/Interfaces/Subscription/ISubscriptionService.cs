@@ -2,7 +2,8 @@
 using Application.Interfaces.Base;
 using Domain.DTOs;
 using Domain.DTOs.Subscription;
-using Domain.Events;
+using Domain.Events.Payment;
+using Domain.Events.Subscription;
 using Domain.Models.Subscription;
 using MediatR;
 
@@ -17,18 +18,17 @@ namespace Application.Interfaces.Subscription
         INotificationHandler<PaymentMethodUpdatedEvent>,
         INotificationHandler<SubscriptionReactivationRequestedEvent>
     {
-        Task<ResultWrapper<CrudResult>> CreateAsync(SubscriptionCreateRequest request);
-        Task<ResultWrapper<CrudResult>> UpdateAsync(Guid id, SubscriptionUpdateRequest request);
+        Task<ResultWrapper<CrudResult<SubscriptionData>>> CreateAsync(SubscriptionCreateRequest request);
+        Task<ResultWrapper<CrudResult<SubscriptionData>>> UpdateAsync(Guid id, SubscriptionUpdateRequest request);
         Task<ResultWrapper<List<AllocationDto>>> GetAllocationsAsync(Guid subscriptionId);
         Task<ResultWrapper<List<SubscriptionDto>>> GetAllByUserIdAsync(Guid userId, string? statusFilter = null);
-        Task<ResultWrapper<CrudResult>> UpdateSubscriptionStatusAsync(Guid subscriptionId, string status);
+        Task<ResultWrapper<CrudResult<SubscriptionData>>> UpdateSubscriptionStatusAsync(Guid subscriptionId, string status);
         Task<ResultWrapper> ReactivateSubscriptionAsync(Guid subscriptionId);
-        Task<ResultWrapper> CancelAsync(Guid subscriptionId);
-        Task<ResultWrapper> DeleteAsync(Guid subscriptionId);
-        Task Handle(CheckoutSessionCompletedEvent notification, CancellationToken cancellationToken);
-        Task Handle(SubscriptionCreatedEvent notification, CancellationToken cancellationToken);
-        Task Handle(PaymentReceivedEvent notification, CancellationToken cancellationToken);
-        Task Handle(PaymentCancelledEvent notification, CancellationToken cancellationToken);
-        Task TestLog();
+        Task<ResultWrapper<CrudResult<SubscriptionData>>> CancelAsync(Guid subscriptionId);
+        Task<ResultWrapper> PauseAsync(Guid subscriptionId);
+        Task<ResultWrapper> ResumeAsync(Guid subscriptionId);
+        Task<ResultWrapper> OnPauseAsync(Guid subscriptionId);
+        Task<ResultWrapper> OnResumeAsync(Guid subscriptionId);
+        Task<ResultWrapper<CrudResult<SubscriptionData>>> DeleteAsync(Guid subscriptionId);
     }
 }

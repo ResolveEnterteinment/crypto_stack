@@ -6,7 +6,8 @@ export enum PaymentStatus {
     Pending = 'Pending',
     Completed = 'Completed',
     Failed = 'Failed',
-    Cancelled = 'Cancelled'
+    Cancelled = 'Cancelled',
+    Paid = 'Paid'
 }
 
 // Data for payment request
@@ -32,13 +33,11 @@ export interface StripePaymentResponse {
 
 // Payment status response
 export interface PaymentStatusResponse {
-    id: string;
-    status: PaymentStatus;
-    amount: number;
+    status: string;
+    totalAmount: number;
     currency: string;
     subscriptionId: string;
     createdAt: string;
-    updatedAt: string;
 }
 
 // Payment cancellation response
@@ -132,14 +131,37 @@ export const getSubscriptionPaymentStatus = async (subscriptionId: string): Prom
     }
 
     try {
-        const { data } = await api.get(`/Payment/subscription/${subscriptionId}/status`);
-        return data;
+        const statusResponse = await api.safeRequest < PaymentStatusResponse>('get', `/Payment/status/subscription/${subscriptionId}`);
+        return statusResponse.data;
     } catch (error: any) {
         // If 404, the subscription might not have a payment yet
         if (error.response?.status === 404) {
             return null;
         }
         console.error(`Error fetching payment status for subscription ${subscriptionId}:`, error);
+        throw error;
+    }
+};
+
+/**
+ * Retrieves the status of a payment for a subscription
+ * @param subscriptionId The ID of the subscription
+ * @returns Promise with payment status
+ */
+export const syncPayments = async (subscriptionId: string): Promise<PaymentStatusResponse | null> => {
+    if (!subscriptionId) {
+        return Promise.reject(new Error('Subscription ID is required'));
+    }
+
+    try {
+        const statusResponse = await api.safeRequest<PaymentStatusResponse>('get', `/Payment/fetch-update/subscription/${subscriptionId}`);
+        return statusResponse.data;
+    } catch (error: any) {
+        // If 404, the subscription might not have a payment yet
+        if (error.response?.status === 404) {
+            return null;
+        }
+        console.error(`Error syncronizing payments for subscription ${subscriptionId}:`, error);
         throw error;
     }
 };

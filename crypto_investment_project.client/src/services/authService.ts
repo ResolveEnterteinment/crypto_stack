@@ -14,13 +14,9 @@ class AuthService {
                 api.setAuthToken(token);
             }
 
-            // Enable encryption AFTER token setup
-            const encryptionEnabled = await api.enableEncryption();
-            console.log("Encryption initialization result:", encryptionEnabled);
-
             // Check authentication status
             return this.checkAuthStatus();
-        } catch (error) {
+        } catch (error: unknown) {
             console.error('Failed to initialize auth service:', error);
             return false;
         }
@@ -29,9 +25,6 @@ class AuthService {
     // Login with email and password
     async login(email: string, password: string) {
         try {
-            // First, ensure encryption is disabled for login request
-            api.disableEncryption();
-
             const response = await api.post('/v1/auth/login', { email, password });
             console.log("Login response:", response.status, response.data);
 
@@ -40,22 +33,19 @@ class AuthService {
                 // Store token safely
                 this.storeAuthToken(response.data.accessToken);
 
-                // Re-enable encryption now that we're logged in
-                await api.enableEncryption();
-
                 return response.data;
             } else {
                 console.error("No access token in login response");
                 return response.data;
             }
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Login error:", error);
             throw error;
         }
     }
 
     // Store auth token in a consistent way
-    storeAuthToken(token) {
+    storeAuthToken(token: string): void {
         console.log("Storing auth token securely");
         localStorage.setItem('access_token', token);
         sessionStorage.setItem('access_token', token); // Backup in session storage
@@ -67,7 +57,7 @@ class AuthService {
         try {
             // Call logout endpoint if available
             await api.post('/v1/auth/logout');
-        } catch (error) {
+        } catch (error: unknown) {
             console.error('Logout error:', error);
         } finally {
             // Always clear storage and auth token
@@ -98,20 +88,23 @@ class AuthService {
                 const response = await api.get('/v1/auth/user');
                 console.log("Auth check successful:", response.status);
                 return response.data;
-            } catch (error) {
+            } catch (error: unknown) {
                 // Specific handling for 401 errors
-                if (error.response && error.response.status === 401) {
-                    console.log("Token expired or invalid, attempting refresh...");
-                    const refreshed = await this.refreshToken();
-                    if (refreshed) {
-                        // Try again with new token
-                        const retryResponse = await api.get('/v1/auth/user');
-                        return retryResponse.data;
+                if (error && typeof error === 'object' && 'response' in error) {
+                    const axiosError = error as { response?: { status?: number } };
+                    if (axiosError.response && axiosError.response.status === 401) {
+                        console.log("Token expired or invalid, attempting refresh...");
+                        const refreshed = await this.refreshToken();
+                        if (refreshed) {
+                            // Try again with new token
+                            const retryResponse = await api.get('/v1/auth/user');
+                            return retryResponse.data;
+                        }
                     }
                 }
                 throw error; // Re-throw if not handled
             }
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Auth check failed:", error);
             // If token is invalid, clear it
             localStorage.removeItem('access_token');
@@ -124,22 +117,16 @@ class AuthService {
     // Refresh the authentication token
     async refreshToken() {
         try {
-            // Disable encryption for token refresh
-            api.disableEncryption();
-
             const response = await api.post('/v1/auth/refresh-token');
 
             if (response.data && response.data.accessToken) {
                 // Store new token
                 this.storeAuthToken(response.data.accessToken);
 
-                // Re-enable encryption
-                await api.enableEncryption();
-
                 return true;
             }
             return false;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error("Token refresh failed:", error);
             localStorage.removeItem('access_token');
             sessionStorage.removeItem('access_token');
@@ -150,16 +137,8 @@ class AuthService {
 
     // Register a new user
     async register(userData: any) {
-        // Disable encryption for registration
-        api.disableEncryption();
-
-        try {
-            const response = await api.post('/v1/auth/register', userData);
-            return response.data;
-        } finally {
-            // Re-enable encryption
-            await api.enableEncryption();
-        }
+        const response = await api.post('/v1/auth/register', userData);
+        return response.data;
     }
 
     // Request password reset

@@ -7,9 +7,9 @@ export interface Subscription {
     interval: string;
     amount: number;
     currency: string;
-    lastPayment: Date | string;
-    nextDueDate: Date | string;
-    endDate: Date | string;
+    lastPayment: string;
+    nextDueDate: string;
+    endDate: string;
     totalInvestments: number;
     status: string;
     isCancelled: boolean;

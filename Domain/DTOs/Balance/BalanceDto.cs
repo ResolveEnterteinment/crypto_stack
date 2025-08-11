@@ -16,7 +16,7 @@ namespace Domain.DTOs.Balance
             Available = balance.Available;
             Locked = balance.Locked;
             Total = balance.Total;
-            Asset = new AssetDto(balance.Asset!);
+            if (balance.Asset != null) Asset = new AssetDto(balance.Asset);
             UpdatedAt = balance.UpdatedAt ?? DateTime.Now;
         }
     }

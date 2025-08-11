@@ -133,30 +133,8 @@ namespace crypto_investment_project.Server.Controllers
                     });
                 }
 
-                // Get asset from database to determine exchange
-                var assetResult = await _assetService.GetByTickerAsync(ticker);
-                if (assetResult == null || !assetResult.IsSuccess || assetResult.Data == null)
-                {
-                    return assetResult.ToActionResult(this);
-                }
-                var asset = assetResult.Data;
-
-                // Use provided exchange or default to asset's exchange
-                var exchangeName = !string.IsNullOrEmpty(exchange) ? exchange : asset.Exchange;
-
-                // Verify exchange exists
-                if (!_exchangeService.Exchanges.ContainsKey(exchangeName))
-                {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = $"Exchange {exchangeName} not supported",
-                        Code = "EXCHANGE_NOT_SUPPORTED",
-                        TraceId = correlationId
-                    });
-                }
-
-                // Get minimum notional from exchange
-                var minNotionalResult = await _exchangeService.Exchanges[exchangeName].GetMinNotional(ticker);
+                // Use the new service method with caching
+                var minNotionalResult = await _exchangeService.GetMinNotionalAsync(ticker, exchange);
 
                 if (minNotionalResult == null || !minNotionalResult.IsSuccess)
                 {
@@ -204,70 +182,15 @@ namespace crypto_investment_project.Server.Controllers
                     });
                 }
 
-                // Get assets from database to determine exchanges
-                var assetsResult = await _assetService.GetManyByTickersAsync(tickers);
-                if (assetsResult == null || !assetsResult.IsSuccess || assetsResult.Data == null || !assetsResult.Data.Any())
+                // Use the new service method with caching
+                var minNotionalsResult = await _exchangeService.GetMinNotionalsAsync(tickers);
+
+                if (minNotionalsResult == null || !minNotionalsResult.IsSuccess)
                 {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "None of the requested tickers were found",
-                        Code = "TICKERS_NOT_FOUND",
-                        TraceId = correlationId
-                    });
+                    return minNotionalsResult.ToActionResult(this);
                 }
 
-                // Group assets by exchange
-                var assetsByExchange = assetsResult.Data
-                    .GroupBy(a => a.Exchange)
-                    .ToDictionary(g => g.Key, g => g.ToList());
-
-                var result = new Dictionary<string, decimal>();
-
-                // Process each exchange group in parallel
-                var tasks = assetsByExchange.Select(async exchangeGroup =>
-                {
-                    var exchangeName = exchangeGroup.Key;
-                    var exchangeAssets = exchangeGroup.Value;
-
-                    // Verify exchange exists
-                    if (!_exchangeService.Exchanges.ContainsKey(exchangeName))
-                    {
-                        _logger.LogWarning("Exchange {Exchange} not supported, skipping tickers", exchangeName);
-                        return;
-                    }
-
-                    var exchange = _exchangeService.Exchanges[exchangeName];
-                    var exchangeTickers = exchangeAssets.Select(a => a.Ticker).ToArray();
-
-                    // Get min notionals for this exchange
-                    var minNotionalsResult = await exchange.GetMinNotionals(exchangeTickers);
-
-                    if (minNotionalsResult != null && minNotionalsResult.IsSuccess && minNotionalsResult.Data != null)
-                    {
-                        // Map exchange symbol format back to asset tickers for consistent response
-                        foreach (var asset in exchangeAssets)
-                        {
-                            var symbol = $"{asset.Ticker}{exchange.ReserveAssetTicker}";
-                            if (minNotionalsResult.Data.TryGetValue(symbol, out decimal minNotional))
-                            {
-                                lock (result)
-                                {
-                                    result[asset.Ticker] = minNotional;
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        _logger.LogError("Failed to get min notionals from {Exchange}: {Error}",
-                            exchangeName, minNotionalsResult?.ErrorMessage ?? "Unknown error");
-                    }
-                });
-
-                // Wait for all exchange calls to complete
-                await Task.WhenAll(tasks);
-
-                return Ok(result);
+                return Ok(minNotionalsResult.Data);
             }
             catch (Exception ex)
             {

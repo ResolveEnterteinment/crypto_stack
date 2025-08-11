@@ -4,11 +4,7 @@ namespace Domain.DTOs.Payment
 {
     public class PaymentDto
     {
-        public Guid Id { get; set; }
-        public Guid UserId { get; set; }
         public Guid SubscriptionId { get; set; }
-        public string Provider { get; set; }
-        public string PaymentProviderId { get; set; }
         public string Status { get; set; }
         public decimal TotalAmount { get; set; }
         public decimal NetAmount { get; set; }
@@ -23,11 +19,7 @@ namespace Domain.DTOs.Payment
 
         public PaymentDto(PaymentData payment)
         {
-            Id = payment.Id;
-            UserId = payment.UserId;
             SubscriptionId = payment.SubscriptionId;
-            Provider = payment.Provider;
-            PaymentProviderId = payment.PaymentProviderId;
             Status = payment.Status;
             TotalAmount = payment.TotalAmount;
             NetAmount = payment.NetAmount;

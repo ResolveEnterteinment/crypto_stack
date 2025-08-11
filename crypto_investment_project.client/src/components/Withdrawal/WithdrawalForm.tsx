@@ -1,12 +1,9 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import {
     Card, Form, Select, InputNumber, Input, Button,
     Typography, Divider, Row, Col, Statistic, Spin,
     Alert, Space, message, Slider,
-    Skeleton,
-    Badge,
-    Tag,
-    Modal
+    Skeleton, Tag, Modal
 } from 'antd';
 import {
     WalletOutlined, BankOutlined, DollarOutlined,
@@ -16,15 +13,18 @@ import {
     LockOutlined,
     ExclamationCircleOutlined,
     CloseCircleOutlined,
-    WarningOutlined
+    WarningOutlined,
+    CheckCircleOutlined
 } from '@ant-design/icons';
 import { useBalances } from '../../hooks/useBalances';
 import { useBalance } from '../../hooks/useBalance';
 import { WithdrawalMethod } from '../../constants/WithdrawalMethod';
-import { NetworkDto, WithdrawalLimits } from '../../types/withdrawal';
+import { BankWithdrawalRequest, CryptoWithdrawalRequest, NetworkDto, WithdrawalLimits, WithdrawalResponse } from '../../types/withdrawal';
 import withdrawalService from '../../services/withdrawalService';
 import { useAuth } from '../../context/AuthContext';
 import exchangeService from '../../services/exchangeService';
+import { useAddressValidation } from '../../hooks/useAddressValidation';
+import { AddressValidationService } from '../../services/addressValidationService';
 
 interface WithdrawalFormProps {
     userId: string;
@@ -32,7 +32,7 @@ interface WithdrawalFormProps {
     onError: (error: string) => void;
 }
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 const { Option } = Select;
 
 const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) => {
@@ -44,7 +44,7 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
     const [selectedAsset, setSelectedAsset] = useState('');
     const [amount, setAmount] = useState<number | null>(null);
     const [withdrawalMethod, setWithdrawalMethod] = useState('');
-    const [selectedNetwork, setSelectedNetwork] = useState('');
+    const [selectedNetwork, setSelectedNetwork] = useState<string |null>(null);
     const [supportedNetworks, setSupportedNetworks] = useState<NetworkDto[] | null>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [formSubmitted, setFormSubmitted] = useState(false);
@@ -63,6 +63,28 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
     // Custom hooks for asset and balance data
     const { balances, isLoading: assetsLoading } = useBalances();
     const { balance, pending, isLoading: balanceLoading, refetch: refetchBalance } = useBalance(user?.id!, selectedAsset);
+
+    const {
+        address: validatedAddress,
+        memo: validatedMemo,
+        setAddress: setValidatedAddress,
+        setMemo: setValidatedMemo,
+        addressValidation,
+        memoValidation,
+        networkInfo,
+        isValid: isAddressValid,
+        requiresMemo: isValidationMemoRequired
+    } = useAddressValidation({
+        network: selectedNetwork ?? "",
+        currency: selectedAsset,
+        validateOnChange: true
+    });
+
+    // Helper function to get validate status
+    const getValidateStatus = (validation: any) => {
+        if (!validation) return undefined;
+        return validation.isValid ? "success" : "error";
+    };
 
     // Determine if the selected asset is a cryptocurrency
     const isCrypto = () => {
@@ -147,7 +169,7 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
             } else if (asset?.class === 'FIAT') {
                 setWithdrawalMethod(WithdrawalMethod.BankTransfer);
                 setSupportedNetworks([]);
-                setSelectedNetwork('');
+                setSelectedNetwork(null);
             }
 
             // Fetch minimum withdrawal for this asset
@@ -220,7 +242,7 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
         // Convert USD limits to asset amounts (assuming 1:1 for simplicity, you may need exchange rates)
         // For now, treating all amounts as USD equivalent
         const maxWithdrawable = Math.min(availableBalance, maximumWithdrawal);
-        const max = Math.max(maxWithdrawable, minimumWithdrawal * 2);
+        const max = Math.max(maxWithdrawable, minimumWithdrawal);
 
         const marks: { [key: number]: any } = {};
 
@@ -263,7 +285,7 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
         setAmount(value);
     };
 
-    const handleConfirmWithdrawal = async (values: any): Promise<void> => {
+    const handleConfirmWithdrawal = async (): Promise<void> => {
         if (form.getFieldsValue()) {
             setConfirmModalOpen(false);
             await handleSubmit(form.getFieldsValue());
@@ -291,6 +313,7 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
 
         // Parse different types of eligibility errors
         const errorMessage = error?.response?.data?.errorMessage || error?.message || error?.toString() || '';
+        console.log("WithdrawalForm::showWithdrawalErrorModal => error: ", message);
 
         if (errorMessage.toLowerCase().includes('daily limit') || errorMessage.toLowerCase().includes('limit exceeded')) {
             errorData = {
@@ -362,6 +385,23 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                     'Verify that decimals are placed correctly'
                 ]
             };
+        } else if (errorMessage.toLowerCase().includes('crypto address') || errorMessage.toLowerCase().includes('address')) {
+            const networkInfo = AddressValidationService.getNetworkInfo(selectedNetwork ?? "");
+
+            errorData = {
+                title: 'Invalid Cryptocurrency Address',
+                message: `The withdrawal address is not valid for ${selectedAsset} on the ${selectedNetwork} network. ${message || 'Please verify the address format and try again.'}`,
+                suggestions: [
+                    'Double-check the wallet address for any typos or missing characters',
+                    'Copy the address directly from your wallet to avoid manual entry errors',
+                    ...(networkInfo?.commonMistakes.map(mistake => `Avoid: ${mistake}`) || []),
+                    networkInfo ? `Expected format: ${networkInfo.addressFormat}` : '',
+                    networkInfo ? `Example: ${networkInfo.examples[0]}` : '',
+                    'Ensure you selected the correct network that matches your destination wallet',
+                    'Test with a small amount first to verify the address works correctly',
+                    'Contact support if the address validation continues to fail'
+                ].filter(Boolean)
+            };
         }
 
         setErrorDetails(errorData);
@@ -385,11 +425,9 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                 amount: values.amount,
                 currency: selectedAsset,
                 withdrawalMethod,
-                withdrawalAddress: values.withdrawalAddress,
-                additionalDetails: {
-                    network: values.network,
-                    memo: values.memo || null
-                }
+                cryptoAddress: values.withdrawalAddress,
+                network: values.network,
+                memo: values.memo || null
             };
 
             const canUserWithdraw = await withdrawalService.canUserWithdraw(withdrawalRequest.amount, withdrawalRequest.currency);
@@ -401,7 +439,37 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                 return;
             }
 
-            const response = await withdrawalService.requestWithdrawal(withdrawalRequest);
+            let response: WithdrawalResponse | null = null;
+
+            if (withdrawalRequest.withdrawalMethod == WithdrawalMethod.CryptoTransfer) {
+
+                const withdrawalRequest: CryptoWithdrawalRequest = {
+                    userId: user?.id!,
+                    amount: values.amount,
+                    currency: selectedAsset,
+                    withdrawalMethod,
+                    withdrawalAddress: values.withdrawalAddress,
+                    network: values.network,
+                    memo: values.memo || null
+                };
+
+                response = await withdrawalService.requestCryproWithdrawal(withdrawalRequest);
+            } else if (withdrawalRequest.withdrawalMethod == WithdrawalMethod.BankTransfer) {
+
+                const withdrawalRequest: BankWithdrawalRequest = {
+                    userId: user?.id!,
+                    amount: values.amount,
+                    currency: selectedAsset,
+                    withdrawalMethod,
+                    withdrawalAddress: values.withdrawalAddress,
+                    //bankName: string;
+                    //accountHolder: string;
+                    //accountNumber: string;
+                    //routingNumber: string;
+                };
+
+                response = await withdrawalService.requestCryproWithdrawal(withdrawalRequest);
+            }
 
             message.success('Withdrawal request submitted successfully');
             onSuccess(response);
@@ -565,7 +633,7 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                         </Form.Item>
 
                         {/* Withdrawal Amount Slider */}
-                        {selectedAsset && limits && balance && !isLoadingMinimum && (
+                        {selectedAsset && limits && balance && !isLoadingMinimum && !isLoadingMaximum && (
                             <Form.Item label="Withdrawal Amount Slider">
                                 <div style={{ padding: '0 16px' }}>
                                     <Slider
@@ -618,30 +686,71 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                             </Form.Item>
                         )}
 
-                        {/* Withdrawal Address */}
+                        {/* Enhanced Address Input with Validation */}
                         <Form.Item
                             name="withdrawalAddress"
                             label={isCrypto() ? "Wallet Address" : "Bank Account Number"}
+                            validateStatus={getValidateStatus(addressValidation)}
+                            help={
+                                addressValidation && !addressValidation.isValid && (
+                                    <div>
+                                        {addressValidation.errors.map((error, idx) => (
+                                            <div key={idx} style={{ color: '#ff4d4f' }}>{error}</div>
+                                        ))}
+                                        {addressValidation.suggestions.slice(0, 2).map((suggestion, idx) => (
+                                            <div key={idx} style={{ color: '#faad14', fontSize: '12px' }}>
+                                                💡 {suggestion}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )
+                            }
                             rules={[
                                 { required: true, message: `Please enter your ${isCrypto() ? 'wallet address' : 'bank account number'}` },
-                                { min: 5, message: 'Address must be at least 5 characters' }
+                                { min: 5, message: 'Address must be at least 5 characters' },
+                                {
+                                    validator: async (_, value) => {
+                                        if (!value || !selectedNetwork) return Promise.resolve();
+
+                                        const validation = AddressValidationService.validateAddress(value, selectedNetwork, selectedAsset);
+                                        if (!validation.isValid) {
+                                            return Promise.reject(new Error(validation.errors[0] || 'Invalid address format'));
+                                        }
+                                        return Promise.resolve();
+                                    }
+                                }
                             ]}
                         >
                             <Input
-                                placeholder={isCrypto() ? "Enter your wallet address" : "Enter your bank account number"}
+                                placeholder={
+                                    networkInfo
+                                        ? `Enter ${networkInfo.addressFormat} address`
+                                        : (isCrypto() ? "Enter your wallet address" : "Enter your bank account number")
+                                }
                                 disabled={!selectedAsset}
                                 prefix={isCrypto() ? <WalletOutlined /> : <BankOutlined />}
+                                onChange={(e) => {
+                                    form.setFieldsValue({ withdrawalAddress: e.target.value });
+                                    setValidatedAddress(e.target.value);
+                                }}
+                                suffix={
+                                    addressValidation && (
+                                        addressValidation.isValid
+                                            ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                                            : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                                    )
+                                }
                             />
                         </Form.Item>
 
                         {/* Memo Field (for certain crypto networks) */}
-                        {isCrypto() && selectedNetwork && isMemoRequired() && (
+                        {isCrypto() && selectedNetwork && (isMemoRequired() || isValidationMemoRequired) && (
                             <Form.Item
                                 name="memo"
                                 label={
                                     <Space>
                                         Memo/Tag
-                                        {isMemoRequired() && (
+                                        {(isMemoRequired() || isValidationMemoRequired) && (
                                             <Text type="danger">(Required)</Text>
                                         )}
                                     </Space>
@@ -650,14 +759,42 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                                     title: 'Some networks require an additional memo or tag for correct routing.',
                                     icon: <InfoCircleOutlined />
                                 }}
+                                validateStatus={getValidateStatus(memoValidation)}
+                                help={
+                                    memoValidation && !memoValidation.isValid && (
+                                        <div>
+                                            {memoValidation.errors.map((error, idx) => (
+                                                <div key={idx} style={{ color: '#ff4d4f' }}>{error}</div>
+                                            ))}
+                                            {memoValidation.suggestions.slice(0, 2).map((suggestion, idx) => (
+                                                <div key={idx} style={{ color: '#faad14', fontSize: '12px' }}>
+                                                    💡 {suggestion}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )
+                                }
                                 rules={[
                                     {
-                                        required: isMemoRequired(),
+                                        required: isMemoRequired() || isValidationMemoRequired,
                                         message: 'Memo is required for this network'
                                     }
                                 ]}
                             >
-                                <Input placeholder="Enter memo/tag if required" />
+                                <Input
+                                    placeholder="Enter memo/tag if required"
+                                    onChange={(e) => {
+                                        form.setFieldsValue({ memo: e.target.value });
+                                        setValidatedMemo(e.target.value);
+                                    }}
+                                    suffix={
+                                        memoValidation && (
+                                            memoValidation.isValid
+                                                ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                                                : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                                        )
+                                    }
+                                />
                             </Form.Item>
                         )}
 
@@ -667,7 +804,12 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                                 type="primary"
                                 htmlType="submit"
                                 loading={isLoading}
-                                disabled={!selectedAsset || isLoading || formSubmitted}
+                                disabled={
+                                    !selectedAsset ||
+                                    isLoading ||
+                                    formSubmitted ||
+                                    (isCrypto() && selectedNetwork != null  && !isAddressValid)
+                                }
                                 block
                                 size="large"
                                 icon={<ArrowRightOutlined />}
@@ -713,7 +855,10 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                     <span>Please double-check the wallet address and network before confirming. Cryptocurrency transactions are irreversible.</span>
                 </div>
                 <div>Network: <Tag>{selectedAsset}</Tag></div>
-                <div>Address: <Tag>{form.getFieldValue("withdrawalAddress")}</Tag></div>
+                <div>Address: <Tag>{validatedAddress || form.getFieldValue("withdrawalAddress")}</Tag></div>
+                {(validatedMemo || form.getFieldValue("memo")) && (
+                    <div>Memo: <Tag>{validatedMemo || form.getFieldValue("memo")}</Tag></div>
+                )}
             </Modal>
 
             {/* Elegant error modal for withdrawal eligibility issues */}

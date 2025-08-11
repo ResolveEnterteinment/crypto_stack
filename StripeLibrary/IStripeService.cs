@@ -13,7 +13,7 @@ namespace StripeLibrary
         Task<bool> CheckCustomerExists(string customerId);
         Task<IEnumerable<Invoice>> GetSubscriptionInvoicesAsync(string subscriptionId);
         Task<IEnumerable<Subscription>> SearchSubscriptionsByMetadataAsync(string metadataKey, string metadataValue);
-        Task<ResultWrapper> RetryPaymentAsync(string paymentIntentId, string subscriptionId);
+        Task<ResultWrapper<PaymentIntent>> RetryPaymentAsync(string paymentIntentId, string subscriptionId);
         Task<ResultWrapper<SessionDto>> CreateUpdatePaymentMethodSessionAsync(
             string subscriptionId,
             Dictionary<string, string> metadata);
@@ -23,5 +23,19 @@ namespace StripeLibrary
             decimal? newAmount = null,
             DateTime? newEndDate = null);
         Task<ResultWrapper> CancelSubscription(string subscriptionId);
+
+        /// <summary>
+        /// Pauses a Stripe subscription by setting pause_collection
+        /// </summary>
+        /// <param name="subscriptionId">The Stripe subscription ID to pause</param>
+        /// <returns>Result of the pause operation</returns>
+        Task<ResultWrapper> PauseSubscriptionAsync(string subscriptionId);
+
+        /// <summary>
+        /// Resumes a paused Stripe subscription by removing pause_collection
+        /// </summary>
+        /// <param name="subscriptionId">The Stripe subscription ID to resume</param>
+        /// <returns>Result of the resume operation</returns>
+        Task<ResultWrapper> ResumeSubscriptionAsync(string subscriptionId);
     }
 }

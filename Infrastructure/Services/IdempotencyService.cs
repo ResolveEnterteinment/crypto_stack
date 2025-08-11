@@ -1,6 +1,4 @@
 ﻿using Application.Interfaces;
-using Application.Interfaces.Base;
-using Application.Interfaces.Logging;
 using Domain.DTOs;
 using Domain.Models.Idempotency;
 using Infrastructure.Services.Base;
@@ -21,28 +19,21 @@ namespace Infrastructure.Services
         private readonly JsonSerializerOptions _jsonOptions;
 
         public IdempotencyService(
-            ICrudRepository<IdempotencyData> repository,
-            ICacheService<IdempotencyData> cacheService,
-            IMongoIndexService<IdempotencyData> indexService,
-            ILoggingService logger,
-            IEventService eventService,
+            IServiceProvider serviceProvider,
             IMemoryCache memoryCache
         ) : base(
-            repository,
-            cacheService,
-            indexService,
-            logger,
-            eventService,
-            new[]
+            serviceProvider,
+            new()
             {
-                new CreateIndexModel<IdempotencyData>(
-                    Builders<IdempotencyData>.IndexKeys.Ascending(d => d.Key),
-                    new CreateIndexOptions { Name = "Key_Index", Unique = true }),
-                new CreateIndexModel<IdempotencyData>(
-                    Builders<IdempotencyData>.IndexKeys.Ascending(d => d.ExpiresAt),
-                    new CreateIndexOptions { Name = "ExpiresAt_1", ExpireAfter = TimeSpan.Zero })
-            }
-        )
+                IndexModels = [
+                    new CreateIndexModel<IdempotencyData>(
+                        Builders<IdempotencyData>.IndexKeys.Ascending(d => d.Key),
+                        new CreateIndexOptions { Name = "Key_Index", Unique = true }),
+                    new CreateIndexModel<IdempotencyData>(
+                        Builders<IdempotencyData>.IndexKeys.Ascending(d => d.ExpiresAt),
+                        new CreateIndexOptions { Name = "ExpiresAt_1", ExpireAfter = TimeSpan.Zero })
+                    ]
+            })
         {
             _memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache));
             _jsonOptions = new JsonSerializerOptions
@@ -81,7 +72,7 @@ namespace Infrastructure.Services
             }
             catch (JsonException)
             {
-                Logger.LogError("Deserialization failed for idempotency key {Key}", key);
+                _loggingService.LogError("Deserialization failed for idempotency key {Key}", key);
                 return (false, default);
             }
         }
@@ -150,7 +141,7 @@ namespace Infrastructure.Services
             }
             catch (Exception ex)
             {
-                Logger.LogError("Failed to generate content-based ETag: {ErrorMessage}", ex.Message);
+                _loggingService.LogError("Failed to generate content-based ETag: {ErrorMessage}", ex.Message);
                 // Fallback to random ETag on error
                 return $"\"{Guid.NewGuid():N}\"";
             }
@@ -200,7 +191,7 @@ namespace Infrastructure.Services
             }
             catch (Exception)
             {
-                Logger.LogError("Operation failed for idempotency key {Key}", key);
+                _loggingService.LogError("Operation failed for idempotency key {Key}", key);
                 _ = activity.SetTag("error", true);
                 throw;
             }
@@ -236,7 +227,7 @@ namespace Infrastructure.Services
                 return ResultWrapper<long>.Failure(deleted.Reason, deleted.ErrorMessage);
             }
 
-            Logger.LogInformation("Purged {Count} expired idempotency records", deleted);
+            _loggingService.LogInformation("Purged {Count} expired idempotency records", deleted);
             return ResultWrapper<long>.Success(deleted.Data.ModifiedCount);
         }
     }

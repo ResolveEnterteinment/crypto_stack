@@ -1,5 +1,4 @@
-﻿// src/context/AuthContext.tsx
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+﻿import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import api from "../services/api";
 import { jwtDecode } from "jwt-decode"; // Consider adding this library for JWT parsing
 
@@ -12,6 +11,7 @@ interface User {
 
 interface AuthContextType {
     user: User | null;
+    token: string | null; // Add this line
     isAuthenticated: boolean;
     isLoading: boolean;
     error: string | null;
@@ -59,6 +59,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.TOKEN_EXPIRY);
             return null;
         }
+    });
+
+    // Add token state
+    const [token, setToken] = useState<string | null>(() => {
+        return localStorage.getItem(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN);
     });
 
     const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -182,6 +187,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // Save tokens
             secureStore(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN, sessionData.accessToken);
+            setToken(sessionData.accessToken); // Add this line
+            
             if (sessionData.refreshToken) {
                 secureStore(AUTH_CONFIG.STORAGE_KEYS.REFRESH_TOKEN, sessionData.refreshToken);
             }
@@ -241,6 +248,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             // Reset state
             setUser(null);
+            setToken(null); // Add this line
             setCsrfToken(null);
             setError(null);
             setIsLoading(false);
@@ -287,6 +295,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (data.success && data.accessToken) {
                 // Save new tokens
                 secureStore(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN, data.accessToken);
+                setToken(data.accessToken); // Add this line
                 storeTokenExpiry(data.accessToken);
 
                 // Update API authorization header
@@ -364,6 +373,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Context value
     const contextValue: AuthContextType = {
         user,
+        token, // Add this line
         isAuthenticated: !!user,
         isLoading,
         error,

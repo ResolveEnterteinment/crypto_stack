@@ -21,10 +21,6 @@ namespace Application.Interfaces.Exchange
         /// </summary>
         IExchange DefaultExchange { get; }
 
-        /// <summary>
-        /// Gets exchange balance with caching
-        /// </summary>
-        Task<ResultWrapper<ExchangeBalance>> GetCachedExchangeBalanceAsync(string exchange, string ticker);
         Task<ResultWrapper<decimal>> GetCachedAssetPriceAsync(string ticker);
 
         /// <summary>
@@ -32,7 +28,7 @@ namespace Application.Interfaces.Exchange
         /// </summary>
         /// <param name="cancellationToken">Optional cancellation token.</param>
         /// <returns>A collection of pending exchange orders.</returns>
-        Task<ResultWrapper<IEnumerable<ExchangeOrderData>>> GetPendingOrdersAsync(CancellationToken cancellationToken = default);
+        Task<ResultWrapper<List<ExchangeOrderData>>> GetPendingOrdersAsync(CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Gets exchange orders by various criteria.
@@ -60,7 +56,7 @@ namespace Application.Interfaces.Exchange
         /// <param name="paymentProviderId">The payment provider ID to filter by.</param>
         /// <param name="cancellationToken">Optional cancellation token.</param>
         /// <returns>A collection of orders for the payment.</returns>
-        Task<ResultWrapper<IEnumerable<ExchangeOrderData>>> GetOrdersByPaymentProviderIdAsync(
+        Task<ResultWrapper<List<ExchangeOrderData>>> GetOrdersByPaymentProviderIdAsync(
             string paymentProviderId,
             CancellationToken cancellationToken = default);
 
@@ -73,5 +69,22 @@ namespace Application.Interfaces.Exchange
         Task<ResultWrapper<bool>> IsExchangeAvailableAsync(
             string exchangeName,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Gets minimum notional value for a specific asset with caching.
+        /// </summary>
+        /// <param name="ticker">Asset ticker symbol</param>
+        /// <param name="exchange">Exchange name (optional)</param>
+        /// <param name="ct">Cancellation token</param>
+        /// <returns>Minimum notional value required for orders</returns>
+        Task<ResultWrapper<decimal>> GetMinNotionalAsync(string ticker, string? exchange = null, CancellationToken ct = default);
+
+        /// <summary>
+        /// Gets minimum notional values for multiple assets simultaneously with caching.
+        /// </summary>
+        /// <param name="tickers">Array of asset ticker symbols</param>
+        /// <param name="ct">Cancellation token</param>
+        /// <returns>Dictionary mapping tickers to their minimum notional values</returns>
+        Task<ResultWrapper<Dictionary<string, decimal>>> GetMinNotionalsAsync(string[] tickers, CancellationToken ct = default);
     }
 }

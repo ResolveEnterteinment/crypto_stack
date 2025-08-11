@@ -6,7 +6,7 @@ namespace Domain.Events
     // Event for MediatR
     public class EntityUpdatedEvent<T> : BaseEvent, INotification where T : BaseEntity
     {
-        public T Entity { get; }
+        public T Entity { get; set; }
         public EntityUpdatedEvent(Guid id, T entity, IDictionary<string, object?> context) : base(context)
         {
             DomainEntityId = id;

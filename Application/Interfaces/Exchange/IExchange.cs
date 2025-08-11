@@ -17,7 +17,7 @@ namespace Application.Interfaces.Exchange
         /// <summary>
         /// Gets or sets the reserve asset ticker (e.g., USDT)
         /// </summary>
-        string ReserveAssetTicker { get; set; }
+        string QuoteAssetTicker { get; set; }
 
         /// <summary>
         /// Places a spot market buy order
@@ -88,6 +88,15 @@ namespace Application.Interfaces.Exchange
         /// <param name="ticker">The ticker to get price for</param>
         /// <returns>The current price</returns>
         Task<ResultWrapper<decimal>> GetAssetPrice(string ticker);
+
+        Task<ResultWrapper<Dictionary<string, decimal>>> GetAssetPrices(IEnumerable<string> tickers);
+
+        /// <summary>
+        /// Gets the price of the quote asset valued in currency
+        /// </summary>
+        /// <param name="ticker">The currency to get price for</param>
+        /// <returns>The current quote price in currency</returns>
+        Task<ResultWrapper<decimal>> GetQuotePrice(string currency);
 
         /// <summary>
         /// Gets the minimum notional value required to place an order for the specified ticker

@@ -1,15 +1,16 @@
-using Application.Interfaces.KYC;
-using Domain.Constants.KYC;
-using Microsoft.Extensions.Caching.Memory;
-using System.Security.Claims;
-using System.Text.Json;
-using System.Net;
-using Microsoft.Extensions.Options;
-using System.Text;
-using crypto_investment_project.Server.Middleware;
-using Application.Interfaces.Exchange;
 using Application.Contracts.Requests.Withdrawal;
+using Application.Interfaces.Exchange;
+using Application.Interfaces.KYC;
 using Application.Interfaces.Withdrawal;
+using crypto_investment_project.Server.Middleware;
+using Domain.Constants.KYC;
+using Infrastructure.Services.KYC;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
+using System.Net;
+using System.Security.Claims;
+using System.Text;
+using System.Text.Json;
 
 namespace crypto_investment_project.Server.Middleware
 {
@@ -59,7 +60,7 @@ namespace crypto_investment_project.Server.Middleware
             _options = options.Value ?? throw new ArgumentNullException(nameof(options));
         }
 
-        public async Task InvokeAsync(HttpContext context, IKycService kycService, IExchangeService exchangeService, IWithdrawalService withdrawalService)
+        public async Task InvokeAsync(HttpContext context, IKycService kycService, IKycSessionService kycSessionService, IExchangeService exchangeService, IWithdrawalService withdrawalService)
         {
             try
             {
@@ -119,7 +120,7 @@ namespace crypto_investment_project.Server.Middleware
                 // Additional security checks
                 if (requirement.RequireActiveSession)
                 {
-                    var sessionValid = await ValidateActiveSession(context, kycService, userId.Value);
+                    var sessionValid = await ValidateActiveSession(context, kycService, kycSessionService, userId.Value);
                     if (!sessionValid)
                     {
                         await WriteSessionRequiredResponse(context);
@@ -204,7 +205,7 @@ namespace crypto_investment_project.Server.Middleware
             }
         }
 
-        private async Task<bool> ValidateActiveSession(HttpContext context, IKycService kycService, Guid userId)
+        private async Task<bool> ValidateActiveSession(HttpContext context, IKycService kycService, IKycSessionService kycSessionService, Guid userId)
         {
             try
             {
@@ -223,7 +224,7 @@ namespace crypto_investment_project.Server.Middleware
                 }
 
                 // Validate session through the KYC service
-                var sessionValidation = await kycService.ValidateSessionAsync(sessionId, userId);
+                var sessionValidation = await kycSessionService.ValidateSessionAsync(sessionId, userId);
                 if (!sessionValidation.IsSuccess)
                 {
                     _logger.LogWarning("Session validation failed for user {UserId}, session {SessionId}: {Error}",
@@ -248,7 +249,7 @@ namespace crypto_investment_project.Server.Middleware
                     if (context.Request.Path.StartsWithSegments("/api/withdrawal") ||
                         context.Request.Path.StartsWithSegments("/api/exchange/large-order"))
                     {
-                        await kycService.InvalidateSessionAsync(sessionId, userId, "IP address change detected");
+                        await kycSessionService.InvalidateSessionAsync(sessionId, userId, "IP address change detected");
                         return false;
                     }
                 }
@@ -285,7 +286,7 @@ namespace crypto_investment_project.Server.Middleware
                     PropertyNamingPolicy = JsonNamingPolicy.CamelCase
                 };
 
-                var withdrawalRequest = JsonSerializer.Deserialize<WithdrawalRequest>(body, options);
+                var withdrawalRequest = JsonSerializer.Deserialize<CryptoWithdrawalRequest>(body, options);
                 if (!(withdrawalRequest?.Amount > 0m))
                 {
                     throw new ArgumentException("Invalid withdrawal amount");

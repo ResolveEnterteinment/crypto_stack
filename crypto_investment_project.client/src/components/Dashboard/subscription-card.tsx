@@ -42,7 +42,7 @@ import { Asset, AssetColors } from '../../types/assetTypes';
 import { updateSubscription } from '../../services/subscription';
 import { getSupportedAssets } from '../../services/asset';
 import dayjs from 'dayjs';
-import { PaymentRequestData, initiatePayment } from '../../services/payment';
+import { PaymentRequestData, initiatePayment, syncPayments } from '../../services/payment';
 import { formatApiError } from '../../utils/apiErrorHandler';
 import { useAuth } from '../../context/AuthContext';
 
@@ -68,6 +68,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
 
     const [loading, setLoading] = useState(false);
     const [retrying, setRetrying] = useState(false);
+    const [syncing, setSyncing] = useState(false);
     const [assets, setAssets] = useState<Asset[]>([]);
     const [form] = Form.useForm<EditFormData>();
     const { user } = useAuth();
@@ -79,6 +80,15 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
             month: 'short',
             day: 'numeric'
         });
+    };
+
+    const formatCurrency = (amount: number): string => {
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(amount);
     };
 
     // Calculate progress to next payment
@@ -209,6 +219,20 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
             throw new Error(`Payment initialization failed: ${errorMessage}`);
         } finally {
             setRetrying(false);
+        }
+    };
+
+    const handleSyncPaymentsClick = async () => {
+        try {
+            setSyncing(true);
+            
+            var result = await syncPayments(subscription.id);
+        } catch (syncError: any) {
+            console.error('Payment syncronization error:', syncError);
+            const errorMessage = formatApiError(syncError);
+            throw new Error(`Sync payments failed: ${errorMessage}`);
+        } finally {
+            setSyncing(false);
         }
     };
 
@@ -476,7 +500,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                                                     <Text type="secondary" style={{ fontSize: '12px' }}>Total Invested</Text>
                                                     <br />
                                                     <Text strong style={{ fontSize: '13px', color: '#52c41a' }}>
-                                                        {subscription.totalInvestments} {subscription.currency}
+                                                        {formatCurrency(subscription.totalInvestments)} {subscription.currency}
                                                     </Text>
                                                 </Col>
                                             </Row>
@@ -546,80 +570,91 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                                             </div>
                                         </Space>
                                     </Card>
+                                    {/* Action Buttons */}
+                                    <Row justify="end" style={{ marginTop: '20px' }}>
+                                        <Col>
+                                            <Space wrap size="small">
+                                                {subscription.status === SubscriptionStatus.ACTIVE && (
+                                                    <Button
+                                                        size="small"
+                                                        onClick={() => setShowPaymentModal(true)}
+                                                        icon={<CreditCardOutlined />}
+                                                    >
+                                                        Payment Status
+                                                    </Button>
+                                                )}
+
+                                                {!subscription.isCancelled && (
+                                                    <Button
+                                                        size="small"
+                                                        type="primary"
+                                                        onClick={handleEditClick}
+                                                        disabled={subscription.isCancelled}
+                                                        icon={<EditOutlined />}
+                                                    >
+                                                        Edit
+                                                    </Button>
+                                                )}
+
+                                                <Popconfirm
+                                                    title="Cancel subscription"
+                                                    description={
+                                                        subscription.status === SubscriptionStatus.PENDING || subscription.isCancelled
+                                                            ? "Are you sure to delete this subscription? This will permanently delete all the data."
+                                                            : "Are you sure to cancel this subscription? This action will suspend any pending payments. You can always reactivate later."
+                                                    }
+                                                    onConfirm={() => onCancel(subscription.id)}
+                                                    icon={<QuestionCircleOutlined style={{ color: 'red' }} />}
+                                                >
+                                                    <Button
+                                                        size="small"
+                                                        danger
+                                                        icon={<CloseOutlined />}
+                                                    >
+                                                        {subscription.status === SubscriptionStatus.PENDING || subscription.isCancelled ? "Delete" : "Cancel"}
+                                                    </Button>
+                                                </Popconfirm>
+
+                                                {subscription.status === SubscriptionStatus.PENDING && (
+                                                    <Button
+                                                        size="small"
+                                                        loading={retrying}
+                                                        style={{ backgroundColor: '#faad14', borderColor: '#faad14', color: 'white' }}
+                                                        onClick={handleRetryPaymentClick}
+                                                        icon={<RedoOutlined />}
+                                                    >
+                                                        {retrying ? 'Retrying...' : 'Retry Payment'}
+                                                    </Button>
+                                                )}
+
+                                                {subscription.status === SubscriptionStatus.PENDING && (
+                                                    <Button
+                                                        size="small"
+                                                        loading={syncing}
+                                                        style={{ backgroundColor: 'green', borderColor: 'green', color: 'white' }}
+                                                        onClick={handleSyncPaymentsClick}
+                                                        icon={<RedoOutlined />}
+                                                    >
+                                                        {retrying ? 'Retrying...' : 'Sync Payments'}
+                                                    </Button>
+                                                )}
+
+                                                {subscription.status !== SubscriptionStatus.PENDING && (
+                                                    <Button
+                                                        size="small"
+                                                        onClick={handleViewHistoryClick}
+                                                        icon={<HistoryOutlined />}
+                                                    >
+                                                        History
+                                                    </Button>
+                                                )}
+                                            </Space>
+                                        </Col>
+                                    </Row>
                                 </motion.div>
                             </motion.div>
                         )}
                     </AnimatePresence>
-
-                    {/* Action Buttons */}
-                    <Row justify="end" style={{ marginTop: '20px' }}>
-                        <Col>
-                            <Space wrap size="small">
-                                {subscription.status === SubscriptionStatus.ACTIVE && (
-                                    <Button
-                                        size="small"
-                                        onClick={() => setShowPaymentModal(true)}
-                                        icon={<CreditCardOutlined />}
-                                    >
-                                        Payment Status
-                                    </Button>
-                                )}
-
-                                {!subscription.isCancelled && (
-                                    <Button
-                                        size="small"
-                                        type="primary"
-                                        onClick={handleEditClick}
-                                        disabled={subscription.isCancelled}
-                                        icon={<EditOutlined />}
-                                    >
-                                        Edit
-                                    </Button>
-                                )}
-
-                                <Popconfirm
-                                    title="Cancel subscription"
-                                    description={
-                                        subscription.status === SubscriptionStatus.PENDING || subscription.isCancelled
-                                            ? "Are you sure to delete this subscription? This will permanently delete all the data."
-                                            : "Are you sure to cancel this subscription? This action will suspend any pending payments. You can always reactivate later."
-                                    }
-                                    onConfirm={() => onCancel(subscription.id)}
-                                    icon={<QuestionCircleOutlined style={{ color: 'red' }} />}
-                                >
-                                    <Button
-                                        size="small"
-                                        danger
-                                        icon={<CloseOutlined />}
-                                    >
-                                        {subscription.status === SubscriptionStatus.PENDING || subscription.isCancelled ? "Delete" : "Cancel"}
-                                    </Button>
-                                </Popconfirm>
-
-                                {subscription.status === SubscriptionStatus.PENDING && (
-                                    <Button
-                                        size="small"
-                                        loading={retrying}
-                                        style={{ backgroundColor: '#faad14', borderColor: '#faad14', color: 'white' }}
-                                        onClick={handleRetryPaymentClick}
-                                        icon={<RedoOutlined />}
-                                    >
-                                        {retrying ? 'Retrying...' : 'Retry Payment'}
-                                    </Button>
-                                )}
-
-                                {subscription.status !== SubscriptionStatus.PENDING && (
-                                    <Button
-                                        size="small"
-                                        onClick={handleViewHistoryClick}
-                                        icon={<HistoryOutlined />}
-                                    >
-                                        History
-                                    </Button>
-                                )}
-                            </Space>
-                        </Col>
-                    </Row>
                 </Card>
             </motion.div>
 

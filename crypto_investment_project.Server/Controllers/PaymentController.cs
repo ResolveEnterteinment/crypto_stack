@@ -1,9 +1,11 @@
+using Application.Extensions;
 using Application.Interfaces;
+using Application.Interfaces.Base;
 using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
-using Domain.Constants;
 using Domain.Constants.Payment;
+using Domain.DTOs;
 using Domain.DTOs.Error;
 using Domain.DTOs.Payment;
 using Domain.Exceptions;
@@ -24,13 +26,10 @@ namespace crypto_investment_project.Server.Controllers
         private readonly ISubscriptionService _subscriptionService;
         private readonly IPaymentService _paymentService;
         private readonly IIdempotencyService _idempotencyService;
-        private readonly IEventService _eventService;
         private readonly IConfiguration _configuration;
         private readonly ILoggingService Logger;
-        private readonly IUnitOfWork _unitOfWork;
 
         public PaymentController(
-            IUnitOfWork unitOfWork,
             ISubscriptionService subscriptionService,
             IPaymentService paymentService,
             IIdempotencyService idempotencyService,
@@ -38,11 +37,9 @@ namespace crypto_investment_project.Server.Controllers
             IConfiguration configuration,
             ILoggingService logger)
         {
-            _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
-            _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             Logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -213,12 +210,13 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 // Get the payment to check if it belongs to the current user
-                var payment = await _paymentService.GetPaymentDetailsAsync(paymentId);
-                if (payment == null)
+                var paymentResult = await _paymentService.GetPaymentDetailsAsync(paymentId);
+                if (paymentResult == null ||!paymentResult.IsSuccess)
                 {
                     Logger.LogError("Failed to cancel payment {PaymentId}: Payment not found", paymentId);
                     throw new ResourceNotFoundException(paymentId.GetType().Name, paymentId);
                 }
+                var payment = paymentResult.Data;
 
                 // Ensure the payment belongs to the current user
                 string currentUserId = User.FindFirst("sub")?.Value ?? User.FindFirst("uid")?.Value;
@@ -240,13 +238,7 @@ namespace crypto_investment_project.Server.Controllers
                     throw new PaymentApiException(result.ErrorMessage, "Stripe", paymentId);
                 }
 
-                // If payment is associated with a subscription, update its status
-                if (!string.IsNullOrEmpty(payment.SubscriptionId))
-                {
-                    _ = await _subscriptionService.UpdateSubscriptionStatusAsync(Guid.Parse(payment.SubscriptionId), SubscriptionStatus.Canceled);
-                }
-
-                return Ok(result);
+                return Ok(result.IsSuccess);
             }
             catch (ArgumentException ex)
             {
@@ -328,7 +320,7 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 // Verify that the subscription belongs to the user
-                var subscription = await _unitOfWork.Subscriptions.GetByIdAsync(parsedSubscriptionId);
+                var subscription = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
                 if (!subscription.IsSuccess || subscription.Data == null)
                 {
                     return NotFound($"Subscription {subscriptionId} not found");
@@ -342,9 +334,55 @@ namespace crypto_investment_project.Server.Controllers
                 // Get payments for the subscription
                 // We need to add this method to the PaymentService
                 var filter = MongoDB.Driver.Builders<Domain.Models.Payment.PaymentData>.Filter.Eq(p => p.SubscriptionId, parsedSubscriptionId);
-                var paymentsResult = await _unitOfWork.Payments.GetManyAsync(filter);
+                var paymentsResult = await _paymentService.GetManyAsync(filter);
 
                 return !paymentsResult.IsSuccess ? StatusCode(500, paymentsResult.ErrorMessage) : (IActionResult)Ok(new { data = paymentsResult.Data });
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error getting payments for subscription {subscriptionId}: {ex.Message}");
+                return StatusCode(500, "An error occurred while processing your request");
+            }
+        }
+
+        /// <summary>
+        /// Gets the latest payment status data for a subscription
+        /// </summary>
+        /// <param name="subscriptionId">The subscription ID</param>
+        /// <returns>Details of the latest payment for the subscription</returns>
+        [HttpGet("status/subscription/{subscriptionId}")]
+        [Authorize]
+        public async Task<IActionResult> GetSubscriptionPaymentStatus(string subscriptionId)
+        {
+            try
+            {
+                if (!Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
+                {
+                    return BadRequest("Invalid subscription ID format");
+                }
+
+                // Get the current user ID from claims
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized("User ID not found in claims");
+                }
+
+                // Verify that the subscription belongs to the user
+                var subscription = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
+                if (!subscription.IsSuccess || subscription.Data == null)
+                {
+                    return NotFound($"Subscription {subscriptionId} not found");
+                }
+
+                if (subscription.Data.UserId.ToString() != userId)
+                {
+                    return Forbid("You don't have permission to view this subscription's payments");
+                }
+
+                var paymentResult = await _paymentService.GetLatestPaymentAsync(parsedSubscriptionId);
+
+                return !paymentResult.IsSuccess ? StatusCode(500, paymentResult.ErrorMessage) : (IActionResult)Ok(new { data = new PaymentDto(paymentResult.Data) });
             }
             catch (Exception ex)
             {
@@ -358,7 +396,7 @@ namespace crypto_investment_project.Server.Controllers
         /// </summary>
         /// <param name="subscriptionId">The subscription ID</param>
         /// <returns>Result of the update operation</returns>
-        [HttpPost("fetch-update/{subscriptionId}")]
+        [HttpGet("fetch-update/subscription/{subscriptionId}")]
         [Authorize]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
@@ -401,7 +439,7 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 // Verify that the subscription belongs to the user
-                var subscription = await _unitOfWork.Subscriptions.GetByIdAsync(parsedSubscriptionId);
+                var subscription = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
                 if (!subscription.IsSuccess || subscription.Data == null)
                 {
                     return NotFound(new ErrorResponse
@@ -441,7 +479,7 @@ namespace crypto_investment_project.Server.Controllers
                                 ["ProviderSubscriptionId"] = stripeSubscriptionId
                             };
 
-                            var updateResult = await _unitOfWork.Subscriptions.UpdateAsync(parsedSubscriptionId, updateFields);
+                            var updateResult = await _subscriptionService.UpdateAsync(parsedSubscriptionId, updateFields);
                             if (updateResult.IsSuccess)
                             {
                                 await Logger.LogTraceAsync($"Updated domain subscription {subscriptionId} with Stripe subscription ID {stripeSubscriptionId}", "FetchUpdatePayments");
@@ -493,14 +531,7 @@ namespace crypto_investment_project.Server.Controllers
 
                 await Logger.LogTraceAsync($"Successfully processed {fetchResult.Data} missing payment records", "FetchUpdatePayments");
 
-                return Ok(new
-                {
-                    success = true,
-                    message = "Payment records updated successfully",
-                    processedCount = fetchResult.Data,
-                    stripeSubscriptionId = stripeSubscriptionId,
-                    correlationId = correlationId
-                });
+                return ResultWrapper<int>.Success(fetchResult.Data, "Payment records updated successfully").ToActionResult(this);
             }
             catch (Exception ex)
             {

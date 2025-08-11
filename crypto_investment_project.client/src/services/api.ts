@@ -1,7 +1,6 @@
 ﻿// src/services/api.ts
 import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from "axios";
 import ITraceLogNode from "../interfaces/TraceLog/ITraceLogNode";
-import encryptionService from './encryptionService';
 
 // API configuration
 const API_CONFIG = {
@@ -102,88 +101,6 @@ const csrfTokenManager = {
     }
 };
 
-// Encryption management with improved error handling
-const encryptionManager = {
-    enabled: false,
-
-    initialize: async (encryptionKey: string | null): Promise<boolean> => {
-        try {
-            if (encryptionManager.enabled) {
-                console.debug("✅ Encryption already initialized");
-                return true;
-            }
-
-            // Get encryption key from server if not provided
-            if (!encryptionKey) {
-                encryptionKey = await encryptionManager._fetchEncryptionKey();
-                if (!encryptionKey) {
-                    console.error("❌ Failed to obtain encryption key");
-                    return false;
-                }
-            }
-
-            // Initialize the encryption service
-            await encryptionService.initialize(encryptionKey);
-            encryptionManager.enabled = true;
-            console.info("🔐 Encryption initialized successfully");
-            return true;
-
-        } catch (error) {
-            console.error("❌ Failed to initialize encryption:", error);
-            encryptionManager.enabled = false;
-            return false;
-        }
-    },
-
-    _fetchEncryptionKey: async (): Promise<string | null> => {
-        const maxAttempts = 3;
-
-        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                console.debug(`🔑 Requesting encryption key (attempt ${attempt}/${maxAttempts})...`);
-
-                const response = await axios.post(
-                    `${API_CONFIG.BASE_URL}${API_CONFIG.ENCRYPTION.KEY_EXCHANGE_URL}`,
-                    {},
-                    {
-                        withCredentials: true,
-                        headers: { 'X-Skip-Csrf-Check': 'true' }
-                    }
-                );
-
-                const key = response.data?.key;
-                if (key) {
-                    console.debug("✅ Encryption key received successfully");
-                    return key;
-                }
-
-                console.warn(`⚠️ No encryption key in response (attempt ${attempt})`);
-            } catch (error) {
-                console.error(`❌ Key exchange attempt ${attempt} failed:`, error);
-
-                if (attempt < maxAttempts) {
-                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
-                }
-            }
-        }
-
-        return null;
-    },
-
-    shouldEncrypt: (url?: string): boolean => {
-        if (!encryptionManager.enabled || !url) return false;
-        return !API_CONFIG.ENCRYPTION.EXCLUDED_PATHS.some(
-            path => url.toLowerCase().includes(path.toLowerCase())
-        );
-    },
-
-    disable: (): void => {
-        encryptionManager.enabled = false;
-        encryptionService.reset();
-        console.info("🔓 Encryption disabled");
-    }
-};
-
 // Initialize CSRF token management
 csrfTokenManager.initialize().catch(error => {
     console.warn('⚠️ Failed to initialize CSRF protection:', error);
@@ -216,19 +133,6 @@ apiClient.interceptors.request.use(
         // Add timing for performance tracking
         (config as any)._requestStartTime = Date.now();
 
-        // Add encryption for request data
-        if (API_CONFIG.ENCRYPTION.ENABLED && encryptionManager.shouldEncrypt(config.url) && config.data) {
-            try {
-                const dataToEncrypt = typeof config.data === 'string' ? config.data : JSON.stringify(config.data);
-                const encryptedPayload = await encryptionService.encrypt(dataToEncrypt);
-                config.data = { payload: encryptedPayload };
-                console.debug(`🔐 Request encrypted for ${config.url}`);
-            } catch (error) {
-                console.error("❌ Failed to encrypt request data:", error);
-                // Continue with unencrypted data rather than failing
-            }
-        }
-
         return config;
     },
     (error: AxiosError) => {
@@ -244,21 +148,6 @@ apiClient.interceptors.response.use(
         const requestTime = Date.now() - ((response.config as any)._requestStartTime || 0);
         if (requestTime > 1000) {
             console.warn(`⚠️ Slow API request to ${response.config.url}: ${requestTime}ms`);
-        }
-
-        // Handle response decryption
-        if (encryptionManager.shouldEncrypt(response.config.url) && response.data?.payload) {
-            try {
-                console.debug(`🔓 Decrypting response from ${response.config.url}`);
-                const decryptedData = await encryptionService.decrypt(response.data.payload);
-                response.data = typeof decryptedData === 'string' && decryptedData.startsWith('{')
-                    ? JSON.parse(decryptedData)
-                    : decryptedData;
-                console.debug(`✅ Response decrypted successfully`);
-            } catch (error) {
-                console.error("❌ Failed to decrypt response:", error);
-                // Keep original response as fallback
-            }
         }
 
         return response;
@@ -485,35 +374,14 @@ const api = {
     refreshCsrfToken: async (): Promise<string | null> => csrfTokenManager.refreshToken(),
     isCsrfProtectionActive: (): boolean => !!csrfTokenManager.getToken(),
 
-    // Encryption management
-    enableEncryption: async (key: string | null): Promise<boolean> => {
-        return encryptionManager.initialize(key);
-    },
-
-    disableEncryption: (): void => {
-        encryptionManager.disable();
-    },
-
-    isEncryptionEnabled: (): boolean => {
-        return encryptionManager.enabled;
-    },
-
     // Initialize API services
-    initialize: async (encryptionKey: string | null): Promise<void> => {
+    initialize: async (): Promise<void> => {
         console.info("🚀 Initializing API services...");
 
         try {
             await csrfTokenManager.initialize();
             console.debug("✅ CSRF protection initialized");
 
-            if (encryptionKey || API_CONFIG.ENCRYPTION.ENABLED) {
-                const success = await encryptionManager.initialize(encryptionKey);
-                if (success) {
-                    console.info("✅ API services initialized with encryption");
-                } else {
-                    console.warn("⚠️ API services initialized without encryption");
-                }
-            }
         } catch (error) {
             console.error("❌ Failed to initialize API services:", error);
             throw error;

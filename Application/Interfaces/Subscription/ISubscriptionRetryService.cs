@@ -1,4 +1,7 @@
 ﻿// Application/Interfaces/Subscription/ISubscriptionRetryService.cs
+using Application.Interfaces.Base;
+using Domain.Models.Subscription;
+
 namespace Application.Interfaces.Subscription
 {
     public interface ISubscriptionRetryService

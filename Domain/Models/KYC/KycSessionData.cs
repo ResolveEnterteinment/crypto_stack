@@ -26,10 +26,6 @@ namespace Domain.Models.KYC
         [Required]
         public string Status { get; set; } = "ACTIVE";
 
-        [BsonElement("verificationLevel")]
-        [Required]
-        public string VerificationLevel { get; set; } = KycLevel.Standard;
-
         [BsonElement("securityContext")]
         [BsonIgnoreIfNull]
         public SessionSecurityContext? SecurityContext { get; set; }

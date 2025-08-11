@@ -15,25 +15,17 @@ namespace Infrastructure.Services
         private static readonly TimeSpan USER_CACHE_DURATION = TimeSpan.FromMinutes(15);
 
         public UserService(
-            ICrudRepository<UserData> repository,
-            ICacheService<UserData> cacheService,
-            IMongoIndexService<UserData> indexService,
-            ILoggingService logger,
-            IEventService eventService
+            IServiceProvider serviceProvider
         ) : base(
-            repository,
-            cacheService,
-            indexService,
-            logger,
-            eventService,
-            new[]
+            serviceProvider,
+            new()
             {
-                new CreateIndexModel<UserData>(
-                    Builders<UserData>.IndexKeys.Ascending(u => u.Email),
-                    new CreateIndexOptions { Name = "Email_1", Unique = true }
-                )
-            }
-        )
+                IndexModels = [
+                    new CreateIndexModel<UserData>(
+                        Builders<UserData>.IndexKeys.Ascending(u => u.Email),
+                        new CreateIndexOptions { Name = "Email_1", Unique = true })
+                    ]
+            })
         { }
 
         public async Task<bool> CheckUserExists(Guid userId)
@@ -41,7 +33,7 @@ namespace Infrastructure.Services
             if (userId == Guid.Empty)
                 return false;
 
-            var checkExists = await _repository.CheckExistsAsync(userId);
+            var checkExists = await _repository.ExistsAsync(userId);
             return checkExists;
         }
 
@@ -67,7 +59,7 @@ namespace Infrastructure.Services
                 throw new DatabaseException("Error checking existing user by email.");
             if (existing.Data != null)
             {
-                Logger.LogWarning("Attempt to create user with existing email: {Email}", newUserData.Email);
+                _loggingService.LogWarning("Attempt to create user with existing email: {Email}", newUserData.Email);
                 throw new InvalidOperationException($"A user with email {newUserData.Email} already exists.");
             }
 
@@ -76,7 +68,7 @@ namespace Infrastructure.Services
             if (!insertResult.IsSuccess)
                 throw new DatabaseException("Failed to insert new user.");
 
-            Logger.LogInformation("Created user {UserId} with email {Email}", newUserData.Id, newUserData.Email);
+            _loggingService.LogInformation("Created user {UserId} with email {Email}", newUserData.Id, newUserData.Email);
             return newUserData;
         }
 
@@ -91,7 +83,7 @@ namespace Infrastructure.Services
             if (!updateResult.IsSuccess)
                 throw new DatabaseException($"Failed to update user {id}: {updateResult.ErrorMessage}");
 
-            Logger.LogInformation("Updated user {UserId}", id);
+            _loggingService.LogInformation("Updated user {UserId}", id);
         }
 
         public async Task RemoveAsync(Guid id)
@@ -103,7 +95,7 @@ namespace Infrastructure.Services
             if (!deleteResult.IsSuccess)
                 throw new DatabaseException($"Failed to remove user {id}: {deleteResult.ErrorMessage}");
 
-            Logger.LogInformation("Removed user {UserId}", id);
+            _loggingService.LogInformation("Removed user {UserId}", id);
         }
     }
 }

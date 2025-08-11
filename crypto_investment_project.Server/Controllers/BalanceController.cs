@@ -1,3 +1,4 @@
+using Application.Extensions;
 using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
@@ -5,7 +6,6 @@ using Domain.Constants.Asset;
 using Domain.DTOs.Balance;
 using Domain.Exceptions;
 using Domain.Models.Balance;
-using Infrastructure.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -53,9 +53,9 @@ namespace crypto_investment_project.Server.Controllers
             }
             var filter = new FilterDefinitionBuilder<BalanceData>().Where(b => b.UserId == user && b.Ticker == ticker);
             var balancesResult = await _balanceService.GetUserBalanceByTickerAsync(user.Value, ticker);
-            return balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null
-                ? BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.")
-                : Ok(balancesResult.Data);
+            return (balancesResult == null) ? BadRequest("Balance fetch error") :
+                balancesResult.IsSuccess ? Ok(new BalanceDto(balancesResult.Data)) :
+                balancesResult.ToActionResult(this);
         }
 
         [HttpGet]

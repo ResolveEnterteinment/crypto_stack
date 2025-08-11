@@ -25,12 +25,21 @@ const ReviewStep: React.FC<ReviewStepProps> = ({ formData }) => {
 
     // Format date for display
     const formatDate = (date: Date) => {
-        if (!date) return 'Ongoing (until cancelled)';
+        if (!date) return 'Ongoing (until canceled)';
         return new Date(date).toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'long',
             day: 'numeric'
         });
+    };
+
+    const formatCurrency = (amount: number): string => {
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(amount);
     };
 
     // Calculate estimated annual investment (excluding one-time)
@@ -98,11 +107,11 @@ const ReviewStep: React.FC<ReviewStepProps> = ({ formData }) => {
                         <>
                             <div>
                                 <p className="text-sm text-gray-500">End Date</p>
-                                <p className="font-medium">{endDate ? formatDate(endDate) : "N/A"}</p>
+                                <p className="font-medium">{endDate ? formatDate(endDate) : "Until Canceled"}</p>
                             </div>
                             <div>
                                 <p className="text-sm text-gray-500">Est. Annual Investment</p>
-                                <p className="font-medium">${annualAmount.toFixed(2)} {currency}</p>
+                                <p className="font-medium">{formatCurrency(annualAmount)} {currency}</p>
                             </div>
                         </>
                     )}

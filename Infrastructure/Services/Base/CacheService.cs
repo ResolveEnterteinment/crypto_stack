@@ -1,10 +1,9 @@
 ﻿using Application.Interfaces.Base;
 using Application.Interfaces.Logging;
-using Domain.Models;
 using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Bson;
 
-public class CacheService<T> : ICacheService<T> where T : BaseEntity
+public class CacheService<T> : ICacheService<T> where T : class
 {
     private readonly IMemoryCache _cache;
     private readonly ILoggingService _logger;
@@ -34,7 +33,6 @@ public class CacheService<T> : ICacheService<T> where T : BaseEntity
         if (item is not null)
         {
             _cache.Set(key, item, duration ?? DefaultDuration);
-            _logger.LogInformation($"Cache {key} set to {item.ToJson()}");
         }
 
         return item;
@@ -57,7 +55,6 @@ public class CacheService<T> : ICacheService<T> where T : BaseEntity
         if (collection is not null)
         {
             _cache.Set(key, collection, duration ?? DefaultDuration);
-            _logger.LogInformation($"Cache {key} set to {collection.ToJson()}");
         }
 
         return collection;
@@ -79,7 +76,6 @@ public class CacheService<T> : ICacheService<T> where T : BaseEntity
         if (item is not null)
         {
             _cache.Set(key, item, duration ?? DefaultDuration);
-            _logger.LogInformation($"Cache {key} set to {item.ToJson()}");
         }
 
         return item;
@@ -102,4 +98,11 @@ public class CacheService<T> : ICacheService<T> where T : BaseEntity
 
     public bool TryGetValue<TItem>(object key, out TItem value)
         => _cache.TryGetValue(key, out value);
+
+    public TItem Set<TItem>(string key, TItem value, TimeSpan? duration = null)
+    {
+        TItem result = _cache.Set(key, value, duration ?? DefaultDuration);
+        _logger.LogInformation($"Cache {key} set to {value.ToJson()}");
+        return result;
+    }
 }

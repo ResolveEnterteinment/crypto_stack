@@ -18,6 +18,8 @@ builder.Services
     .AddIdentityConfiguration(builder.Configuration)
     .AddAuthenticationServices(builder.Configuration)
     .AddCoreServices(builder.Environment)
+    .AddCacheServices()
+    .AddHttpContextServices()
     .AddKycServices(builder.Configuration)
     .AddRateLimitingPolicies(builder.Environment)
     .AddApiVersioningSupport()
@@ -107,9 +109,10 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
     ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
 });
 
-// Map SignalR hub
+// Map SignalR hubs
 app.MapHub<NotificationHub>("/hubs/notificationHub");
-Console.WriteLine("✅ SignalR hub configured");
+app.MapHub<DashboardHub>("/hubs/dashboardHub");
+Console.WriteLine("✅ SignalR hubs configured");
 
 // Map diagnostic endpoint
 app.MapGet("/api/diagnostic/connection", (HttpContext context) => Results.Ok(new

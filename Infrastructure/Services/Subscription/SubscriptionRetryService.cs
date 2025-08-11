@@ -1,10 +1,13 @@
-﻿// Infrastructure/Services/Subscription/SubscriptionRetryService.cs
-using Application.Interfaces;
+﻿using Application.Interfaces.Base;
 using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
-using Domain.Events;
+using Domain.Constants.Logging;
+using Domain.DTOs.Base;
+using Domain.DTOs.Logging;
+using Domain.Events.Subscription;
+using Domain.Exceptions;
 using Domain.Models.Payment;
 using Domain.Models.Subscription;
 using MediatR;
@@ -12,195 +15,233 @@ using MediatR;
 namespace Infrastructure.Services.Subscription
 {
     public class SubscriptionRetryService :
-        INotificationHandler<SubscriptionPaymentFailedEvent>,
-        ISubscriptionRetryService
+        ISubscriptionRetryService,
+        INotificationHandler<SubscriptionPaymentFailedEvent>
     {
+        private readonly IResilienceService<SubscriptionData> _resilienceService;
+        private readonly ILoggingService _loggingService;
+        private readonly IEventService _eventService;
+        private readonly INotificationService _notificationService;
         private readonly ISubscriptionService _subscriptionService;
         private readonly IPaymentService _paymentService;
-        private readonly INotificationService _notificationService;
-        private readonly ILoggingService _logger;
-        private readonly IEventService _eventService;
 
         // Configure retry settings
         private readonly int[] _retryIntervalHours = new[] { 24, 72, 168 }; // 1 day, 3 days, 7 days
         private readonly int _maxRetryAttempts = 3;
 
         public SubscriptionRetryService(
-            ISubscriptionService subscriptionService,
-            IPaymentService paymentService,
+            IResilienceService<SubscriptionData> resilienceService,
+            ILoggingService loggingService,
+            IEventService eventService,
             INotificationService notificationService,
-            ILoggingService logger,
-            IEventService eventService)
+            ISubscriptionService subscriptionService,
+            IPaymentService paymentService)
         {
+            _resilienceService = resilienceService ?? throw new ArgumentNullException(nameof(resilienceService));
+            _loggingService = loggingService ?? throw new ArgumentNullException(nameof(loggingService));
+            _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
-            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
         }
 
         /// <summary>
         /// Handle payment failure event
         /// </summary>
-        public async Task Handle(SubscriptionPaymentFailedEvent notification, CancellationToken cancellationToken)
+        public Task Handle(SubscriptionPaymentFailedEvent notification, CancellationToken cancellationToken)
         {
-            using var scope = _logger.BeginScope("SubscriptionRetryService::Handle", new Dictionary<string, object>
-            {
-                ["PaymentId"] = notification.Payment.Id,
-                ["SubscriptionId"] = notification.Payment.SubscriptionId,
-                ["AttemptCount"] = notification.AttemptCount
-            });
-
-            try
-            {
-                var payment = notification.Payment;
-
-                // Get subscription
-                var subscriptionResult = await _subscriptionService.GetByIdAsync(payment.SubscriptionId);
-                if (subscriptionResult == null || !subscriptionResult.IsSuccess || subscriptionResult.Data == null)
+            return _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    _logger.LogError("Failed to get subscription {SubscriptionId} for failed payment",
-                        payment.SubscriptionId);
-                    return;
-                }
-
-                var subscription = subscriptionResult.Data;
-                var attemptCount = notification.AttemptCount;
-
-                // Check if we should retry
-                if (attemptCount >= _maxRetryAttempts)
+                    NameSpace = "Infrastructure.Services.Subscription",
+                    FileName = "SubscriptionRetryService",
+                    OperationName = "Handle(SubscriptionPaymentFailedEvent notification, CancellationToken cancellationToken)",
+                    State =
+                    {
+                        ["PaymentId"] = notification.Payment.Id,
+                        ["SubscriptionId"] = notification.Payment.SubscriptionId,
+                        ["AttemptCount"] = notification.AttemptCount
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
                 {
-                    await HandleMaxRetriesExceeded(subscription, payment, notification.FailureReason);
-                    return;
-                }
+                    var payment = notification.Payment;
 
-                // Calculate next retry time
-                var nextRetryHours = _retryIntervalHours[Math.Min(attemptCount, _retryIntervalHours.Length - 1)];
-                var nextRetryAt = DateTime.UtcNow.AddHours(nextRetryHours);
+                    // Get subscription - External call (already has database resilience)
+                    var subscriptionResult = await _subscriptionService.GetByIdAsync(payment.SubscriptionId);
+                    if (subscriptionResult == null || !subscriptionResult.IsSuccess || subscriptionResult.Data == null)
+                    {
+                        _loggingService.LogError("Failed to get subscription {SubscriptionId} for failed payment",
+                            payment.SubscriptionId);
+                        return;
+                    }
 
-                // Update payment with retry information
-                await _paymentService.UpdatePaymentRetryInfoAsync(
-                    payment.Id,
-                    attemptCount + 1,
-                    DateTime.UtcNow,
-                    nextRetryAt,
-                    notification.FailureReason);
+                    var subscription = subscriptionResult.Data;
+                    var attemptCount = notification.AttemptCount;
 
-                // Notify user
-                await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                    // Check if we should retry
+                    if (attemptCount >= _maxRetryAttempts)
+                    {
+                        await HandleMaxRetriesExceeded(subscription, payment, notification.FailureReason);
+                        return;
+                    }
+
+                    // Calculate next retry time
+                    var nextRetryHours = _retryIntervalHours[Math.Min(attemptCount, _retryIntervalHours.Length - 1)];
+                    var nextRetryAt = DateTime.UtcNow.AddHours(nextRetryHours);
+
+                    // Update payment with retry information - External call (already has database resilience)
+                    await _paymentService.UpdatePaymentRetryInfoAsync(
+                        payment.Id,
+                        attemptCount + 1,
+                        DateTime.UtcNow,
+                        nextRetryAt,
+                        notification.FailureReason);
+
+                    // Notify user - External call (may have HTTP resilience)
+                    await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                    {
+                        UserId = subscription.UserId.ToString(),
+                        Message = $"Payment for your subscription failed. Reason: {notification.FailureReason}. We'll try again on {nextRetryAt:yyyy-MM-dd}.",
+                        IsRead = false
+                    });
+
+                    _loggingService.LogInformation(
+                        "Scheduled retry for subscription {SubscriptionId} payment, attempt {AttemptCount}, next retry at {NextRetryAt}",
+                        subscription.Id, attemptCount + 1, nextRetryAt);
+                })
+                .WithContext("Operation", "PaymentFailureHandling")
+                .WithContext("PaymentProvider", "Stripe")
+                .OnError(async (ex) =>
                 {
-                    UserId = subscription.UserId.ToString(),
-                    Message = $"Payment for your subscription failed. Reason: {notification.FailureReason}. We'll try again on {nextRetryAt:yyyy-MM-dd}.",
-                    IsRead = false
-                });
-
-                _logger.LogInformation(
-                    "Scheduled retry for subscription {SubscriptionId} payment, attempt {AttemptCount}, next retry at {NextRetryAt}",
-                    subscription.Id, attemptCount + 1, nextRetryAt);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error handling payment failure for payment {notification.Payment.Id} : {ex.Message}");
-            }
+                    _loggingService.LogError("Critical error handling payment failure for subscription {SubscriptionId}: {Error}",
+                        notification.Payment.SubscriptionId, ex.Message);
+                })
+                .ExecuteAsync();
         }
 
         /// <summary>
         /// Handle the case when max retry attempts have been exceeded
         /// </summary>
-        private async Task HandleMaxRetriesExceeded(
+        private Task HandleMaxRetriesExceeded(
             SubscriptionData subscription,
             PaymentData payment,
             string failureReason)
         {
-            using var scope = _logger.BeginScope("SubscriptionRetryService::HandleMaxRetriesExceeded", new Dictionary<string, object>
-            {
-                ["SubscriptionId"] = subscription.Id,
-                ["PaymentId"] = payment.Id
-            });
-
-            try
-            {
-                // Update subscription status to suspended
-                await _subscriptionService.UpdateSubscriptionStatusAsync(subscription.Id, SubscriptionStatus.Suspended);
-
-                // Send notification to user
-                await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+            return _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    UserId = subscription.UserId.ToString(),
-                    Message = $"Your subscription has been suspended due to payment failures. Reason: {failureReason}. Please update your payment method.",
-                    IsRead = false
-                });
+                    NameSpace = "Infrastructure.Services.Subscription",
+                    FileName = "SubscriptionRetryService",
+                    OperationName = "HandleMaxRetriesExceeded(SubscriptionData subscription, PaymentData payment, string failureReason)",
+                    State =
+                    {
+                        ["SubscriptionId"] = subscription.Id,
+                        ["PaymentId"] = payment.Id,
+                        ["FailureReason"] = failureReason
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    // Update subscription status to suspended - External call (already has database resilience)
+                    await _subscriptionService.UpdateSubscriptionStatusAsync(subscription.Id, SubscriptionStatus.Suspended);
 
-                _logger.LogInformation(
-                    "Subscription {SubscriptionId} suspended after {MaxRetries} failed payment attempts",
-                    subscription.Id, _maxRetryAttempts);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error suspending subscription {subscription.Id} after max retries: {ex.Message}");
-            }
+                    // Send notification to user - External call (may have HTTP resilience)
+                    await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                    {
+                        UserId = subscription.UserId.ToString(),
+                        Message = $"Your subscription has been suspended due to payment failures. Reason: {failureReason}. Please update your payment method.",
+                        IsRead = false
+                    });
+
+                    _loggingService.LogInformation(
+                        "Subscription {SubscriptionId} suspended after {MaxRetries} failed payment attempts",
+                        subscription.Id, _maxRetryAttempts);
+                })
+                .WithContext("Operation", "SubscriptionSuspension")
+                .WithContext("Reason", failureReason)
+                .ExecuteAsync();
         }
 
         /// <summary>
         /// Process any pending payment retries that are due
         /// </summary>
-        public async Task ProcessPendingRetriesAsync()
+        public Task ProcessPendingRetriesAsync()
         {
-            using var scope = _logger.BeginScope("SubscriptionRetryService::ProcessPendingRetriesAsync");
-
-            try
-            {
-                var pendingRetries = await _paymentService.GetPendingRetriesAsync();
-                if (pendingRetries == null || !pendingRetries.IsSuccess || pendingRetries.Data == null)
+            return _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    _logger.LogWarning("Failed to fetch pending payment retries");
-                    return;
-                }
-
-                var retryPayments = pendingRetries.Data;
-                _logger.LogInformation("Processing {Count} pending payment retries", retryPayments.Count());
-
-                foreach (var payment in retryPayments)
+                    NameSpace = "Infrastructure.Services.Subscription",
+                    FileName = "SubscriptionRetryService",
+                    OperationName = "ProcessPendingRetriesAsync()",
+                    State = [],
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
                 {
-                    try
+                    // Get pending retries - External call (already has database resilience)
+                    var pendingRetriesResult = await _paymentService.GetPendingRetriesAsync();
+                    if (pendingRetriesResult == null || !pendingRetriesResult.IsSuccess || pendingRetriesResult.Data == null)
                     {
-                        // Attempt to retry the payment
-                        var retryResult = await _paymentService.RetryPaymentAsync(payment.Id);
-
-                        if (retryResult.IsSuccess)
-                        {
-                            _logger.LogInformation("Successfully retried payment {PaymentId} for subscription {SubscriptionId}",
-                                payment.Id, payment.SubscriptionId);
-
-                            // Notify user of successful retry
-                            await _notificationService.CreateAndSendNotificationAsync(new NotificationData
-                            {
-                                UserId = payment.UserId.ToString(),
-                                Message = $"Payment for your subscription has been successfully processed.",
-                                IsRead = false
-                            });
-                        }
-                        else
-                        {
-                            // Payment failed again, publish event to handle the failure
-                            await _eventService.PublishAsync(new SubscriptionPaymentFailedEvent(
-                                payment,
-                                retryResult.ErrorMessage ?? "Payment retry failed",
-                                payment.AttemptCount + 1,
-                                _logger.Context
-                            ));
-                        }
+                        _loggingService.LogWarning("Failed to fetch pending payment retries");
+                        throw new InvalidOperationException("Failed to fetch pending payment retries");
                     }
-                    catch (Exception ex)
+
+                    var pendingRetries = pendingRetriesResult.Data;
+                    _loggingService.LogInformation("Processing {Count} pending payment retries", pendingRetries.Count);
+
+                    foreach (var payment in pendingRetries)
                     {
-                        _logger.LogError($"Error processing retry for payment {payment.Id}: {ex.Message}");
+                        await ProcessSinglePendingPayment(payment);
+                        // Continue processing other payments instead of failing the entire batch
                     }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error processing pending payment retries: {ex.Message}");
-            }
+                })
+                .WithContext("Operation", "BatchPaymentRetryProcessing")
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(15), TimeSpan.FromMinutes(1)) // Monitor performance
+                .ExecuteAsync();
+        }
+
+        private Task ProcessSinglePendingPayment(PaymentData payment)
+        {
+            return _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Subscription",
+                    FileName = "SubscriptionRetryService",
+                    OperationName = "ProcessSinglePendingPayment(PaymentData payment)",
+                    State = [],
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    // Attempt to retry the payment - External call (already has resilience)
+                    var retryResult = await _paymentService.RetryPaymentAsync(payment.Id);
+                    if (retryResult == null || !retryResult.IsSuccess)
+                        throw new PaymentApiException($"Failed to retry payment {payment.Id}: {retryResult?.ErrorMessage}", payment.Provider);
+                })
+                .OnSuccess(async () =>
+                {
+                    // Notify user of successful retry - External call (may have HTTP resilience)
+                    await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                    {
+                        UserId = payment.UserId.ToString(),
+                        Message = $"Payment for your subscription has been successfully processed.",
+                        IsRead = false
+                    });
+                })
+                .OnError(async (ex) =>
+                {
+                    // Payment failed again, publish event to handle the failure - External call
+                    await _eventService.PublishAsync(new SubscriptionPaymentFailedEvent(
+                        payment,
+                        ex.Message ?? "Payment retry failed",
+                        payment.AttemptCount + 1,
+                        _loggingService.Context
+                    ));
+                })
+                .ExecuteAsync();
         }
     }
 }

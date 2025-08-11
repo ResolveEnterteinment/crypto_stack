@@ -50,6 +50,95 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         /// <summary>
+        /// Retrieves a subscription by id for an authenticated user
+        /// </summary>
+        /// <param name="subscription">Subscription id string (GUID)</param>
+        /// <returns>Details for a specific subscription</returns>
+        /// <response code="200">Returns the user's subscriptions</response>
+        /// <response code="400">If the user ID is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="403">If the user is not authorized to view these subscriptions</response>
+        /// <response code="404">If the user is not found</response>
+        [HttpGet]
+        [Route("{subscription}")]
+        [Authorize]
+        [EnableRateLimiting("standard")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetById(string subscription)
+        {
+            using (_logger.BeginScope(new Dictionary<string, object>
+            {
+                ["SubscriptionId"] = subscription,
+                ["Operation"] = "GetById",
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
+            {
+                try
+                {
+                    // Validate input
+                    if (string.IsNullOrEmpty(subscription) || !Guid.TryParse(subscription, out Guid subscriptionId) || subscriptionId == Guid.Empty)
+                    {
+                        _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", subscription);
+                        return BadRequest(new { message = "A valid subscription ID is required." });
+                    }
+
+                    // Verify subscription exists
+                    var subcriptionExists = await _subscriptionService.ExistsAsync(subscriptionId);
+
+                    if (subcriptionExists == null || !subcriptionExists.IsSuccess || subcriptionExists.Data == false)
+                    {
+                        _logger.LogWarning("Subscription not found: {SubscriptionId}", subscriptionId);
+                        return NotFound(new { message = "Subscription not found" });
+                    }
+
+                    // Authorization check - verify current user can access this data
+                    var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                    // Get user subscriptions
+                    var subscriptionsResult = await _subscriptionService.GetByIdAsync(subscriptionId);
+
+                    if (subscriptionsResult == null || !subscriptionsResult.IsSuccess)
+                    {
+                        throw new DatabaseException(subscriptionsResult?.ErrorMessage ?? "Subscription fetch result returned null");
+                    }
+
+                    //Check subscription belongs to the user
+                    if (subscriptionsResult.Data.UserId.ToString() != currentUserId)
+                    {
+                        return Forbid("You don't have permission to view this subscription's payments");
+                    }
+
+                    // ETag support for caching
+                    var etagKey = $"user_subscription: {subscriptionId} {currentUserId}";
+                    var etag = Request.Headers.IfNoneMatch.FirstOrDefault();
+                    var (hasEtag, storedEtag) = await _idempotencyService.GetResultAsync<string>(etagKey);
+
+                    if (hasEtag && etag == storedEtag)
+                    {
+                        return StatusCode(StatusCodes.Status304NotModified);
+                    }
+
+                    // Generate ETag from data and store it
+                    var newEtag = $"\"{Guid.NewGuid():N}\""; // Simple approach; production would use content hash
+                    await _idempotencyService.StoreResultAsync(etagKey, newEtag);
+                    Response.Headers.ETag = newEtag;
+
+                    return subscriptionsResult.ToActionResult(this);
+                }
+                catch (Exception ex)
+                {
+                    // Let global exception handler middleware handle this
+                    _logger.LogError(ex, "Error retrieving subscription ID {SubscriptionId}", subscription);
+                    throw;
+                }
+            }
+        }
+
+        /// <summary>
         /// Retrieves all subscriptions for a specific user
         /// </summary>
         /// <param name="user">User GUID</param>
@@ -549,31 +638,19 @@ namespace crypto_investment_project.Server.Controllers
 
                     if (subscription.Status == SubscriptionStatus.Active)
                     {
-                        //First try to cancel stripe subscription
-                        var stripeService = _paymentService.Providers["Stripe"] as IStripeService;
-
-                        var stripeCancelResult = await stripeService.CancelSubscription(subscription.ProviderSubscriptionId);
-
-                        if (stripeCancelResult == null || !stripeCancelResult.IsSuccess)
+                        var result = await _subscriptionService.CancelAsync(subscriptionId);
+                        if (result == null || !result.IsSuccess)
                         {
-                            throw new DatabaseException($"Failed to cancel Stripe subscription {id}");
+                            throw new DatabaseException($"Failed to cancel domain subscription {id}");
                         }
                     }
-
-                    var result = new ResultWrapper();
-                    if(subscription.Status == SubscriptionStatus.Canceled || subscription.Status == SubscriptionStatus.Pending)
+                    else if(subscription.Status == SubscriptionStatus.Canceled || subscription.Status == SubscriptionStatus.Pending)
                     {
-                        result = await _subscriptionService.DeleteAsync(subscriptionId);
-                    }
-                    else
-                    {
-                        result = await _subscriptionService.CancelAsync(subscriptionId);
-                    }
-                        
-
-                    if (result == null || !result.IsSuccess)
-                    {
-                        throw new DatabaseException($"Failed to cancel domain subscription {id}");
+                        var result = await _subscriptionService.DeleteAsync(subscriptionId);
+                        if (result == null || !result.IsSuccess)
+                        {
+                            throw new DatabaseException($"Failed to cancel domain subscription {id}");
+                        }
                     }
 
                     // Store the result for idempotency
@@ -587,6 +664,220 @@ namespace crypto_investment_project.Server.Controllers
                 {
                     // Let global exception handler middleware handle this
                     _logger.LogError(ex, "Error cancelling subscription {SubscriptionId}", id);
+                    throw;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Pauses an active subscription
+        /// </summary>
+        /// <param name="id">The ID of the subscription to pause</param>
+        /// <param name="idempotencyKey">Unique key to prevent duplicate operations</param>
+        /// <returns>Success status</returns>
+        /// <response code="200">If the subscription was paused successfully</response>
+        /// <response code="400">If the request is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="403">If the user is not authorized to pause this subscription</response>
+        /// <response code="404">If the subscription is not found</response>
+        /// <response code="409">If an idempotent request was already processed</response>
+        [HttpPost]
+        [Route("pause/{id}")]
+        [Authorize]
+        [EnableRateLimiting("standard")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status409Conflict)]
+        public async Task<IActionResult> Pause(
+            [FromRoute] string id,
+            [FromHeader(Name = "X-Idempotency-Key")] string idempotencyKey)
+        {
+            using (_logger.BeginScope(new Dictionary<string, object>
+            {
+                ["SubscriptionId"] = id,
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                ["IdempotencyKey"] = idempotencyKey
+            }))
+            {
+                try
+                {
+                    // Validate subscription ID
+                    if (!Guid.TryParse(id, out var subscriptionId))
+                    {
+                        _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", id);
+                        return BadRequest(new { message = "A valid subscription ID is required" });
+                    }
+
+                    // Check idempotency key
+                    if (string.IsNullOrEmpty(idempotencyKey))
+                    {
+                        _logger.LogWarning("Missing idempotency key in subscription pause request");
+                        return BadRequest(new { message = "X-Idempotency-Key header is required for subscription pause" });
+                    }
+
+                    // Check for existing operation with this idempotency key
+                    if (await _idempotencyService.HasKeyAsync(idempotencyKey))
+                    {
+                        _logger.LogInformation("Idempotent request detected: {IdempotencyKey}, subscription ID: {SubscriptionId}",
+                            idempotencyKey, id);
+                        return StatusCode(StatusCodes.Status409Conflict,
+                            new { message = "Request already processed" });
+                    }
+
+                    // Get the subscription to check ownership
+                    var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
+                    if (subscriptionResult == null || !subscriptionResult.IsSuccess)
+                    {
+                        _logger.LogWarning("Subscription not found: {SubscriptionId}", id);
+                        return NotFound(new { message = "Subscription not found" });
+                    }
+
+                    var subscription = subscriptionResult.Data;
+                    if (subscription.Status != SubscriptionStatus.Active)
+                    {
+                        _logger.LogWarning("Subscription {SubscriptionId} is not active: {Status}", id, subscription.Status);
+                        return BadRequest(new { message = "Only active subscriptions can be paused." });
+                    }
+
+                    // Authorization check - verify current user owns this subscription or is admin
+                    var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                    var isAdmin = User.IsInRole("ADMIN");
+
+                    if (!isAdmin && subscription.UserId.ToString() != currentUserId)
+                    {
+                        _logger.LogWarning("Unauthorized attempt to pause subscription {SubscriptionId} by user {CurrentUserId}",
+                            id, currentUserId);
+                        return Forbid();
+                    }
+
+                    // Process the request
+                    var result = await _subscriptionService.PauseAsync(subscriptionId);
+                    if (result == null || !result.IsSuccess)
+                    {
+                        throw new DatabaseException($"Failed to pause subscription {id}");
+                    }
+
+                    // Store the result for idempotency
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, true);
+
+                    _logger.LogInformation("Successfully paused subscription {SubscriptionId}", id);
+
+                    return Ok(new { message = "Subscription has been paused" });
+                }
+                catch (Exception ex)
+                {
+                    // Let global exception handler middleware handle this
+                    _logger.LogError(ex, "Error pausing subscription {SubscriptionId}", id);
+                    throw;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Resumes a paused subscription
+        /// </summary>
+        /// <param name="id">The ID of the subscription to resume</param>
+        /// <param name="idempotencyKey">Unique key to prevent duplicate operations</param>
+        /// <returns>Success status</returns>
+        /// <response code="200">If the subscription was resumed successfully</response>
+        /// <response code="400">If the request is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="403">If the user is not authorized to resume this subscription</response>
+        /// <response code="404">If the subscription is not found</response>
+        /// <response code="409">If an idempotent request was already processed</response>
+        [HttpPost]
+        [Route("resume/{id}")]
+        [Authorize]
+        [EnableRateLimiting("standard")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status409Conflict)]
+        public async Task<IActionResult> Resume(
+            [FromRoute] string id,
+            [FromHeader(Name = "X-Idempotency-Key")] string idempotencyKey)
+        {
+            using (_logger.BeginScope(new Dictionary<string, object>
+            {
+                ["SubscriptionId"] = id,
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                ["IdempotencyKey"] = idempotencyKey
+            }))
+            {
+                try
+                {
+                    // Validate subscription ID
+                    if (!Guid.TryParse(id, out var subscriptionId))
+                    {
+                        _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", id);
+                        return BadRequest(new { message = "A valid subscription ID is required" });
+                    }
+
+                    // Check idempotency key
+                    if (string.IsNullOrEmpty(idempotencyKey))
+                    {
+                        _logger.LogWarning("Missing idempotency key in subscription resume request");
+                        return BadRequest(new { message = "X-Idempotency-Key header is required for subscription resume" });
+                    }
+
+                    // Check for existing operation with this idempotency key
+                    if (await _idempotencyService.HasKeyAsync(idempotencyKey))
+                    {
+                        _logger.LogInformation("Idempotent request detected: {IdempotencyKey}, subscription ID: {SubscriptionId}",
+                            idempotencyKey, id);
+                        return StatusCode(StatusCodes.Status409Conflict,
+                            new { message = "Request already processed" });
+                    }
+
+                    // Get the subscription to check ownership
+                    var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
+                    if (subscriptionResult == null || !subscriptionResult.IsSuccess)
+                    {
+                        _logger.LogWarning("Subscription not found: {SubscriptionId}", id);
+                        return NotFound(new { message = "Subscription not found" });
+                    }
+
+                    var subscription = subscriptionResult.Data;
+                    if (subscription.Status != SubscriptionStatus.Paused)
+                    {
+                        _logger.LogWarning("Subscription {SubscriptionId} is not paused: {Status}", id, subscription.Status);
+                        return BadRequest(new { message = "Only paused subscriptions can be resumed." });
+                    }
+
+                    // Authorization check - verify current user owns this subscription or is admin
+                    var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                    var isAdmin = User.IsInRole("ADMIN");
+
+                    if (!isAdmin && subscription.UserId.ToString() != currentUserId)
+                    {
+                        _logger.LogWarning("Unauthorized attempt to resume subscription {SubscriptionId} by user {CurrentUserId}",
+                            id, currentUserId);
+                        return Forbid();
+                    }
+
+                    // Process the request
+                    var result = await _subscriptionService.ResumeAsync(subscriptionId);
+                    if (result == null || !result.IsSuccess)
+                    {
+                        throw new DatabaseException($"Failed to resume subscription {id}");
+                    }
+
+                    // Store the result for idempotency
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, true);
+
+                    _logger.LogInformation("Successfully resumed subscription {SubscriptionId}", id);
+
+                    return Ok(new { message = "Subscription has been resumed" });
+                }
+                catch (Exception ex)
+                {
+                    // Let global exception handler middleware handle this
+                    _logger.LogError(ex, "Error resuming subscription {SubscriptionId}", id);
                     throw;
                 }
             }

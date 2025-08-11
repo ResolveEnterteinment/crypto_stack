@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { Disclosure, Transition } from '@headlessui/react';
-import { ChevronRightIcon, ExclamationCircleIcon, CheckCircleIcon, XCircleIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
+import { ChevronRightIcon, ExclamationCircleIcon, CheckCircleIcon, XCircleIcon, InformationCircleIcon, CodeBracketIcon } from '@heroicons/react/24/outline';
 import { getTraceTree, resolveTraceLog } from "../../services/api";
 import ITraceLogNode from "../../interfaces/TraceLog/ITraceLogNode";
 import ITraceLog, { ResolutionStatus, LogLevel } from "../../interfaces/TraceLog/ITraceLog";
@@ -19,6 +19,7 @@ const AdminLogsPanel: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+    const [expandedStackTraces, setExpandedStackTraces] = useState<Set<string>>(new Set());
     const [searchTerm, setSearchTerm] = useState<string>("");
     const [filterLevel, setFilterLevel] = useState<number | null>(null);
     const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
@@ -175,6 +176,19 @@ const AdminLogsPanel: React.FC = () => {
         }
     };
 
+    // Toggle stack trace visibility
+    const toggleStackTrace = (id: string) => {
+        setExpandedStackTraces(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(id)) {
+                newSet.delete(id);
+            } else {
+                newSet.add(id);
+            }
+            return newSet;
+        });
+    };
+
     // Get CSS class based on log level
     const getLevelClass = (level: LogLevel): string => {
         switch (level) {
@@ -275,6 +289,11 @@ const AdminLogsPanel: React.FC = () => {
         return node.log.id.startsWith('correlation-');
     };
 
+    // Check if log has stack trace information
+    const hasStackTrace = (log: ITraceLog): boolean => {
+        return !!(log.stackTrace || log.exceptionType || log.callerMemberName);
+    };
+
     // Filter nodes based on search term and level filter
     const filterNodes = useCallback((nodes: ITraceLogNode[]): ITraceLogNode[] => {
         if (!searchTerm && filterLevel === null) return nodes;
@@ -333,6 +352,97 @@ const AdminLogsPanel: React.FC = () => {
         };
     }, []);
 
+    // Format file path for display
+    const formatFilePath = (filePath: string | null | undefined): string => {
+        if (!filePath) return '';
+        // Extract just the filename and parent directory for better readability
+        const parts = filePath.split(/[\\/]/);
+        if (parts.length > 2) {
+            return `.../${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+        }
+        return filePath;
+    };
+
+    // Render stack trace information
+    const renderStackTraceInfo = (log: ITraceLog) => {
+        if (!hasStackTrace(log)) return null;
+
+        const isExpanded = expandedStackTraces.has(log.id);
+
+        return (
+            <div className="mt-3 border-t pt-3">
+                <button
+                    onClick={() => toggleStackTrace(log.id)}
+                    className="flex items-center text-sm font-medium text-gray-700 hover:text-gray-900 mb-2"
+                >
+                    <CodeBracketIcon className="h-4 w-4 mr-2" />
+                    <span>Stack Trace Information</span>
+                    <ChevronRightIcon
+                        className={`h-4 w-4 ml-1 transform transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                    />
+                </button>
+
+                {isExpanded && (
+                    <div className="bg-gray-800 text-gray-100 rounded-md p-3 space-y-3 text-sm font-mono">
+                        {/* Exception Type */}
+                        {log.exceptionType && (
+                            <div>
+                                <span className="text-red-400 font-semibold">Exception Type:</span>
+                                <div className="text-red-300 ml-2">{log.exceptionType}</div>
+                            </div>
+                        )}
+
+                        {/* Inner Exception */}
+                        {log.innerException && (
+                            <div>
+                                <span className="text-orange-400 font-semibold">Inner Exception:</span>
+                                <div className="text-orange-300 ml-2 break-words">{log.innerException}</div>
+                            </div>
+                        )}
+
+                        {/* Caller Information */}
+                        {(log.callerMemberName || log.callerFilePath || log.callerLineNumber) && (
+                            <div>
+                                <span className="text-blue-400 font-semibold">Source Location:</span>
+                                <div className="ml-2 space-y-1">
+                                    {log.callerMemberName && (
+                                        <div>
+                                            <span className="text-gray-400">Method:</span>
+                                            <span className="text-blue-300 ml-2">{log.callerMemberName}</span>
+                                        </div>
+                                    )}
+                                    {log.callerFilePath && (
+                                        <div>
+                                            <span className="text-gray-400">File:</span>
+                                            <span className="text-blue-300 ml-2" title={log.callerFilePath}>
+                                                {formatFilePath(log.callerFilePath)}
+                                            </span>
+                                            {log.callerLineNumber && (
+                                                <span className="text-yellow-300">:{log.callerLineNumber}</span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Stack Trace */}
+                        {log.stackTrace && (
+                            <div>
+                                <span className="text-yellow-400 font-semibold">Stack Trace:</span>
+                                <div className="mt-1 max-h-60 overflow-y-auto">
+                                    <pre className="text-xs text-gray-200 whitespace-pre-wrap break-words">
+                                        {log.stackTrace}
+                                    </pre>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     // Recursive function to render the tree nodes
     const renderNode = (node: ITraceLogNode, depth = 0) => {
         const { log, children } = node;
@@ -356,6 +466,11 @@ const AdminLogsPanel: React.FC = () => {
                                 <span className={`ml-2 font-medium ${isGroup ? 'text-indigo-700' : getLevelClass(log.level)}`}>
                                     {log.message}
                                 </span>
+
+                                {/* Stack trace indicator for Error/Critical logs */}
+                                {!isGroup && hasStackTrace(log) && (
+                                    <CodeBracketIcon className="h-4 w-4 ml-2 text-gray-500" title="Contains stack trace information" />
+                                )}
 
                                 {isGroup && (
                                     <span className="ml-2 text-xs bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">
@@ -434,6 +549,9 @@ const AdminLogsPanel: React.FC = () => {
                                                     <LogContextDisplay context={log.context} />
                                                 </div>
                                             )}
+
+                                            {/* Stack Trace Information */}
+                                            {renderStackTraceInfo(log)}
 
                                             {/* Resolution form */}
                                             {(log.requiresResolution || log.level >= LogLevel.WARNING) && resolutionStatusEnum !== ResolutionStatus.RECONCILED && (
@@ -692,7 +810,7 @@ const AdminLogsPanel: React.FC = () => {
             {/* Legend */}
             <div className="mt-6 border-t pt-4">
                 <h3 className="text-sm font-medium text-gray-700 mb-2">Log Level Legend:</h3>
-                <div className="grid grid-cols-2 md:grid-cols-7 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-8 gap-4">
                     <div className="flex items-center">
                         <svg className="h-5 w-5 text-indigo-500 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -722,6 +840,10 @@ const AdminLogsPanel: React.FC = () => {
                     <div className="flex items-center">
                         <CheckCircleIcon className="h-5 w-5 text-green-500 mr-2" />
                         <span className="text-sm">Resolved</span>
+                    </div>
+                    <div className="flex items-center">
+                        <CodeBracketIcon className="h-5 w-5 text-gray-600 mr-2" />
+                        <span className="text-sm">Stack Trace</span>
                     </div>
                 </div>
             </div>

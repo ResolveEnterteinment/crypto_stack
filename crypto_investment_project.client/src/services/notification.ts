@@ -113,25 +113,61 @@ export const markNotificationAsRead = async (
 };
 
 /**
- * Marks multiple notifications as read
- * @param notificationIds Array of notification IDs
- * @returns Promise with success status and array of failed IDs
+ * Marks all notification as read
+ * @param maxRetries Maximum number of retry attempts (default: 3)
+ * @returns Promise
  */
 export const markAllAsRead = async (
-    notificationIds: string[]
-): Promise<{ success: boolean, failedIds: string[] }> => {
-    if (!notificationIds.length) {
-        return { success: true, failedIds: [] };
-    }
+    maxRetries = 3
+): Promise<void> => {
 
-    const results = await Promise.allSettled(notificationIds.map(id => markNotificationAsRead(id)));
+    let retries = 0;
 
-    const failedIds = notificationIds.filter((_, index) => results[index].status === 'rejected');
+    const attemptRequest = async (): Promise<void> => {
+        try {
+            // Add a request ID to help with debugging
+            const requestId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
 
-    return {
-        success: failedIds.length === 0,
-        failedIds
+            // Skip antiforgery token check for notification operations
+            await api.post(`/Notification/read/all`, null, {
+                headers: {
+                    'X-Request-ID': requestId,
+                    'X-Skip-Csrf-Check': 'true'
+                }
+            });
+        } catch (error: any) {
+            console.warn(`Error marking all notifications as read:`,
+                error.response?.status,
+                error.response?.data || error.message);
+
+            // Retry on network errors or 5xx server errors
+            if (
+                (error.response && error.response.status >= 500) ||
+                error.code === 'ECONNABORTED' ||
+                !error.response
+            ) {
+                if (retries < maxRetries) {
+                    retries++;
+                    const backoffTime = Math.pow(2, retries) * 300; // Exponential backoff
+                    console.log(`Retry ${retries}/${maxRetries} for marking all notifications as read after ${backoffTime}ms`);
+
+                    return new Promise(resolve => {
+                        setTimeout(() => resolve(attemptRequest()), backoffTime);
+                    });
+                }
+            }
+
+            // For 400 errors - the notification might not exist or already be marked as read
+            if (error.response?.status === 400) {
+                console.log(`Notifications returned 400, treating as already processed`);
+                return; // Return without throwing to avoid error propagation
+            }
+
+            throw error;
+        }
     };
+
+    return attemptRequest();
 };
 
 /**

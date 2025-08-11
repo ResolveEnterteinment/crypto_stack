@@ -5,6 +5,7 @@ using Binance.Net.Clients;
 using Binance.Net.Objects.Models.Spot;
 using CryptoExchange.Net.Authentication;
 using CryptoExchange.Net.CommonObjects;
+using CryptoExchange.Net.Objects;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Exchange;
@@ -42,7 +43,7 @@ namespace BinanceLibrary
 
         public string Name => "BINANCE";
 
-        public string ReserveAssetTicker
+        public string QuoteAssetTicker
         {
             get => _reserveAssetTicker;
             set => throw new NotSupportedException("ReserveAssetTicker can only be set during initialization");
@@ -226,7 +227,9 @@ namespace BinanceLibrary
 
                 return new PlacedExchangeOrder
                 {
+                    Exchange = Name,
                     Symbol = symbol,
+                    Side = Binance.Net.Enums.OrderSide.Buy.ToString(),
                     QuoteQuantity = placedBinanceOrder.QuoteQuantity,
                     QuoteQuantityFilled = placedBinanceOrder.QuoteQuantityFilled,
                     Price = placedBinanceOrder.AverageFillPrice,
@@ -270,7 +273,9 @@ namespace BinanceLibrary
 
                 return new PlacedExchangeOrder
                 {
+                    Exchange = Name,
                     Symbol = symbol,
+                    Side = placedBinanceOrder.Side == Binance.Net.Enums.OrderSide.Buy ? OrderSide.Buy : OrderSide.Sell,
                     QuoteQuantity = placedBinanceOrder.QuoteQuantity,
                     QuoteQuantityFilled = placedBinanceOrder.QuoteQuantityFilled,
                     Price = placedBinanceOrder.AverageFillPrice,
@@ -440,6 +445,8 @@ namespace BinanceLibrary
 
                 return await Task.FromResult(new PlacedExchangeOrder()
                 {
+                    Exchange = Name,
+                    Side = Binance.Net.Enums.OrderSide.Buy.ToString(), // Placeholder
                     OrderId = orderId,
                     Symbol = "BTCUSDT", // Placeholder
                     QuoteQuantity = 0,
@@ -534,6 +541,8 @@ namespace BinanceLibrary
 
                     placedExchangeOrders = binanceOrders.Select(o => new PlacedExchangeOrder()
                     {
+                        Exchange = Name,
+                        Side = o.Side.ToString(),
                         Symbol = symbol,
                         QuoteQuantity = o.QuoteQuantity,
                         QuoteQuantityFilled = o.QuoteQuantityFilled,
@@ -588,6 +597,85 @@ namespace BinanceLibrary
             catch (Exception ex)
             {
                 _logger.LogError("Error fetching price for {Ticker}: {Message}", ticker, ex.Message);
+                return ResultWrapper<decimal>.FromException(ex);
+            }
+        }
+
+        public async Task<ResultWrapper<Dictionary<string, decimal>>> GetAssetPrices(IEnumerable<string> tickers)
+        {
+            if (tickers.Count() == 0)
+                throw new ArgumentException("Tickers cannot be empty", nameof(tickers));
+
+            try
+            {
+                Dictionary<string, decimal> priceDict = new();
+                var symbols = new List<string>();
+                foreach (var ticker in tickers)
+                {
+                    symbols.Add($"{ticker}{_reserveAssetTicker}");
+                };
+
+                _logger.LogInformation("Fetching prices for {Symbols}", string.Join(",", symbols));
+
+                return await _retryPolicy.ExecuteAsync(async () =>
+                {
+                    var binancePriceResult = await _binanceClient.SpotApi.ExchangeData.GetPricesAsync(symbols);
+                    if (binancePriceResult is null || !binancePriceResult.Success || binancePriceResult.Data is null)
+                    {
+                        throw new Exception($"Failed to fetch Binance price for {string.Join(",", tickers)}: {binancePriceResult?.Error?.Message ?? "Binance price returned null."}");
+                    }
+
+                    var prices = binancePriceResult.Data;
+
+                    Dictionary<string, decimal> priceDict = new();
+
+                    foreach (var ticker in tickers)
+                    {
+                        priceDict.Add(ticker, prices.Where(p => p.Symbol.StartsWith(ticker)).Select(p => p.Price).First());
+                    }
+
+                    return ResultWrapper<Dictionary<string, decimal>>.Success(priceDict);
+                });
+                
+
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error fetching price for {Ticker}: {Message}", string.Join(",", tickers), ex.Message);
+                return ResultWrapper<Dictionary<string, decimal>>.FromException(ex);
+            }
+        }
+
+        /// <summary>
+        /// Gets the current price for an asset
+        /// </summary>
+        /// <param name="ticker">The ticker to get price for</param>
+        /// <returns>The current price</returns>
+        public async Task<ResultWrapper<decimal>> GetQuotePrice(string currency)
+        {
+            if (string.IsNullOrWhiteSpace(currency))
+                throw new ArgumentException("Currency ticker cannot be null or empty", nameof(currency));
+
+            try
+            {
+                var symbol = $"{_reserveAssetTicker}{currency}";
+                _logger.LogInformation("Fetching price for {Symbol}", symbol);
+
+                return await _retryPolicy.ExecuteAsync(async () =>
+                {
+                    var binancePriceResult = await _binanceClient.SpotApi.ExchangeData.GetPriceAsync(symbol);
+                    if (binancePriceResult is null || !binancePriceResult.Success || binancePriceResult.Data is null)
+                    {
+                        throw new Exception($"Failed to fetch Binance price for {currency}: {binancePriceResult?.Error?.Message ?? "Binance price returned null."}");
+                    }
+
+                    _logger.LogInformation("Current price for {Symbol}: {Price}", symbol, binancePriceResult.Data.Price);
+                    return ResultWrapper<decimal>.Success(binancePriceResult.Data.Price);
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error fetching price for {Ticker}: {Message}", currency, ex.Message);
                 return ResultWrapper<decimal>.FromException(ex);
             }
         }

@@ -14,6 +14,7 @@ namespace Infrastructure.Services.Base
     {
         private readonly IMongoDatabase _database;
         protected readonly IMongoCollection<T> Collection;
+        public string CollectionName { get => Collection.CollectionNamespace.CollectionName; }
 
         public IMongoClient Client { get; }
 
@@ -33,54 +34,54 @@ namespace Infrastructure.Services.Base
             Collection = _database.GetCollection<T>(collectionName);
         }
 
-        public Task<T?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+        public async Task<T?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
         {
             var filter = Builders<T>.Filter.Eq(e => e.Id, id);
-            return Collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
+            return await Collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
         }
 
-        public Task<T?> GetOneAsync(FilterDefinition<T> filter, CancellationToken ct = default)
+        public async Task<T?> GetOneAsync(FilterDefinition<T> filter, CancellationToken ct = default)
         {
-            return Collection.Find(filter)
+            return await Collection.Find(filter)
                 .FirstOrDefaultAsync(ct);
         }
 
-        public Task<T?> GetOneAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken ct = default)
+        public async Task<T?> GetOneAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken ct = default)
         {
-            return Collection.Find(filter)
+            return await Collection.Find(filter)
                     .Sort(sort)
                     .FirstOrDefaultAsync(ct);
         }
 
-        public Task<List<T>> GetAllAsync(FilterDefinition<T>? filter = null, CancellationToken cancellationToken = default)
+        public async Task<List<T>> GetAllAsync(FilterDefinition<T>? filter = null, CancellationToken cancellationToken = default)
         {
-            return Collection.Find(filter ?? Builders<T>.Filter.Empty).ToListAsync(cancellationToken);
+            return await Collection.Find(filter ?? Builders<T>.Filter.Empty).ToListAsync(cancellationToken);
         }
 
-        public Task<List<T>> GetAllAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken cancellationToken = default)
+        public async Task<List<T>> GetAllAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken cancellationToken = default)
         {
-            return Collection.Find(filter)
+            return await Collection.Find(filter)
                 .Sort(sort)
                 .ToListAsync(cancellationToken);
         }
 
-        [Obsolete]
-        public async Task<CrudResult> InsertAsync(T entity, CancellationToken cancellationToken = default)
+        public async Task<CrudResult<T>> InsertAsync(T entity, CancellationToken cancellationToken = default)
         {
             try
             {
-                await Collection.InsertOneAsync(entity, cancellationToken);
+                await Collection.InsertOneAsync(entity);
 
                 var insertedId = entity.Id;
+
                 return insertedId == Guid.Empty
                     ? throw new DatabaseException($"Inserted entity of type {typeof(T).Name} has no valid Id")
-                    : (CrudResult)new CrudResult<T>
+                    : new CrudResult<T>
                     {
                         IsSuccess = true,
                         MatchedCount = 0,
                         ModifiedCount = 1,
-                        AffectedIds = new[] { insertedId },
-                        Documents = new[] { entity }
+                        AffectedIds = new[] { entity.Id },
+                        Documents = [ entity ]
                     };
             }
             catch (Exception ex)
@@ -93,7 +94,7 @@ namespace Infrastructure.Services.Base
             }
         }
 
-        public async Task<CrudResult> UpdateAsync(Guid id, object updatedFields, CancellationToken cancellationToken = default)
+        public async Task<CrudResult<T>> UpdateAsync(Guid id, object updatedFields, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -104,17 +105,18 @@ namespace Infrastructure.Services.Base
                 var filter = Builders<T>.Filter.Eq(e => e.Id, id);
                 var mongoResult = await Collection.UpdateOneAsync(filter, updateDefinition, cancellationToken: cancellationToken);
 
-                return new CrudResult
+                return new CrudResult<T>
                 {
                     IsSuccess = mongoResult.IsAcknowledged,
                     MatchedCount = mongoResult.MatchedCount,
                     ModifiedCount = mongoResult.ModifiedCount,
-                    AffectedIds = new[] { id }
+                    AffectedIds = new[] { id },
+                    Documents = [existing]
                 };
             }
             catch (Exception ex)
             {
-                return new CrudResult
+                return new CrudResult<T>
                 {
                     IsSuccess = false,
                     ErrorMessage = ex.Message
@@ -122,7 +124,35 @@ namespace Infrastructure.Services.Base
             }
         }
 
-        public async Task<CrudResult> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+        public async Task<CrudResult<T>> UpdateManyAsync(FilterDefinition<T> filter, object updatedFields, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var updateDefinition = CreateUpdateDefinition(updatedFields);
+
+                var existing = await GetAllAsync(filter, cancellationToken);
+                var mongoResult = await Collection.UpdateManyAsync(filter, updateDefinition, cancellationToken: cancellationToken);
+
+                return new CrudResult<T>
+                {
+                    IsSuccess = mongoResult.IsAcknowledged,
+                    MatchedCount = mongoResult.MatchedCount,
+                    ModifiedCount = mongoResult.ModifiedCount,
+                    AffectedIds = existing.Select(r => r.Id),
+                    Documents = existing
+                };
+            }
+            catch (Exception ex)
+            {
+                return new CrudResult<T>
+                {
+                    IsSuccess = false,
+                    ErrorMessage = ex.Message
+                };
+            }
+        }
+
+        public async Task<CrudResult<T>> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -132,17 +162,18 @@ namespace Infrastructure.Services.Base
                 var filter = Builders<T>.Filter.Eq(e => e.Id, id);
                 var deleteResult = await Collection.DeleteOneAsync(filter, cancellationToken: cancellationToken);
 
-                return new CrudResult
+                return new CrudResult<T>
                 {
                     IsSuccess = deleteResult.IsAcknowledged,
                     MatchedCount = deleteResult.DeletedCount,
                     ModifiedCount = deleteResult.DeletedCount,
-                    AffectedIds = new[] { id }
+                    AffectedIds = new[] { id },
+                    Documents = [toDelete]
                 };
             }
             catch (Exception ex)
             {
-                return new CrudResult
+                return new CrudResult<T>
                 {
                     IsSuccess = false,
                     ErrorMessage = ex.Message
@@ -176,7 +207,7 @@ namespace Infrastructure.Services.Base
             }
         }
 
-        public virtual async Task<bool> CheckExistsAsync(Guid id, CancellationToken cancellationToken = default)
+        public virtual async Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken = default)
         {
             var filter = Builders<T>.Filter.Eq(e => e.Id, id);
             return await Collection.CountDocumentsAsync(filter, new CountOptions { Limit = 1 }, cancellationToken) > 0;

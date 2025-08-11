@@ -158,37 +158,40 @@ const WithdrawalHistory: React.FC<WithdrawalHistoryProps> = ({ onWithdrawalCance
         },
         {
             title: 'Withdrawal Address',
-            dataIndex: 'withdrawalAddress',
-            key: 'withdrawalAddress',
+            dataIndex: 'additionalDetails',
+            key: 'additionalDetails',
             ellipsis: false,
-            render: (text: string) => text ? (
-                <Tooltip title={text} placement="top">
-                    <Space size="small" onClick={(e) => {
-                        e.stopPropagation();
-                        copyToClipboard(text);
-                    }}>
-                        <span style={{ fontFamily: 'monospace', fontSize: '13px' }}>
-                            {formatHashString(text)}
-                        </span>
-                        <Button
-                            type="text"
-                            size="small"
-                            icon={<CopyOutlined />}
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                copyToClipboard(text);
-                            }}
-                            style={{
-                                padding: '0 4px',
-                                height: '20px',
-                                width: '20px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                            }}
-                        />
-                    </Space>
-                </Tooltip>
+            render: (details: any) => details ? (
+                <span>
+                    <Tooltip title={details.WithdrawalAddress} placement="top">
+                        <Space size="small" onClick={(e) => {
+                            e.stopPropagation();
+                            copyToClipboard(details.WithdrawalAddress);
+                        }}>
+                            <span style={{ fontFamily: 'monospace', fontSize: '13px' }}>
+                                {formatHashString(details.WithdrawalAddress)}
+                            </span>
+                        
+                        </Space>
+                    </Tooltip>
+                    <Button
+                        type="text"
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            copyToClipboard(details.WithdrawalAddress);
+                        }}
+                        style={{
+                            padding: '0 4px',
+                            height: '20px',
+                            width: '20px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}
+                    />
+                 </span>
             ) : '-',
         },
         {
@@ -197,33 +200,35 @@ const WithdrawalHistory: React.FC<WithdrawalHistoryProps> = ({ onWithdrawalCance
             key: 'transactionHash',
             ellipsis: true,
             render: (text: string) => text ? (
-                <Tooltip title={text} placement="top">
-                    <Space size="small" onClick={(e) => {
-                        e.stopPropagation();
-                        copyToClipboard(text);
-                    }}>
-                        <span style={{ fontFamily: 'monospace', fontSize: '13px' }}>
-                            {formatHashString(text)}
-                        </span>
-                        <Button
-                            type="text"
-                            size="small"
-                            icon={<CopyOutlined />}
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                copyToClipboard(text);
-                            }}
-                            style={{
-                                padding: '0 4px',
-                                height: '20px',
-                                width: '20px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                            }}
-                        />
-                    </Space>
-                </Tooltip>
+                <span>
+                    <Tooltip title={text} placement="top">
+                        <Space size="small" onClick={(e) => {
+                            e.stopPropagation();
+                            copyToClipboard(text);
+                        }}>
+                            <span style={{ fontFamily: 'monospace', fontSize: '13px' }}>
+                                {formatHashString(text)}
+                            </span>
+                        </Space>
+                    </Tooltip>
+                    <Button
+                        type="text"
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            copyToClipboard(text);
+                        }}
+                        style={{
+                            padding: '0 4px',
+                            height: '20px',
+                            width: '20px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}
+                    />
+                </span>
             ) : '-',
         },
         {

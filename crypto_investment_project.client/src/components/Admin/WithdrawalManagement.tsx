@@ -3,12 +3,12 @@ import {
     Table, Tag, Button, Modal, Form, Input, Select, Card,
     Tooltip, Alert, Space, Typography, Statistic, Row, Col,
     Badge, Descriptions, Divider, Avatar, Spin, Empty,
-    DatePicker, Radio, message, Drawer, Timeline, Popconfirm
+    Radio, message, Drawer,
 } from 'antd';
 import {
     ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined,
     UserOutlined, DollarOutlined, BankOutlined, WalletOutlined,
-    HistoryOutlined, ExclamationCircleOutlined, ReloadOutlined,
+    ExclamationCircleOutlined, ReloadOutlined,
     FilterOutlined, ExportOutlined, SearchOutlined, EyeOutlined
 } from '@ant-design/icons';
 import type { TablePaginationConfig, ColumnsType } from 'antd/es/table';
@@ -21,7 +21,6 @@ import { Balance } from '../../types/balanceTypes';
 const { Option } = Select;
 const { TextArea } = Input;
 const { Title, Text } = Typography;
-const { RangePicker } = DatePicker;
 
 interface PaginatedResult<T> {
     page: number;
@@ -171,7 +170,7 @@ const WithdrawalManagement: React.FC = () => {
 
             const [balance, pendingsTotal, limits] = await Promise.all([
                 balanceService.getUserBalance(withdrawal.userId, withdrawal.currency),
-                withdrawalService.getPendingTotals(withdrawal.currency),
+                withdrawalService.getUserPendingTotals(withdrawal.userId, withdrawal.currency),
                 withdrawalService.getUserLevels(withdrawal.userId)
             ]);
 
@@ -592,17 +591,17 @@ const WithdrawalManagement: React.FC = () => {
                                             </Descriptions.Item>
                                             <Descriptions.Item label="Address/Details">
                                                 <Text code style={{ wordBreak: 'break-all' }}>
-                                                    {currentWithdrawal.withdrawalAddress}
+                                                    {currentWithdrawal.additionalDetails?.WithdrawalAddress}
                                                 </Text>
                                             </Descriptions.Item>
-                                            {currentWithdrawal.additionalDetails?.network && (
+                                            {currentWithdrawal.additionalDetails?.Network && (
                                                 <Descriptions.Item label="Network">
-                                                    {currentWithdrawal.additionalDetails.network}
+                                                    {currentWithdrawal.additionalDetails.Network}
                                                 </Descriptions.Item>
                                             )}
-                                            {currentWithdrawal.additionalDetails?.memo && (
+                                            {currentWithdrawal.additionalDetails?.Memo && (
                                                 <Descriptions.Item label="Memo">
-                                                    {currentWithdrawal.additionalDetails.memo}
+                                                    {currentWithdrawal.additionalDetails.Memo}
                                                 </Descriptions.Item>
                                             )}
                                             <Descriptions.Item label="KYC Level">
@@ -737,7 +736,7 @@ const WithdrawalManagement: React.FC = () => {
                             </Descriptions.Item>
                             <Descriptions.Item label="Address">
                                 <Text code style={{ wordBreak: 'break-all' }}>
-                                    {currentWithdrawal.withdrawalAddress}
+                                    {currentWithdrawal.additionalDetails?.WithdrawalAddress}
                                 </Text>
                             </Descriptions.Item>
                         </Descriptions>

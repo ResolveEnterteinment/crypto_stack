@@ -3,16 +3,16 @@ using Domain.DTOs;
 using Domain.DTOs.Dashboard;
 using Domain.Events;
 using Domain.Events.Entity;
+using Domain.Models.Balance;
 using Domain.Models.Dashboard;
-using Domain.Models.Subscription;
 using MediatR;
 
 namespace Application.Interfaces
 {
     public interface IDashboardService :
         IBaseService<DashboardData>,
-        INotificationHandler<EntityCreatedEvent<SubscriptionData>>,
-        INotificationHandler<PaymentReceivedEvent>
+        INotificationHandler<EntityCreatedEvent<BalanceData>>,
+        INotificationHandler<EntityUpdatedEvent<BalanceData>>
     {
         public Task<ResultWrapper<DashboardDto>> GetDashboardDataAsync(Guid userId);
         public Task<ResultWrapper> UpdateDashboardData(
@@ -22,5 +22,6 @@ namespace Application.Interfaces
             decimal portfolioValue
             );
         public void InvalidateDashboardCacheAsync(Guid userId);
+        Task<ResultWrapper> WarmupUserCacheAsync(Guid userId);
     }
 }

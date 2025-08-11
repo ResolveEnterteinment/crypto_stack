@@ -1,5 +1,5 @@
 import api from './api';
-import { WithdrawalLimits, WithdrawalRequest, Withdrawal, NetworkDto, WithdrawalResponse } from '../types/withdrawal';
+import { WithdrawalLimits, CryptoWithdrawalRequest, NetworkDto, WithdrawalResponse, BankWithdrawalRequest } from '../types/withdrawal';
 
 const withdrawalService = {
     // Get user withdrawal levels
@@ -42,10 +42,16 @@ const withdrawalService = {
             throw "Failed to check user withdrawal eligibility";
         return { data: response.data, message: response.message };
     },
-    requestWithdrawal: async (data: WithdrawalRequest): Promise<Withdrawal> => {
-        const response = await api.safeRequest('post', '/withdrawal/request', data);
+    requestCryproWithdrawal: async (data: CryptoWithdrawalRequest): Promise<WithdrawalResponse> => {
+        const response = await api.safeRequest('post', '/withdrawal/crypto/request', data);
         if (response == null || response.data == null || response.success != true)
-            throw "Failed to make withdrawal request";
+            throw new Error(response.message ?? "Failed to make crypto withdrawal request");
+        return response.data;
+    },
+    requestBankWithdrawal: async (data: BankWithdrawalRequest): Promise<WithdrawalResponse> => {
+        const response = await api.safeRequest('post', '/withdrawal/bank/request', data);
+        if (response == null || response.data == null || response.success != true)
+            throw "Failed to make bank withdrawal request";
         return response.data;
     },
     getHistory: async (): Promise<WithdrawalResponse[]> => {
@@ -53,6 +59,14 @@ const withdrawalService = {
         console.log("withdrawalService::getHistory => response: ", response)
         if (response == null || response.data == null || response.success != true)
             throw "Failed to fetch withdrawal history";
+        return response.data;
+    },
+
+    getUserPendingTotals: async (userId: string, assetTicker: string): Promise<number> => {
+        const response = await api.safeRequest('get', `/withdrawal/pending/total/${assetTicker}/user/${userId}`);
+        console.log("withdrawalService::getPendingTotals => response: ", response)
+        if (response == null || response.data == null || response.success != true)
+            throw "Failed to fetch pending withdrawal totals";
         return response.data;
     },
     getPendingTotals: async (assetTicker: string): Promise<number> => {

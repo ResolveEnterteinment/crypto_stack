@@ -34,7 +34,8 @@ namespace Domain.Constants
         NetworkError,
         ThirdPartyServiceUnavailable,
         ConfigurationError,
-        TimeoutError
+        TimeoutError,
+        CacheOperationFailed
     }
 
     /// <summary>

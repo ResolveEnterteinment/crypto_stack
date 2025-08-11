@@ -208,7 +208,9 @@ namespace crypto_investment_project.Server.Controllers.Auth
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
-        public async Task<IActionResult> Login([FromBody] LoginRequest request)
+        public async Task<IActionResult> Login(
+            [FromBody] LoginRequest request,
+            [FromServices] CacheWarmupService cacheWarmup)
         {
             try
             {
@@ -241,6 +243,9 @@ namespace crypto_investment_project.Server.Controllers.Auth
                         TraceId = HttpContext.TraceIdentifier
                     });
                 }
+
+                // Queue cache warmup - this is why you need singleton registration
+                cacheWarmup.QueueUserCacheWarmup(Guid.Parse(result.UserId));
 
                 // Set refresh token in HTTP-only cookie for better security
                 SetRefreshTokenCookie(result.RefreshToken);
@@ -486,7 +491,8 @@ namespace crypto_investment_project.Server.Controllers.Auth
         [ProducesResponseType(typeof(LoginResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
-        public async Task<IActionResult> RefreshToken()
+        public async Task<IActionResult> RefreshToken(
+            [FromServices] ICacheWarmupService cacheWarmup)
         {
             try
             {
@@ -530,6 +536,9 @@ namespace crypto_investment_project.Server.Controllers.Auth
 
                 // Cast to LoginResponse to access the tokens
                 var loginResponse = result as LoginResponse;
+
+                // ✅ Trigger cache warmup on token refresh too
+                cacheWarmup.QueueUserCacheWarmup(Guid.Parse(loginResponse.UserId));
 
                 // Set new refresh token in cookie
                 SetRefreshTokenCookie(loginResponse.RefreshToken);

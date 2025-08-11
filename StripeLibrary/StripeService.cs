@@ -915,8 +915,7 @@ namespace StripeLibrary
             }
         }
 
-        // Add to StripeLibrary/StripeService.cs
-        public async Task<ResultWrapper> RetryPaymentAsync(string paymentIntentId, string subscriptionId)
+        public async Task<ResultWrapper<PaymentIntent>> RetryPaymentAsync(string paymentIntentId, string subscriptionId)
         {
             try
             {
@@ -948,7 +947,7 @@ namespace StripeLibrary
 
                 var intent = await _paymentIntentService.CreateAsync(options);
 
-                return ResultWrapper.Success();
+                return ResultWrapper<PaymentIntent>.Success(intent);
             }
             catch (StripeException ex)
             {
@@ -956,11 +955,11 @@ namespace StripeLibrary
                 string errorMessage = ex.StripeError?.Message ?? "Stripe payment retry failed";
                 string errorCode = ex.StripeError?.Code ?? "unknown";
 
-                return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable, $"{errorMessage} (Code: {errorCode})");
+                return ResultWrapper<PaymentIntent>.Failure(FailureReason.ThirdPartyServiceUnavailable, $"{errorMessage} (Code: {errorCode})");
             }
             catch (Exception ex)
             {
-                return ResultWrapper.FromException(ex);
+                return ResultWrapper<PaymentIntent>.FromException(ex);
             }
         }
 
@@ -1155,7 +1154,66 @@ namespace StripeLibrary
             }
         }
 
-        public async Task<ResultWrapper> CancelSubscription(string subscriptionId)
+        public async Task<ResultWrapper> CancelSubscription(string stripeSubscriptionId)
+        {
+            if (string.IsNullOrEmpty(stripeSubscriptionId))
+            {
+                return ResultWrapper.Failure(FailureReason.ValidationError, "Subscription ID is required");
+            }
+
+            try
+            {
+                _logger.LogInformation("Cancelling Stripe subscription {SubscriptionId}", stripeSubscriptionId);
+
+                return await _retryPolicy.ExecuteAsync(async (context) =>
+                {
+                    // Get current subscription to ensure it exists
+                    var subscription = await _subscriptionService.GetAsync(stripeSubscriptionId);
+                    if (subscription == null)
+                    {
+                        return ResultWrapper.Failure(FailureReason.NotFound, "Stripe subscription not found");
+                    }
+
+                    if (subscription.Status == "canceled")
+                    {
+                        return ResultWrapper.Success("Subscription already calceled");
+                    }
+
+                    // Cancel immediately (at_period_end=false)
+                    var cancelOptions = new SubscriptionCancelOptions
+                    {
+                        InvoiceNow = false,
+                        Prorate = false,
+                    };
+
+                    // Execute the cancellation
+                    await _subscriptionService.CancelAsync(stripeSubscriptionId, cancelOptions);
+
+                    _logger.LogInformation("Successfully cancelled Stripe subscription {SubscriptionId}", stripeSubscriptionId);
+                    return ResultWrapper.Success("Subscription cancelled successfully");
+
+                }, new Context("CancelSubscription"));
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error cancelling subscription {SubscriptionId}: {Message}",
+                    stripeSubscriptionId, ex.Message);
+                return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable,
+                    $"Failed to cancel subscription: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cancelling Stripe subscription {SubscriptionId}", stripeSubscriptionId);
+                return ResultWrapper.FromException(ex);
+            }
+        }
+
+        /// <summary>
+        /// Pauses a Stripe subscription by setting pause_collection
+        /// </summary>
+        /// <param name="subscriptionId">The Stripe subscription ID to pause</param>
+        /// <returns>Result of the pause operation</returns>
+        public async Task<ResultWrapper> PauseSubscriptionAsync(string subscriptionId)
         {
             if (string.IsNullOrEmpty(subscriptionId))
             {
@@ -1164,7 +1222,7 @@ namespace StripeLibrary
 
             try
             {
-                _logger.LogInformation("Cancelling Stripe subscription {SubscriptionId}", subscriptionId);
+                _logger.LogInformation("Pausing Stripe subscription {SubscriptionId}", subscriptionId);
 
                 return await _retryPolicy.ExecuteAsync(async (context) =>
                 {
@@ -1175,35 +1233,103 @@ namespace StripeLibrary
                         return ResultWrapper.Failure(FailureReason.NotFound, "Stripe subscription not found");
                     }
 
-                    // Cancel immediately (at_period_end=false)
-                    var cancelOptions = new SubscriptionCancelOptions
+                    // Check if subscription is already paused
+                    if (subscription.PauseCollection != null)
                     {
-                        InvoiceNow = false,
-                        Prorate = false
+                        _logger.LogInformation("Stripe subscription {SubscriptionId} is already paused", subscriptionId);
+                        return ResultWrapper.Success("Subscription is already paused");
+                    }
+
+                    // Pause the subscription using pause_collection
+                    var updateOptions = new SubscriptionUpdateOptions
+                    {
+                        PauseCollection = new SubscriptionPauseCollectionOptions
+                        {
+                            Behavior = "void" // This prevents invoices from being created during pause
+                        }
                     };
 
-                    // Execute the cancellation
-                    await _subscriptionService.CancelAsync(subscriptionId, cancelOptions);
+                    // Execute the pause
+                    await _subscriptionService.UpdateAsync(subscriptionId, updateOptions);
 
-                    _logger.LogInformation("Successfully cancelled Stripe subscription {SubscriptionId}", subscriptionId);
-                    return ResultWrapper.Success("Subscription cancelled successfully");
+                    _logger.LogInformation("Successfully paused Stripe subscription {SubscriptionId}", subscriptionId);
+                    return ResultWrapper.Success("Subscription paused successfully");
 
-                }, new Context("CancelSubscription"));
+                }, new Context("PauseSubscription"));
             }
             catch (StripeException ex)
             {
-                _logger.LogError(ex, "Stripe error cancelling subscription {SubscriptionId}: {Message}",
+                _logger.LogError(ex, "Stripe error pausing subscription {SubscriptionId}: {Message}",
                     subscriptionId, ex.Message);
                 return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable,
-                    $"Failed to cancel subscription: {ex.Message}");
+                    $"Failed to pause subscription: {ex.Message}");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error cancelling Stripe subscription {SubscriptionId}", subscriptionId);
+                _logger.LogError(ex, "Error pausing Stripe subscription {SubscriptionId}", subscriptionId);
                 return ResultWrapper.FromException(ex);
             }
         }
 
+        /// <summary>
+        /// Resumes a paused Stripe subscription by removing pause_collection
+        /// </summary>
+        /// <param name="subscriptionId">The Stripe subscription ID to resume</param>
+        /// <returns>Result of the resume operation</returns>
+        public async Task<ResultWrapper> ResumeSubscriptionAsync(string subscriptionId)
+        {
+            if (string.IsNullOrEmpty(subscriptionId))
+            {
+                return ResultWrapper.Failure(FailureReason.ValidationError, "Subscription ID is required");
+            }
+
+            try
+            {
+                _logger.LogInformation("Resuming Stripe subscription {SubscriptionId}", subscriptionId);
+
+                return await _retryPolicy.ExecuteAsync(async (context) =>
+                {
+                    // Get current subscription to ensure it exists
+                    var subscription = await _subscriptionService.GetAsync(subscriptionId);
+                    if (subscription == null)
+                    {
+                        return ResultWrapper.Failure(FailureReason.NotFound, "Stripe subscription not found");
+                    }
+
+                    // Check if subscription is actually paused
+                    if (subscription.PauseCollection == null)
+                    {
+                        _logger.LogInformation("Stripe subscription {SubscriptionId} is not paused", subscriptionId);
+                        return ResultWrapper.Success("Subscription is not paused");
+                    }
+
+                    // Resume the subscription by removing pause_collection
+                    var updateOptions = new SubscriptionUpdateOptions
+                    {
+                        PauseCollection = null // Setting to null removes the pause
+                    };
+
+                    // Execute the resume
+                    await _subscriptionService.UpdateAsync(subscriptionId, updateOptions);
+
+                    _logger.LogInformation("Successfully resumed Stripe subscription {SubscriptionId}", subscriptionId);
+                    return ResultWrapper.Success("Subscription resumed successfully");
+
+                }, new Context("ResumeSubscription"));
+            }
+            catch (StripeException ex)
+            {
+                _logger.LogError(ex, "Stripe error resuming subscription {SubscriptionId}: {Message}",
+                    subscriptionId, ex.Message);
+                return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable,
+                    $"Failed to resume subscription: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error resuming Stripe subscription {SubscriptionId}", subscriptionId);
+                return ResultWrapper.FromException(ex);
+            }
+        }
 
         #region Helpers
         private string ConvertIntervalToStripeFormat(string interval)

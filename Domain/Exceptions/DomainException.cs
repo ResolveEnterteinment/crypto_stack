@@ -431,6 +431,16 @@ namespace Domain.Exceptions
     }
 
     [Serializable]
+    public class EventPublishException : DomainException
+    {
+        public EventPublishException(string message)
+            : base(message, "EVENT_PUBLISH_ERROR") { }
+
+        public EventPublishException(string message, Exception inner)
+            : base(message, "EVENT_PUBLISH_ERROR", inner) { }
+    }
+
+    [Serializable]
     public class EventFetchException : DomainException
     {
         public EventFetchException(string message)
@@ -937,6 +947,100 @@ namespace Domain.Exceptions
             }
 
             info.AddValue(nameof(OperationType), OperationType);
+            base.GetObjectData(info, context);
+        }
+    }
+
+    /// <summary>
+    /// Exception thrown when a timeout rejection occurs
+    /// </summary>
+    [Serializable]
+    public class TimeoutRejectedException : DomainException
+    {
+        /// <summary>
+        /// Gets the operation name that timed out.
+        /// </summary>
+        public string OperationName { get; }
+
+        /// <summary>
+        /// Gets the timeout duration that was exceeded.
+        /// </summary>
+        public TimeSpan Timeout { get; }
+
+        /// <summary>
+        /// Gets the actual duration before timeout.
+        /// </summary>
+        public TimeSpan? ActualDuration { get; private set; }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TimeoutRejectedException"/> class.
+        /// </summary>
+        /// <param name="operationName">The operation name.</param>
+        /// <param name="timeout">The timeout duration.</param>
+        /// <param name="message">The error message.</param>
+        public TimeoutRejectedException(string operationName, TimeSpan timeout, string? message = null)
+            : base(message ?? $"Operation '{operationName}' timed out after {timeout.TotalSeconds:F1} seconds", "OPERATION_TIMEOUT")
+        {
+            OperationName = operationName;
+            Timeout = timeout;
+            _ = AddContext("OperationName", operationName);
+            _ = AddContext("TimeoutSeconds", timeout.TotalSeconds);
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TimeoutRejectedException"/> class.
+        /// </summary>
+        /// <param name="operationName">The operation name.</param>
+        /// <param name="timeout">The timeout duration.</param>
+        /// <param name="innerException">The inner exception.</param>
+        public TimeoutRejectedException(string operationName, TimeSpan timeout, Exception innerException)
+            : base($"Operation '{operationName}' timed out after {timeout.TotalSeconds:F1} seconds", "OPERATION_TIMEOUT", innerException)
+        {
+            OperationName = operationName;
+            Timeout = timeout;
+            _ = AddContext("OperationName", operationName);
+            _ = AddContext("TimeoutSeconds", timeout.TotalSeconds);
+        }
+
+        /// <summary>
+        /// Sets the actual duration before the timeout occurred.
+        /// </summary>
+        /// <param name="duration">The actual duration.</param>
+        /// <returns>This exception instance for method chaining.</returns>
+        public TimeoutRejectedException WithActualDuration(TimeSpan duration)
+        {
+            ActualDuration = duration;
+            _ = AddContext("ActualDurationSeconds", duration.TotalSeconds);
+            return this;
+        }
+
+        /// <summary>
+        /// Used for serialization purposes.
+        /// </summary>
+        protected TimeoutRejectedException(SerializationInfo info, StreamingContext context)
+            : base(info, context)
+        {
+            OperationName = info.GetString(nameof(OperationName));
+            Timeout = (TimeSpan)info.GetValue(nameof(Timeout), typeof(TimeSpan));
+            ActualDuration = (TimeSpan?)info.GetValue(nameof(ActualDuration), typeof(TimeSpan?));
+        }
+
+        /// <summary>
+        /// Serializes the exception data.
+        /// </summary>
+        /// <param name="info">The serialization info.</param>
+        /// <param name="context">The streaming context.</param>
+        [Obsolete]
+        public override void GetObjectData(SerializationInfo info, StreamingContext context)
+        {
+            if (info == null)
+            {
+                throw new ArgumentNullException(nameof(info));
+            }
+
+            info.AddValue(nameof(OperationName), OperationName);
+            info.AddValue(nameof(Timeout), Timeout);
+            info.AddValue(nameof(ActualDuration), ActualDuration);
             base.GetObjectData(info, context);
         }
     }

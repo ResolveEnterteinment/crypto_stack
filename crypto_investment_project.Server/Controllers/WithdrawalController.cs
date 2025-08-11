@@ -1,6 +1,7 @@
 // crypto_investment_project.Server/Controllers/WithdrawalController.cs
 using Application.Contracts.Requests.Withdrawal;
 using Application.Extensions;
+using Application.Interfaces.Asset;
 using Application.Interfaces.Withdrawal;
 using Domain.Constants.Withdrawal;
 using Domain.DTOs.Withdrawal;
@@ -18,17 +19,21 @@ namespace crypto_investment_project.Server.Controllers
     public class WithdrawalController : ControllerBase
     {
         private readonly IWithdrawalService _withdrawalService;
+        private readonly IAssetService _assetService;
         private readonly ILogger<WithdrawalController> _logger;
 
         public WithdrawalController(
             IWithdrawalService withdrawalService,
+            IAssetService assetService,
             ILogger<WithdrawalController> logger)
         {
             _withdrawalService = withdrawalService ?? throw new ArgumentNullException(nameof(withdrawalService));
+            _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         [HttpGet("limits")]
+        [Authorize]
         public async Task<IActionResult> GetWithdrawalLimits()
         {
             try
@@ -131,6 +136,7 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         [HttpGet("pending/total/{assetTicker}")]
+        [Authorize]
         public async Task<IActionResult> GetPendingTotals(string assetTicker)
         {
             try
@@ -149,7 +155,10 @@ namespace crypto_investment_project.Server.Controllers
 
                 var result = await _withdrawalService.GetUserPendingTotalsAsync(parsedUserId, assetTicker);
 
-                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : Ok(result.Data);
+                if (result == null)
+                    throw new Exception("Pending totals result retuned null");
+
+                return result.ToActionResult(this);
             }
             catch (Exception ex)
             {
@@ -184,9 +193,25 @@ namespace crypto_investment_project.Server.Controllers
             }
         }
 
-        [HttpPost("request")]
-        public async Task<IActionResult> RequestWithdrawal([FromBody] WithdrawalRequest request)
+        [HttpPost("crypto/request")]
+        [Authorize]
+        public async Task<IActionResult> RequestWithdrawal([FromBody] CryptoWithdrawalRequest request)
         {
+            if (request.UserId == Guid.Empty)
+            {
+                return BadRequest(new { message = "Invalid user ID" });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.WithdrawalMethod) || !WithdrawalMethod.AllValues.Contains(request.WithdrawalMethod))
+            {
+                return BadRequest(new { message = "Invalid withdrawal method" });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Currency))
+            {
+                return BadRequest(new { message = "Invalid withdrawal method" });
+            }
+
             try
             {
                 var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -198,8 +223,11 @@ namespace crypto_investment_project.Server.Controllers
                 // Override the user ID with the authenticated user's ID for security
                 request.UserId = parsedUserId;
 
-                var result = await _withdrawalService.RequestWithdrawalAsync(request);
-                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : Ok(result.Data);
+                var result = await _withdrawalService.RequestCryptoWithdrawalAsync(request);
+
+                if (result == null) throw new Exception("Unknown error");
+
+                return result.ToActionResult(this);
             }
             catch (Exception ex)
             {
@@ -209,6 +237,7 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         [HttpGet("history")]
+        [Authorize]
         public async Task<IActionResult> GetWithdrawalHistory()
         {
             try
@@ -220,7 +249,9 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 var result = await _withdrawalService.GetUserWithdrawalHistoryAsync(parsedUserId);
-                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : Ok(result.Data);
+                if (result == null)
+                    throw new Exception("Withdrawal history result retuned null");
+                return result.ToActionResult(this);
             }
             catch (Exception ex)
             {
@@ -230,6 +261,7 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         [HttpGet("{withdrawalId}")]
+        [Authorize]
         public async Task<IActionResult> GetWithdrawalDetails(string withdrawalId)
         {
             try
@@ -262,6 +294,7 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         [HttpPut("{withdrawalId}/cancel")]
+        [Authorize]
         public async Task<IActionResult> CancelWithdrawal(string withdrawalId)
         {
             try
@@ -318,6 +351,37 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         // Admin endpoints
+
+        [HttpGet("pending/total/{assetTicker}/user/{userId}")]
+        [Authorize(Roles = "ADMIN")]
+        public async Task<IActionResult> GetPendingTotals(string userId, string assetTicker)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(assetTicker))
+                {
+                    return BadRequest(new { message = "Invalid asset ticker" });
+                }
+
+                if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var parsedUserId))
+                {
+                    return BadRequest(new { message = "Invalid user ID" });
+                }
+
+                var result = await _withdrawalService.GetUserPendingTotalsAsync(parsedUserId, assetTicker);
+
+                if (result == null)
+                    throw new Exception("Pending totals result retuned null");
+
+                return result.ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting supported networks");
+                return StatusCode(500, new { message = "An error occurred while retrieving supported networks" });
+            }
+        }
+
         [HttpGet("pending")]
         [Authorize(Roles = "ADMIN")]
         public async Task<IActionResult> GetPendingWithdrawals([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
@@ -325,7 +389,9 @@ namespace crypto_investment_project.Server.Controllers
             try
             {
                 var result = await _withdrawalService.GetPendingWithdrawalsAsync(page, pageSize);
-                return !result.IsSuccess ? BadRequest(new { message = result.ErrorMessage }) : Ok(result.Data);
+                if (result == null)
+                    throw new Exception("Pending withdrawals result returned null");
+                return result.ToActionResult(this);
             }
             catch (Exception ex)
             {

@@ -10,7 +10,7 @@ namespace Application.Interfaces.Payment
     {
         public IReadOnlyDictionary<string, IPaymentProvider> Providers { get; }
 
-        public Task<ResultWrapper> ProcessInvoicePaidEvent(InvoiceRequest invoice);
+        Task<ResultWrapper<PaymentData>> ProcessInvoicePaidEvent(InvoiceRequest invoice);
         /// <summary>
         /// Creates a checkout session with the payment provider
         /// </summary>
@@ -21,40 +21,32 @@ namespace Application.Interfaces.Payment
         public Task<ResultWrapper> ProcessCheckoutSessionCompletedAsync(SessionDto checkoutSession);
 
         /// <summary>
-        /// Gets the status of a payment
-        /// </summary>
-        /// <param name="paymentId">The payment ID</param>
-        /// <returns>The payment status information</returns>
-        Task<PaymentStatusResponse> GetPaymentStatusAsync(string paymentId);
-
-        /// <summary>
         /// Gets detailed information about a payment
         /// </summary>
         /// <param name="paymentId">The payment ID</param>
         /// <returns>The payment details</returns>
-        Task<PaymentDetailsDto> GetPaymentDetailsAsync(string paymentId);
+        Task<ResultWrapper<PaymentDetailsDto>> GetPaymentDetailsAsync(string paymentId);
 
         /// <summary>
         /// Cancels a pending payment
         /// </summary>
         /// <param name="paymentId">The payment ID</param>
         /// <returns>The result of the cancellation</returns>
-        Task<ResultWrapper> CancelPaymentAsync(string paymentId);
+        Task<ResultWrapper<CrudResult<PaymentData>>> CancelPaymentAsync(string paymentId);
 
-        Task<ResultWrapper<PaymentData>> GetByProviderIdAsync(string paymentProviderId);
+        Task<ResultWrapper<PaymentData?>> GetByProviderIdAsync(string paymentProviderId);
 
-        Task<(decimal total, decimal fee, decimal platform, decimal net)> CalculatePaymentAmounts(InvoiceRequest i);
         Task<ResultWrapper> ProcessPaymentFailedAsync(PaymentIntentRequest paymentIntentRequest);
 
         // Update Application/Interfaces/Payment/IPaymentService.cs to add:
-        Task<ResultWrapper> UpdatePaymentRetryInfoAsync(
+        Task<ResultWrapper<CrudResult<PaymentData>>> UpdatePaymentRetryInfoAsync(
             Guid paymentId,
             int attemptCount,
             DateTime lastAttemptAt,
             DateTime nextRetryAt,
             string failureReason);
 
-        Task<ResultWrapper<IEnumerable<PaymentData>>> GetPendingRetriesAsync();
+        Task<ResultWrapper<List<PaymentData>>> GetPendingRetriesAsync();
 
         Task<ResultWrapper> RetryPaymentAsync(Guid paymentId);
 
@@ -62,9 +54,8 @@ namespace Application.Interfaces.Payment
 
         Task<ResultWrapper> ProcessSetupIntentSucceededAsync(Guid subscriptionId);
 
-        Task<ResultWrapper<IEnumerable<PaymentData>>> GetPaymentsForSubscriptionAsync(Guid subscriptionId);
-        Task<ResultWrapper<int>> GetFailedPaymentCountAsync(Guid subscriptionId);
-        Task<ResultWrapper<PaymentData>> GetLatestPaymentAsync(Guid subscriptionId);
+        Task<ResultWrapper<List<PaymentData>>> GetPaymentsForSubscriptionAsync(Guid subscriptionId);
+        Task<ResultWrapper<PaymentData?>> GetLatestPaymentAsync(Guid subscriptionId);
 
         /// <summary>
         /// Fetches payment records from Stripe for a subscription and processes any missing records
@@ -80,5 +71,9 @@ namespace Application.Interfaces.Payment
         /// <param name="metadataValue">The metadata value to search for</param>
         /// <returns>The first matching Stripe subscription ID, or null if not found</returns>
         Task<ResultWrapper<string?>> SearchStripeSubscriptionByMetadataAsync(string metadataKey, string metadataValue);
+        Task<ResultWrapper> CancelStripeSubscriptionAsync(string stripeSubscriptionId);
+        Task<ResultWrapper> PauseStripeSubscriptionAsync(string stripeSubscriptionId);
+        Task<ResultWrapper> ResumeStripeSubscriptionAsync(string stripeSubscriptionId);
+        Task<ResultWrapper> ReactivateStripeSubscriptionAsync(string stripeSubscriptionId);
     }
 }

@@ -1,6 +1,9 @@
+using Application.Extensions;
 using Application.Interfaces.Logging;
+using Domain.DTOs.Notification;
 using Domain.Exceptions;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace crypto_investment_project.Server.Controllers
 {
@@ -49,7 +52,13 @@ namespace crypto_investment_project.Server.Controllers
                 if (notificationsResult == null || !notificationsResult.IsSuccess)
                     throw new DatabaseException(notificationsResult.ErrorMessage);
 
-                var notifications = notificationsResult.Data;
+                var notifications = notificationsResult.Data.Select(n => new NotificationDto()
+                {
+                    Id = n.Id,
+                    Message = n.Message,
+                    CreatedAt = n.CreatedAt
+                });
+
                 _logger.LogInformation(
                     "Retrieved {Count} notifications for user {UserId})",
                     notifications?.Count() ?? 0,
@@ -76,7 +85,6 @@ namespace crypto_investment_project.Server.Controllers
         /// <param name="notificationId">Notification ID</param>
         /// <returns>Result of the operation</returns>
         [HttpPost("read/{notificationId}")]
-        //[IgnoreAntiforgeryToken]
         public async Task<IActionResult> MarkAsRead(string notificationId)
         {
             using (_logger.BeginScope(new
@@ -120,6 +128,43 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         /// <summary>
+        /// Marks all notifications as read
+        /// </summary>
+        /// <returns>Result of the operation</returns>
+        [HttpPost("read/all")]
+        public async Task<IActionResult> MarkAllAsRead()
+        {
+            using (_logger.BeginScope())
+            {
+                try
+                {
+                    var userId = GetUserId() ?? Guid.Empty;
+
+                    if(userId == Guid.Empty)
+                        return BadRequest("Valid user ID is required");
+
+                    var result = await _notificationService.MarkAllAsReadAsync(userId);
+
+                    if (result == null)
+                    {
+                        throw new Exception("Failed to update notifictions");
+                    }
+
+                    return result.ToActionResult(this);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        "Error marking all notifications as read: {ErrorMessage}",
+                        ex.Message
+                    );
+
+                    return StatusCode(500, new { message = "An error occurred while marking the notification as read" });
+                }
+            }
+        }
+
+        /// <summary>
         /// Health check endpoint for the notification service
         /// </summary>
         /// <returns>Health status</returns>
@@ -133,6 +178,12 @@ namespace crypto_investment_project.Server.Controllers
                 timestamp = DateTime.UtcNow,
                 service = "NotificationService"
             });
+        }
+
+        private Guid? GetUserId()
+        {
+            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            return Guid.TryParse(userIdClaim, out var userId) ? userId : null;
         }
     }
 }

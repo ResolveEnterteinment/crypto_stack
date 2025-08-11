@@ -35,6 +35,7 @@ import ITransaction from "../interfaces/ITransaction";
 import ApiTestPanel from '../components/DevTools/ApiTestPanel';
 import { Dashboard } from '../types/dashboardTypes';
 import SuccessNotification from '../components/Subscription/PaymentSyncSuccessNotification';
+import { useDashboardSignalR } from "../hooks/useDashboardSignalR";
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -59,6 +60,35 @@ const DashboardPageContent: React.FC = () => {
         message: string;
     }>({ show: false, message: '' });
 
+    // SignalR integration for real-time updates (moved before usage)
+    const handleSignalRDashboardUpdate = useCallback((newDashboardData: Dashboard) => {
+        console.log('Received real-time dashboard update:', newDashboardData);
+        setDashboardData(newDashboardData);
+        
+        // Show notification for real-time updates
+        notification.info({
+            message: 'Dashboard Updated',
+            description: 'Your dashboard has been updated with new data',
+            placement: 'topRight',
+            duration: 3
+        });
+    }, []);
+
+    const handleSignalRError = useCallback((error: string) => {
+        console.error('SignalR dashboard error:', error);
+        notification.error({
+            message: 'Real-time Connection Error',
+            description: error,
+            placement: 'topRight'
+        });
+    }, []);
+
+    // Initialize SignalR connection (moved before usage)
+    const { refreshDashboard: signalRRefresh, isConnected } = useDashboardSignalR(
+        handleSignalRDashboardUpdate,
+        handleSignalRError
+    );
+
     // Memoized fetch functions to prevent unnecessary re-renders
     const fetchDashboardData = useCallback(async () => {
         try {
@@ -82,6 +112,23 @@ const DashboardPageContent: React.FC = () => {
             throw err;
         }
     }, [user?.id]);
+
+    const formatCurrency = (amount: number): string => {
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(amount);
+    };
+
+    const formatPercent = (amount: number): string => {
+        return new Intl.NumberFormat('en-US', {
+            style: 'percent',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(amount);
+    };
 
     // Enhanced refresh function with better error handling
     const refreshDashboardData = useCallback(async () => {
@@ -242,10 +289,18 @@ const DashboardPageContent: React.FC = () => {
         setCurrentSubscriptionId(null);
     }, []);
 
-    // Manual refresh handler for retry button
+    // Manual refresh handler (now signalRRefresh is available)
     const handleManualRefresh = useCallback(async () => {
-        await handleDataUpdated('Dashboard data refreshed successfully');
-    }, [handleDataUpdated]);
+        try {
+            // Trigger both manual API refresh and SignalR refresh
+            await Promise.all([
+                handleDataUpdated('Dashboard data refreshed successfully'),
+                signalRRefresh()
+            ]);
+        } catch (error) {
+            console.error('Error during manual refresh:', error);
+        }
+    }, [handleDataUpdated, signalRRefresh]);
 
     if (loading) {
         return (
@@ -428,6 +483,34 @@ const DashboardPageContent: React.FC = () => {
                         </Row>
                     </div>
 
+                    {/* Connection Status Indicator */}
+                    <div style={{ 
+                        position: 'fixed', 
+                        bottom: '20px', 
+                        right: '20px', 
+                        zIndex: 1000 
+                    }}>
+                        <Card
+                            size="small"
+                            style={{
+                                background: isConnected ? 'rgba(76, 175, 80, 0.9)' : 'rgba(244, 67, 54, 0.9)',
+                                backdropFilter: 'blur(10px)',
+                                border: 'none',
+                                borderRadius: '20px',
+                                color: 'white'
+                            }}
+                        >
+                            <Space size="small">
+                                <Badge 
+                                    status={isConnected ? "success" : "error"} 
+                                />
+                                <Text style={{ color: 'white', fontSize: '12px' }}>
+                                    {isConnected ? 'Live Updates' : 'Disconnected'}
+                                </Text>
+                            </Space>
+                        </Card>
+                    </div>
+
                     {/* Enhanced Summary Cards */}
                     <Row gutter={[24, 24]} style={{ marginBottom: '32px' }}>
                         {/* Total Investment Card */}
@@ -450,7 +533,7 @@ const DashboardPageContent: React.FC = () => {
                                             Total Investment
                                         </Text>
                                         <Title level={2} style={{ margin: '8px 0 4px', color: '#424242' }}>
-                                            ${dashboardData?.totalInvestments.toFixed(2) || '0.00'}
+                                            {dashboardData && formatCurrency(dashboardData.totalInvestments) || '0.00'}
                                         </Title>
                                         <Space size="small">
                                             <RiseOutlined style={{ color: '#666' }} />
@@ -493,7 +576,7 @@ const DashboardPageContent: React.FC = () => {
                                             Portfolio Value
                                         </Text>
                                         <Title level={2} style={{ margin: '8px 0 4px', color: '#424242' }}>
-                                            ${dashboardData?.portfolioValue.toFixed(2) || '0.00'}
+                                            {dashboardData && formatCurrency(dashboardData.portfolioValue)}
                                         </Title>
                                         <Space size="small">
                                             <BarChartOutlined style={{ color: '#666' }} />
@@ -542,7 +625,7 @@ const DashboardPageContent: React.FC = () => {
                                                 color: isProfitable ? '#4caf50' : '#f44336'
                                             }}
                                         >
-                                            {isProfitable ? '+' : ''}{profitPercentage.toFixed(2)}%
+                                            {isProfitable ? '+' : ''}{formatPercent(profitPercentage)}
                                         </Title>
                                         <Space size="small">
                                             {isProfitable ? (
@@ -551,7 +634,7 @@ const DashboardPageContent: React.FC = () => {
                                                 <FallOutlined style={{ color: '#f44336' }} />
                                             )}
                                             <Text type="secondary" style={{ fontSize: '14px' }}>
-                                                ${dashboardData ? Math.abs(dashboardData.portfolioValue - dashboardData.totalInvestments).toFixed(2) : '0.00'}
+                                                {dashboardData && formatCurrency(Math.abs(dashboardData.portfolioValue - dashboardData.totalInvestments))}
                                             </Text>
                                         </Space>
                                     </Col>

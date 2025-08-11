@@ -131,7 +131,7 @@ const PlanDetailsStep: React.FC<PlanDetailsStepProps> = ({ formData, updateFormD
                             <p className="font-medium">
                                 {formData.endDate
                                     ? formData.endDate.toLocaleDateString()
-                                    : 'Ongoing (until cancelled)'}
+                                    : 'Ongoing (until canceled)'}
                             </p>
                         </div>
                         <div>

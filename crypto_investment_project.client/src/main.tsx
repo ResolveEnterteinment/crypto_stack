@@ -2,6 +2,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import authService from './services/authService';
 import "./index.css";
+import React from "react";
 
 // Initialize auth service (including encryption and CSRF) token BEFORE rendering the app
 async function initializeApp() {
@@ -18,9 +19,9 @@ async function initializeApp() {
 
     // Only render the app AFTER API initialization
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-        //<React.StrictMode>
+        <React.StrictMode>
                     <App />
-        //</React.StrictMode>
+        </React.StrictMode>
     );
 }
 

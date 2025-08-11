@@ -1,5 +1,6 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Asset;
+using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
@@ -78,11 +79,6 @@ namespace Domain.Interfaces
         /// Balance management service for handling balance operations
         /// </summary>
         IBalanceManagementService BalanceManagement { get; }
-
-        /// <summary>
-        /// Order reconciliation service for reconciling exchange orders
-        /// </summary>
-        IOrderReconciliationService OrderReconciliation { get; }
 
         /// <summary>
         /// Commits all changes

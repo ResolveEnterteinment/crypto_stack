@@ -11,17 +11,17 @@ using Application.Interfaces.Withdrawal;
 using Application.Validation;
 using Domain.DTOs.Settings;
 using Domain.Interfaces;
-using Infrastructure;
 using Infrastructure.Services;
 using Infrastructure.Services.Asset;
 using Infrastructure.Services.Base;
-using Infrastructure.Services.Event;
+using Infrastructure.Services.Email;
 using Infrastructure.Services.Exchange;
 using Infrastructure.Services.Index;
 using Infrastructure.Services.Logging;
 using Infrastructure.Services.Network;
 using Infrastructure.Services.Payment;
 using Infrastructure.Services.Subscription;
+using Infrastructure.Services.Transaction;
 using Infrastructure.Services.Withdrawal;
 using MediatR;
 using Microsoft.AspNetCore.DataProtection;
@@ -67,6 +67,21 @@ public static class CoreServicesExtensions
             mongoClientSettings.RetryWrites = true;
 
             return new MongoClient(mongoClientSettings);
+        });
+
+        // Register MongoDB Database - FIXED: Added missing IMongoDatabase registration
+        services.AddSingleton(provider =>
+        {
+            var mongoClient = provider.GetRequiredService<IMongoClient>();
+            var configuration = provider.GetRequiredService<IConfiguration>();
+            var databaseName = configuration["MongoDB:DatabaseName"];
+
+            if (string.IsNullOrEmpty(databaseName))
+            {
+                throw new InvalidOperationException("MongoDB database name not found in configuration");
+            }
+
+            return mongoClient.GetDatabase(databaseName);
         });
 
         Log.Logger = new LoggerConfiguration()
@@ -136,42 +151,41 @@ public static class CoreServicesExtensions
 
     private static void RegisterApplicationServices(IServiceCollection services)
     {
-        // 1) Generic plumbing for all BaseService<T> consumers:
+        // Register the generic resilience service
+        _ = services.AddScoped(typeof(IResilienceService<>), typeof(ResilienceService<>));
+        // Register a non-generic resilience service using a concrete implementation
+        _ = services.AddScoped<IResilienceService>(serviceProvider =>
+            serviceProvider.GetRequiredService<IResilienceService<object>>());
+        _ = services.AddScoped(typeof(IEventService), typeof(EventService));
         _ = services.AddScoped(typeof(ICrudRepository<>), typeof(Repository<>));
         _ = services.AddScoped(typeof(ICacheService<>), typeof(CacheService<>));
         _ = services.AddScoped(typeof(IMongoIndexService<>), typeof(MongoIndexService<>));
+        _ = services.AddScoped<ILoggingService, LoggingService>();
 
         // Register services with appropriate lifecycles
-        _ = services.AddSingleton(typeof(IMongoIndexService<>), typeof(MongoIndexService<>));
         _ = services.AddScoped<IEmailService, EmailService>();
         _ = services.AddScoped<IEncryptionService, Encryption.Services.EncryptionService>();
 
-        _ = services.AddScoped<ILoggingService, LoggingService>();
 
-        // 2) Your existing registrations
+        // 2) Your existing registrations...
         _ = services.AddScoped<IExchangeService, ExchangeService>();
         _ = services.AddScoped<IPaymentProcessingService, PaymentProcessingService>();
         _ = services.AddScoped<IOrderManagementService, OrderManagementService>();
         _ = services.AddScoped<IBalanceManagementService, BalanceManagementService>();
-        _ = services.AddScoped<IOrderReconciliationService, OrderReconciliationService>();
         _ = services.AddScoped<IPaymentService, PaymentService>();
         _ = services.AddScoped<IPaymentWebhookHandler, StripeWebhookHandler>();
         _ = services.AddScoped<ISubscriptionService, SubscriptionService>();
+        _ = services.AddScoped<ISubscriptionRetryService, SubscriptionRetryService>();
         _ = services.AddScoped<IAssetService, AssetService>();
         _ = services.AddScoped<INetworkService, NetworkService>();
         _ = services.AddScoped<IBalanceService, BalanceService>();
         _ = services.AddScoped<ITransactionService, TransactionService>();
-        _ = services.AddScoped<IEventService, EventService>();
         _ = services.AddScoped<IDashboardService, DashboardService>();
         _ = services.AddScoped<IAuthenticationService, AuthenticationService>();
         _ = services.AddScoped<IUserService, UserService>();
         _ = services.AddScoped<ILogExplorerService, LogExplorerService>();
         _ = services.AddScoped<INotificationService, NotificationService>();
         _ = services.AddScoped<IIdempotencyService, IdempotencyService>();
-        _ = services.AddScoped<IUnitOfWork, UnitOfWork>();
         _ = services.AddScoped<IWithdrawalService, WithdrawalService>();
-        _ = services.AddScoped<ISubscriptionRetryService, SubscriptionRetryService>();
-
-        _ = services.AddScoped<ITestService, TestService>();
     }
 }

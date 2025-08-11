@@ -11,7 +11,7 @@
 
     public class CrudResult<T> : CrudResult
     {
-        public IEnumerable<T> Documents { get; init; } = Array.Empty<T>();
+        public List<T> Documents { get; init; } = new ();
     }
 
 }

@@ -1,3 +1,4 @@
+using Application.Contracts.Requests.KYC;
 using Application.Interfaces.KYC;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -65,11 +66,5 @@ namespace crypto_investment_project.Server.Controllers
                 return StatusCode(500, new { success = false, message = "An error occurred updating KYC status" });
             }
         }
-    }
-
-    public class StatusUpdateRequest
-    {
-        public required string Status { get; set; }
-        public string? Comment { get; set; }
     }
 }

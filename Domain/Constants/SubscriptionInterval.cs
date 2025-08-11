@@ -9,10 +9,8 @@
         public const string Yearly = "YEARLY";
 
         public static readonly List<string> AllValues = new List<string>()
-    {
-        OneTime, Daily, Weekly, Monthly, Yearly
-    };
+        {
+            OneTime, Daily, Weekly, Monthly, Yearly
+        };
     }
-
-
 }

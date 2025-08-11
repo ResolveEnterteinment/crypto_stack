@@ -6,5 +6,10 @@
         public const string CryptoTransfer = "CRYPTO_TRANSFER";
         public const string PayPal = "PAYPAL";
         public const string CreditCard = "CREDIT_CARD";
+
+        public static readonly List<string> AllValues = new List<string>()
+        {
+            BankTransfer, CryptoTransfer, PayPal, CreditCard
+        };
     }
 }

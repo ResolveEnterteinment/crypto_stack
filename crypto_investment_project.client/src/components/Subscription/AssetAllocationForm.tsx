@@ -1,6 +1,4 @@
-﻿// src/components/Subscription/AssetAllocationForm.tsx (updated with fee-aware validation)
-
-import React, { useState, useEffect, useMemo } from 'react';
+﻿import React, { useState, useEffect, useMemo } from 'react';
 import { AssetColors, getAssetColor as getColor } from '../../types/assetTypes';
 import { Allocation } from '../../types/subscription';
 import { EnhancedAsset } from './AssetAllocationStep';
@@ -343,11 +341,11 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
             {feeBreakdown && feeBreakdown.totalFees > 0 && (
                 <>
                     <div className="flex justify-between items-center">
-                        <h2 className="text-xl font-semibold">Choose Your Asset Allocation</h2>
                         <div className="text-sm text-gray-600">
-                            <div>Gross Investment: <span className="font-semibold">${displayGrossAmount.toFixed(2)}</span></div>
+                            <div>Total Investment: <span className="font-semibold">${displayGrossAmount.toFixed(2)}</span></div>
+                            <div>Fees: <span className="font-semibold">${feeBreakdown && feeBreakdown.totalFees.toFixed(2)}</span></div>
                             <div className="flex items-center">
-                                Net for Trading: <span className="font-semibold text-green-600 mr-1">${netInvestmentAmount.toFixed(2)}</span>
+                                Net Amount: <span className="font-semibold text-green-600 mr-1">${netInvestmentAmount.toFixed(2)}</span>
                                 <div className="relative inline-block">
                                     <button 
                                         type="button"
@@ -378,7 +376,7 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                                     </button>
                                     <div id="net-trading-info-popup" className="hidden absolute z-10 right-0 mt-2 w-64 bg-white rounded-md shadow-lg border border-green-200 p-3">
                                         <div className="flex justify-between items-start">
-                                            <h4 className="font-medium text-green-700 text-xs">Net Trading Amount</h4>
+                                            <h4 className="font-medium text-green-700 text-xs">Net Investment Amount</h4>
                                                 <button 
                                                     type="button" 
                                                     onClick={() => {
@@ -525,15 +523,10 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                                     <div className="flex-1">
                                         <span className="font-medium">{allocation.assetName} ({allocation.assetTicker})</span>
                                         <div className="text-sm text-gray-600">
-                                            <div>Net: ${validation.currentNetDollarAmount.toFixed(2)}</div>
-                                            {feeBreakdown && (
-                                                <div className="text-xs text-gray-500">
-                                                    Gross: ${validation.currentGrossDollarAmount.toFixed(2)}
-                                                </div>
-                                            )}
+                                            <div className={validation.isValid ? 'text-green-600' : 'text-red-600'}>Net: ${validation.currentNetDollarAmount.toFixed(2)}</div>
                                             {validation.minDollarAmount > 0 ? (
                                                 <span className={validation.isValid ? 'text-green-600' : 'text-red-600'}>
-                                                    Min required: ${validation.minDollarAmount.toFixed(2)}
+                                                    Min invenstment: ${validation.minDollarAmount.toFixed(2)}
                                                 </span>
                                             ) : validation.warningMessage ? (
                                                 <span className="text-amber-600">Min requirements unknown</span>
@@ -671,7 +664,6 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
                 <h4 className="font-medium text-blue-700 mb-2">Tips for Asset Allocation</h4>
                 <ul className="list-disc list-inside text-sm text-blue-700 space-y-1">
                     <li>Consider diversifying across different types of cryptocurrencies</li>
-                    <li>Higher allocations to stable coins may reduce volatility</li>
                     <li>Each asset has minimum order requirements that must be met after fees</li>
                     <li>Your total allocation must equal 100%</li>
                     <li>Minimum order amounts are validated against your net investment (after fees)</li>

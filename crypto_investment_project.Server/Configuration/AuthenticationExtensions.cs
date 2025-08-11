@@ -47,7 +47,8 @@ public static class AuthenticationExtensions
                     }
 
                     var path = context.HttpContext.Request.Path;
-                    if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs/notificationHub"))
+                    if (!string.IsNullOrEmpty(accessToken) && 
+                        (path.StartsWithSegments("/hubs/notificationHub") || path.StartsWithSegments("/hubs/dashboardHub")))
                     {
                         context.Token = accessToken;
                     }
@@ -88,11 +89,11 @@ public static class AuthenticationExtensions
                 // Register as a filter factory instead of a direct filter instance
                 //options.Filters.Add(new AutoValidateAntiforgeryTokenAttribute());
             })
-        .AddNewtonsoftJson(options =>
-        {
-            options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
-            options.SerializerSettings.NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore;
-        });
+            .AddNewtonsoftJson(options =>
+            {
+                options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
+                options.SerializerSettings.NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore;
+            });
 
         return services;
     }

@@ -1,249 +1,304 @@
 ﻿// Improved and refactored OrderManagementService
+using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
+using Application.Interfaces.Logging;
 using Domain.Constants;
+using Domain.Constants.Logging;
 using Domain.DTOs;
 using Domain.DTOs.Exchange;
+using Domain.DTOs.Logging;
+using Domain.Exceptions;
 using Domain.Models.Asset;
 using Domain.Models.Payment;
-using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services.Exchange
 {
     public class OrderManagementService : IOrderManagementService
     {
-        private readonly ILogger<OrderManagementService> _logger;
+        private readonly IResilienceService<PlacedExchangeOrder> _resilienceService;
+        private readonly ILoggingService _logger;
 
         public OrderManagementService(
-            ILogger<OrderManagementService> logger)
+            IResilienceService<PlacedExchangeOrder> resilienceService,
+            ILoggingService logger)
         {
+            _resilienceService = resilienceService ?? throw new ArgumentNullException(nameof(resilienceService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <summary>
         /// Places an exchange order
         /// </summary>
-        public async Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(
+        public Task<ResultWrapper<PlacedExchangeOrder>> PlaceExchangeOrderAsync(
             IExchange exchange,
             string assetTicker,
             decimal quantity,
             string paymentProviderId,
-            string side = Domain.Constants.OrderSide.Buy,
+            string side = OrderSide.Buy,
             string type = "MARKET")
         {
-            try
-            {
-                // Input validation
-                if (quantity <= 0m)
+            return _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    throw new ArgumentOutOfRangeException(
-                        nameof(quantity),
-                        $"Quantity must be greater than zero. Provided value is {quantity}");
-                }
+                    NameSpace = "Infrastructure.Services.Exchange",
+                    FileName = "OrderManagementService",
+                    OperationName = "PlaceExchangeOrderAsync(IExchange exchange, string assetTicker, decimal quantity, string paymentProviderId, string side = Domain.Constants.OrderSide.Buy, string type = \"MARKET\")",
+                    State = new()
+                    {
+                        ["Exchange"] = exchange.Name,
+                        ["Ticker"] = assetTicker,
+                        ["Quantity"] = quantity,
+                        ["Side"] = side,
+                        ["PaymentProviderId"] = paymentProviderId,
+                        ["Type"] = type,
 
-                if (string.IsNullOrEmpty(assetTicker))
+                    },
+                    LogLevel = LogLevel.Critical,
+                },
+                async () =>
                 {
-                    throw new ArgumentException("Asset ticker cannot be null or empty.", nameof(assetTicker));
-                }
+                    // Input validation
+                    if (quantity <= 0m)
+                    {
+                        throw new ArgumentOutOfRangeException(
+                            nameof(quantity),
+                            $"Quantity must be greater than zero. Provided value is {quantity}");
+                    }
 
-                if (exchange == null)
-                {
-                    throw new ArgumentNullException(nameof(exchange), "Exchange cannot be null");
-                }
+                    if (string.IsNullOrEmpty(assetTicker))
+                    {
+                        throw new ArgumentException("Asset ticker cannot be null or empty.", nameof(assetTicker));
+                    }
 
-                // Log the order attempt
-                _logger.LogInformation(
-                    "Placing {Side} order for {Quantity} of {AssetTicker} on {Exchange}",
-                    side, quantity, assetTicker, exchange.Name);
+                    if (exchange == null)
+                    {
+                        throw new ArgumentNullException(nameof(exchange), "Exchange cannot be null");
+                    }
 
-                // Prepare the symbol
-                var symbol = assetTicker + exchange.ReserveAssetTicker;
-                PlacedExchangeOrder placedOrder;
+                    // Log the order attempt
+                    _logger.LogInformation(
+                        "Placing {Side} order for {Quantity} of {AssetTicker} on {Exchange}",
+                        side, quantity, assetTicker, exchange.Name);
 
-                // Execute the order based on side
-                if (side == OrderSide.Buy)
-                {
-                    placedOrder = await exchange.PlaceSpotMarketBuyOrder(symbol, quantity, paymentProviderId);
-                }
-                else if (side == OrderSide.Sell)
-                {
-                    placedOrder = await exchange.PlaceSpotMarketSellOrder(symbol, quantity, paymentProviderId);
-                }
-                else
-                {
-                    throw new ArgumentException(
-                        "Invalid order side. Allowed values are BUY or SELL.",
-                        nameof(side));
-                }
+                    // Prepare the symbol
+                    var symbol = assetTicker + exchange.QuoteAssetTicker;
+                    PlacedExchangeOrder placedOrder;
 
-                // Check for failure
-                if (placedOrder.Status == OrderStatus.Failed)
-                {
-                    return ResultWrapper<PlacedExchangeOrder>.Failure(
-                        FailureReason.OrderExecutionFailed,
-                        $"Order failed with status {placedOrder.Status}");
-                }
+                    // Execute the order based on side
+                    if (side == OrderSide.Buy)
+                    {
+                        placedOrder = await exchange.PlaceSpotMarketBuyOrder(symbol, quantity, paymentProviderId);
+                    }
+                    else if (side == OrderSide.Sell)
+                    {
+                        placedOrder = await exchange.PlaceSpotMarketSellOrder(symbol, quantity, paymentProviderId);
+                    }
+                    else
+                    {
+                        throw new ArgumentException(
+                            "Invalid order side. Allowed values are BUY or SELL.",
+                            nameof(side));
+                    }
 
-                // Log success
-                _logger.LogInformation(
-                    "Order placed successfully for symbol: {Symbol}, OrderId: {OrderId}, Status: {Status}",
-                    symbol, placedOrder.OrderId, placedOrder.Status);
+                    // Check for failure
+                    if (placedOrder == null || placedOrder.Status == OrderStatus.Failed)
+                    {
+                        throw new OrderExecutionException($"Order failed with status {placedOrder?.Status ?? "Null"}", exchange.Name, placedOrder.OrderId.ToString());
+                    }
 
-                return ResultWrapper<PlacedExchangeOrder>.Success(placedOrder);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to create order: {Message}", ex.Message);
-                return ResultWrapper<PlacedExchangeOrder>.FromException(ex);
-            }
+                    // Log success
+                    _logger.LogInformation(
+                        "Order placed successfully for symbol: {Symbol}, OrderId: {OrderId}, Status: {Status}",
+                        symbol, placedOrder.OrderId, placedOrder.Status);
+
+                    return placedOrder;
+                })
+                .WithExchangeOperationResilience()
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30))
+                .OnSuccess(HandleDustAsync)
+                .ExecuteAsync();            
         }
 
         /// <summary>
         /// Gets the sum of previous orders for a payment
         /// </summary>
-        public async Task<ResultWrapper<decimal>> GetPreviousOrdersSum(
+        public Task<ResultWrapper<decimal>> GetPreviousOrdersSum(
             IExchange exchange,
             AssetData asset,
             PaymentData payment)
         {
-            try
-            {
-                // Input validation
-                if (exchange == null)
-                    throw new ArgumentNullException(nameof(exchange));
+            return _resilienceService.CreateBuilder(
+                 new Scope
+                 {
+                     NameSpace = "Infrastructure.Services.Exchange",
+                     FileName = "OrderManagementService",
+                     OperationName = "GetPreviousOrdersSum( IExchange exchange, AssetData asset, PaymentData payment)",
+                     State = new()
+                     {
+                         ["Exchange"] = exchange.Name,
+                         ["Asset"] = asset.Name,
+                         ["PaymentId"] = payment.Id,
 
-                if (asset == null)
-                    throw new ArgumentNullException(nameof(asset));
+                     },
+                     LogLevel = LogLevel.Critical,
+                 },
+                 async () =>
+                 {
+                     // Input validation
+                     if (exchange == null)
+                         throw new ArgumentNullException(nameof(exchange));
 
-                if (payment == null)
-                    throw new ArgumentNullException(nameof(payment));
+                     if (asset == null)
+                         throw new ArgumentNullException(nameof(asset));
 
-                // Log the operation
-                _logger.LogInformation(
-                    "Checking previous filled orders for asset {Ticker} with payment ID {PaymentId}",
-                    asset.Ticker, payment.PaymentProviderId);
+                     if (payment == null)
+                         throw new ArgumentNullException(nameof(payment));
 
-                // Get previous filled orders
-                var previousFilledSum = 0m;
-                var previousOrdersResult = await exchange.GetPreviousFilledOrders(
-                    asset.Ticker,
-                    payment.PaymentProviderId);
+                     // Log the operation
+                     _logger.LogInformation(
+                         "Checking previous filled orders for asset {Ticker} with payment ID {PaymentId}",
+                         asset.Ticker, payment.PaymentProviderId);
 
-                if (!previousOrdersResult.IsSuccess || previousOrdersResult.Data is null)
-                {
-                    throw new Exception(
-                        $"Failed to fetch previous filled orders for client order id {payment.PaymentProviderId}: " +
-                        $"{previousOrdersResult.ErrorMessage}");
-                }
+                     // Get previous filled orders
+                     var previousFilledSum = 0m;
+                     var previousOrdersResult = await exchange.GetPreviousFilledOrders(
+                         asset.Ticker,
+                         payment.PaymentProviderId);
 
-                // Calculate the sum of filled quantities
-                if (previousOrdersResult.Data.Any())
-                {
-                    previousFilledSum = previousOrdersResult.Data
-                       .Select(o => o.QuoteQuantityFilled)
-                       .Sum();
+                     if (!previousOrdersResult.IsSuccess || previousOrdersResult.Data is null)
+                     {
+                         throw new Exception(
+                             $"Failed to fetch previous filled orders for client order id {payment.PaymentProviderId}: " +
+                             $"{previousOrdersResult.ErrorMessage}");
+                     }
 
-                    _logger.LogInformation(
-                        "Found previous orders for payment {PaymentId} with filled sum: {FilledSum}",
-                        payment.PaymentProviderId, previousFilledSum);
-                }
-                else
-                {
-                    _logger.LogInformation(
-                        "No previous orders found for payment {PaymentId}",
-                        payment.PaymentProviderId);
-                }
+                     // Calculate the sum of filled quantities
+                     if (previousOrdersResult.Data.Any())
+                     {
+                         previousFilledSum = previousOrdersResult.Data
+                            .Select(o => o.QuoteQuantityFilled)
+                            .Sum();
 
-                return ResultWrapper<decimal>.Success(previousFilledSum);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Error getting previous orders sum for asset {Ticker} with payment ID {PaymentId}",
-                    asset?.Ticker, payment?.PaymentProviderId);
+                         _logger.LogInformation(
+                             "Found previous orders for payment {PaymentId} with filled sum: {FilledSum}",
+                             payment.PaymentProviderId, previousFilledSum);
+                     }
+                     else
+                     {
+                         _logger.LogInformation(
+                             "No previous orders found for payment {PaymentId}",
+                             payment.PaymentProviderId);
+                     }
 
-                return ResultWrapper<decimal>.FromException(ex);
-            }
+                     return previousFilledSum;
+                 })
+                .WithExchangeOperationResilience()
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30))
+                .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper<decimal>> GetMinNotional(
-            IExchange exchange,
-            AssetData asset
-            )
+        public Task<ResultWrapper<decimal>> GetMinNotional(IExchange exchange, AssetData asset)
         {
-            try
-            {
-                // Input validation
-                if (exchange == null)
-                    throw new ArgumentNullException(nameof(exchange));
+            return _resilienceService.CreateBuilder(
+                 new Scope
+                 {
+                     NameSpace = "Infrastructure.Services.Exchange",
+                     FileName = "OrderManagementService",
+                     OperationName = "GetMinNotional( IExchange exchange, AssetData asset)",
+                     State = new()
+                     {
+                         ["Exchange"] = exchange.Name,
+                         ["Asset"] = asset.Name,
 
-                if (asset == null)
-                    throw new ArgumentNullException(nameof(asset));
+                     }
+                 },
+                 async () =>
+                 {
+                     // Input validation
+                     if (exchange == null)
+                         throw new ArgumentNullException(nameof(exchange));
 
-                // Log the operation
-                _logger.LogInformation(
-                    "Checking min notional for asset {Ticker}",
-                    asset.Ticker, asset.Ticker);
+                     if (asset == null)
+                         throw new ArgumentNullException(nameof(asset));
 
-                // Get previous filled orders
-                var previousFilledSum = 0m;
-                var minNotionaResult = await exchange.GetMinNotional(asset.Ticker);
+                     // Log the operation
+                     _logger.LogInformation(
+                         "Checking min notional for asset {Ticker}",
+                         asset.Ticker, asset.Ticker);
 
-                if (minNotionaResult == null || !minNotionaResult.IsSuccess)
-                {
-                    throw new Exception(
-                        $"Failed to fetch min notional for asset {asset.Ticker}: " +
-                        $"{minNotionaResult.ErrorMessage}");
-                }
+                     // Get previous filled orders
+                     var previousFilledSum = 0m;
+                     var minNotionaResult = await exchange.GetMinNotional(asset.Ticker);
 
-                return ResultWrapper<decimal>.Success(minNotionaResult.Data);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    ex,
-                    "Error getting min notional for asset {Ticker}",
-                    asset?.Ticker);
+                     if (minNotionaResult == null || !minNotionaResult.IsSuccess)
+                     {
+                         throw new Exception(
+                             $"Failed to fetch min notional for asset {asset.Ticker}: " +
+                             $"{minNotionaResult?.ErrorMessage ?? "Min notional fetch result returned null" }");
+                     }
 
-                return ResultWrapper<decimal>.FromException(ex);
-            }
+                     return minNotionaResult.Data;
+                 })
+                .WithExchangeOperationResilience()
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10))
+                .ExecuteAsync();
         }
 
         /// <summary>
         /// Handles dust (small leftover amounts) from exchange orders
         /// </summary>
-        public async Task HandleDustAsync(PlacedExchangeOrder order)
+        private async Task HandleDustAsync(PlacedExchangeOrder order)
         {
             /*
              * Add a clause: "Residual quantities below the exchange's minimum trade size may be retained by [Platform Name] 
-             * as part of transaction processing.
+             * as part of transaction processing."
              * Users may opt to convert dust to a designated asset (e.g., Platform Coin?) periodically."
              * Get user consent during signup.
             */
 
-            try
-            {
-                // Calculate dust amount
-                var dust = order.QuoteQuantity - order.QuoteQuantityFilled;
-
-                if (order.Status == OrderStatus.Filled && dust > 0m)
+            await _resilienceService.CreateBuilder<bool>(
+                new Scope
                 {
-                    _logger.LogInformation(
-                        "Handling dust amount {DustAmount} for order {OrderId}",
-                        dust, order.OrderId);
+                    NameSpace = "Infrastructure.Services.Exchange",
+                    FileName = "OrderManagementService",
+                    OperationName = "HandleDustAsync(PlacedExchangeOrder order)",
+                    State = new()
+                    {
+                        ["Exchange"] = order.Exchange,
+                        ["OrderId"] = order.OrderId,
+                        ["DustQuantity"] = order.QuoteQuantity - order.QuantityFilled,
 
-                    // TODO: Implement dust handling logic
-                    // For now, we're just logging it
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error handling dust for order {OrderId}", order.OrderId);
-                // Don't throw exception from dust handling - it's not critical
-            }
+                    }
+                },
+                async () =>
+                {
+                    try
+                    {
+                        // Calculate dust amount
+                        var dust = order.QuoteQuantity - order.QuoteQuantityFilled;
 
-            await Task.CompletedTask;
+                        if (order.Status == OrderStatus.Filled && dust > 0m)
+                        {
+                            _logger.LogInformation(
+                                "Handling dust amount {DustAmount} for order {OrderId}",
+                                dust, order.OrderId);
+
+                            // TODO: Implement dust handling logic
+                            // For now, we're just logging it
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError("Error handling dust for order {OrderId}: {ErrorMessage}", order.OrderId, ex.Message);
+                        // Don't throw exception from dust handling - it's not critical
+                        return false;
+                    }
+                    return true;
+                })
+                .WithExchangeOperationResilience()
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10))
+                .ExecuteAsync();
         }
     }
 }

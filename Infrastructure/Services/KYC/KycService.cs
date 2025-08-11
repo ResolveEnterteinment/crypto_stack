@@ -1,128 +1,140 @@
-﻿using Application.Interfaces.Base;
-using Application.Interfaces.KYC;
-using Application.Interfaces.Logging;
+﻿using Application.Interfaces.KYC;
 using Domain.Constants;
 using Domain.Constants.KYC;
+using Domain.Constants.Logging;
 using Domain.DTOs;
 using Domain.DTOs.KYC;
+using Domain.DTOs.Logging;
 using Domain.Exceptions;
+using Domain.Exceptions.KYC;
 using Domain.Models.KYC;
+using Infrastructure.Services.Base;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
-using MongoDB.Bson;
 using MongoDB.Driver;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using System.Reflection.Metadata;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Infrastructure.Services.KYC
 {
-    public class KycService : IKycService
+    public class KycService : BaseService<KycData>, IKycService
     {
         private readonly IDocumentService _documentService;
-        private readonly ILoggingService _logger;
-        private readonly ICrudRepository<KycData> _repository;
-        private readonly ICrudRepository<KycSessionData> _sessionRepository;
-        private readonly ICrudRepository<KycAuditLog> _auditRepository;
-        private readonly INotificationService _notificationService;
+        private readonly IKycAuditService _kycAuditService;
+        private readonly IKycSessionService _kycSessionService;
+        private readonly ILiveCaptureService _liveCaptureService;
         private readonly IDataProtector _dataProtector;
         private readonly IConfiguration _configuration;
-        private readonly string _encryptionKey;
-        private readonly TimeSpan _sessionTimeout;
 
         public KycService(
+            IServiceProvider serviceProvider,
+            IKycAuditService kycAuditService,
+            IKycSessionService kycSessionService,
             IDocumentService documentService,
-            ICrudRepository<KycData> repository,
-            ICrudRepository<KycSessionData> sessionRepository,
-            ICrudRepository<KycAuditLog> auditRepository,
-            ILoggingService logger,
-            INotificationService notificationService,
+            ILiveCaptureService liveCaptureService,
             IDataProtectionProvider dataProtectionProvider,
-            IConfiguration configuration)
+            IConfiguration configuration) : base(serviceProvider)
         {
+            _kycAuditService = kycAuditService ?? throw new ArgumentNullException(nameof(kycAuditService));
+            _kycSessionService = kycSessionService ?? throw new ArgumentNullException(nameof(kycSessionService));
             _documentService = documentService ?? throw new ArgumentNullException(nameof(documentService));
-            _repository = repository ?? throw new ArgumentNullException(nameof(repository));
-            _sessionRepository = sessionRepository ?? throw new ArgumentNullException(nameof(sessionRepository));
-            _auditRepository = auditRepository ?? throw new ArgumentNullException(nameof(auditRepository));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _liveCaptureService = liveCaptureService ?? throw new ArgumentNullException(nameof(liveCaptureService));
             _dataProtector = dataProtectionProvider.CreateProtector("KYC.PersonalData");
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-
-            _encryptionKey = _configuration["KYC:EncryptionKey"] ?? throw new InvalidOperationException("KYC encryption key not configured");
-            _sessionTimeout = TimeSpan.FromHours(_configuration.GetValue("KYC:SessionTimeoutHours", 24));
         }
-
 
         // TO-DO: This function will only return KycData with sensible user information Decrypted!!! For other KycStatusResponse requirements make a new function that returns limited public information
         public async Task<ResultWrapper<KycData>> GetUserKycDataDecryptedAsync(Guid userId, string? statusFilter = null)
         {
-            try
-            {
-                await LogAuditEvent(userId, "GetKycStatus", "User KYC status requested");
-
-                var filters = new List<FilterDefinition<KycData>>
+            return await _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    Builders<KycData>.Filter.Eq(k => k.UserId, userId)
-                };
-
-                if (!string.IsNullOrWhiteSpace(statusFilter) && IsValidKycStatus(statusFilter))
+                    NameSpace = "Infrastructure.Services.KYC",
+                    FileName = "Kycrvice",
+                    OperationName = "GetUserKycDataDecryptedAsync(Guid userId, string? statusFilter = null)",
+                    State = {
+                        ["UserId"] = userId,
+                        ["StatusFilter"] = statusFilter,
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
                 {
-                    filters.Add(Builders<KycData>.Filter.Eq(k => k.Status, statusFilter.ToUpperInvariant()));
-                }
+                    await _kycAuditService.LogAuditEvent(userId, "GetKycStatus", "User KYC status requested");
 
-                var kycData = await _repository.GetAllAsync(Builders<KycData>.Filter.And(filters));
-
-                if (kycData.Count == 0)
-                {
-                    // Create new KYC entry if not found
-                    var newKycData = new KycData
+                    var filters = new List<FilterDefinition<KycData>>
                     {
-                        UserId = userId,
-                        Status = KycStatus.NotStarted,
-                        VerificationLevel = KycLevel.None,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow,
-                        History = new List<KycHistoryEntry>(),
-                        SecurityFlags = new KycSecurityFlags { RequiresReview = false }
+                        Builders<KycData>.Filter.Eq(k => k.UserId, userId)
                     };
 
-                    var createResult = await _repository.InsertAsync(newKycData);
-                    if (!createResult.IsSuccess)
+                    if (!string.IsNullOrWhiteSpace(statusFilter) && IsValidKycStatus(statusFilter))
                     {
-                        throw new DatabaseException("Failed to create KYC record");
+                        filters.Add(Builders<KycData>.Filter.Eq(k => k.Status, statusFilter.ToUpperInvariant()));
                     }
 
-                    return ResultWrapper<KycData>.Success(newKycData);
-                }
+                    var kycDataResult = await GetManyAsync(Builders<KycData>.Filter.And(filters));
+                    if (kycDataResult == null || !kycDataResult.IsSuccess)
+                        throw new DatabaseException($"Failed to fetch KYC data: {kycDataResult?.ErrorMessage ?? "Fetch result returned null"}");
 
-                // Return the most recent KYC data
-                var latestKyc = kycData.OrderByDescending(k => k.UpdatedAt).First();
+                    var kycData = kycDataResult.Data;
 
-                // Decrypt sensitive data if needed
-                if (latestKyc.EncryptedPersonalData != null)
+                    if (kycData.Count == 0)
+                    {
+                        // Create new KYC entry if not found
+                        var newKycData = new KycData
+                        {
+                            UserId = userId,
+                            Status = KycStatus.NotStarted,
+                            VerificationLevel = KycLevel.None,
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow,
+                            History = new List<KycHistoryEntry>(),
+                            SecurityFlags = new KycSecurityFlags { RequiresReview = false }
+                        };
+
+                        var createResult = await InsertAsync(newKycData);
+                        if (createResult == null || !createResult.IsSuccess)
+                        {
+                            throw new DatabaseException($"Failed to create KYC record: {createResult?.ErrorMessage ?? "Insert result returned null"}");
+                        }
+
+                        return newKycData;
+                    }
+
+                    // Return the most recent KYC data
+                    var latestKyc = kycData.OrderByDescending(k => k.UpdatedAt).First();
+
+                    // Decrypt sensitive data if needed
+                    if (latestKyc.EncryptedPersonalData != null)
+                    {
+                        latestKyc.PersonalData = DecryptPersonalData(latestKyc.EncryptedPersonalData);
+                    }
+
+                    return latestKyc;
+                })
+                .OnError(async (ex)=>
                 {
-                    latestKyc.PersonalData = DecryptPersonalData(latestKyc.EncryptedPersonalData);
-                }
-
-                return ResultWrapper<KycData>.Success(latestKyc);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error getting KYC status for user {userId}: {ex.Message}");
-                await LogAuditEvent(userId, "GetKycStatus", $"Error: {ex.Message}");
-                return ResultWrapper<KycData>.FromException(ex);
-            }
+                    await _kycAuditService.LogAuditEvent(userId, "GetKycStatus", $"Error: {ex.Message}");
+                })
+                .ExecuteAsync();
         }
 
         public async Task<ResultWrapper<KycStatusDto>> GetUserKycStatusAsync(Guid userId)
         {
-            try
+            return await _resilienceService.CreateBuilder<KycStatusDto>(
+            new Scope
             {
-                await LogAuditEvent(userId, "GetKycStatus", "User KYC status requested");
+                NameSpace = "Infrastructure.Services.KYC",
+                FileName = "Kycrvice",
+                OperationName = "GetUserKycStatusAsync(Guid userId)",
+                State = {
+                    ["UserId"] = userId,
+                }
+            },
+            async () =>
+            {
+                await _kycAuditService.LogAuditEvent(userId, "GetKycStatus", "User KYC status requested");
 
                 var filters = new List<FilterDefinition<KycData>>
                 {
@@ -130,526 +142,395 @@ namespace Infrastructure.Services.KYC
                     Builders<KycData>.Filter.Eq(k => k.Status, KycStatus.Approved) // Only fetch approved status for this method
                 };
 
-                var kycData = await _repository.GetAllAsync(Builders<KycData>.Filter.And(filters));
+                var kycDataResult = await GetManyAsync(Builders<KycData>.Filter.And(filters));
+                if (kycDataResult == null || !kycDataResult.IsSuccess)
+                    throw new DatabaseException($"Failed to fetch KYC data: {kycDataResult?.ErrorMessage ?? "Fetch result returned null"}");
+
+                var kycData = kycDataResult.Data;
 
                 if (kycData.Count == 0)
                 {
-                    /*
-                    // Create new KYC entry if not found
-                    var newKycData = new KycData
+                    return new KycStatusDto
                     {
-                        UserId = userId,
-                        Status = KycStatus.NotStarted,
-                        VerificationLevel = KycLevel.None,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow,
-                        History = new List<KycHistoryEntry>(),
-                        SecurityFlags = new KycSecurityFlags { RequiresReview = false }
-                    };
-
-                    var createResult = await _repository.InsertAsync(newKycData);
-                    if (!createResult.IsSuccess)
-                    {
-                        throw new DatabaseException("Failed to create KYC record");
-                    }
-                    */
-
-                    return ResultWrapper<KycStatusDto>.Success(new KycStatusDto { 
                         Status = KycStatus.NotStarted,
                         VerificationLevel = KycLevel.None
-                    });
+                    };
                 }
 
                 // Return the most recent KYC data
                 var latestKyc = kycData.OrderByDescending(k => VerificationLevel.GetIndex(k.VerificationLevel)).First();
 
-                return ResultWrapper<KycStatusDto>.Success(KycStatusDto.FromKycData(latestKyc));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error getting KYC status for user {userId}: {ex.Message}");
-                await LogAuditEvent(userId, "GetKycStatus", $"Error: {ex.Message}");
-                return ResultWrapper<KycStatusDto>.FromException(ex);
-            }
-        }
-        public async Task<ResultWrapper<KycSessionData>> GetOrCreateUserSessionAsync(Guid userId, string verificationLevel)
-        {
-            try
-            {
-                // Input validation
-                if (userId == Guid.Empty)
+                return KycStatusDto.FromKycData(latestKyc);
+            })
+            .OnError(async (ex) =>
                 {
-                    throw new ArgumentException("Invalid user ID", nameof(userId));
-                }
-
-                if (!IsValidKycLevel(verificationLevel))
-                {
-                    throw new ArgumentException("Invalid verification level", nameof(verificationLevel));
-                }
-
-                await LogAuditEvent(userId, "CreateSession", $"Session requested for level: {verificationLevel}");
-
-                // Check for existing active session
-                var existingSession = await GetActiveSession(userId);
-                if (existingSession != null)
-                {
-                    // Extend session if within timeout
-                    if (existingSession.ExpiresAt > DateTime.UtcNow)
-                    {
-                        existingSession.ExpiresAt = DateTime.UtcNow.Add(_sessionTimeout);
-                        await _sessionRepository.UpdateAsync(existingSession.Id, new Dictionary<string, object>
-                        {
-                            ["ExpiresAt"] = existingSession.ExpiresAt,
-                            ["UpdatedAt"] = DateTime.UtcNow
-                        });
-
-                        return ResultWrapper<KycSessionData>.Success(existingSession);
-                    }
-                    else
-                    {
-                        // Mark expired session as expired
-                        await _sessionRepository.UpdateAsync(existingSession.Id, new Dictionary<string, object>
-                        {
-                            ["Status"] = "EXPIRED",
-                            ["UpdatedAt"] = DateTime.UtcNow
-                        });
-                    }
-                }
-
-                // Create new session
-                var sessionData = new KycSessionData
-                {
-                    Id = Guid.NewGuid(),
-                    UserId = userId,
-                    SessionId = GenerateSecureSessionId(),
-                    Status = "ACTIVE",
-                    VerificationLevel = verificationLevel,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow,
-                    ExpiresAt = DateTime.UtcNow.Add(_sessionTimeout),
-                    SecurityContext = new SessionSecurityContext
-                    {
-                        IpAddress = GetClientIpAddress(),
-                        UserAgent = GetUserAgent(),
-                        CreatedAt = DateTime.UtcNow
-                    }
-                };
-
-                var createResult = await _sessionRepository.InsertAsync(sessionData);
-                if (!createResult.IsSuccess)
-                {
-                    throw new DatabaseException("Failed to create KYC session");
-                }
-
-                await LogAuditEvent(userId, "SessionCreated", $"Session {sessionData.SessionId} created");
-
-                return ResultWrapper<KycSessionData>.Success(sessionData);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error creating KYC session for user {userId}: {ex.Message}");
-                await LogAuditEvent(userId, "CreateSession", $"Error: {ex.Message}");
-                return ResultWrapper<KycSessionData>.FromException(ex);
-            }
+                    await _kycAuditService.LogAuditEvent(userId, "GetKycStatus", $"Error: {ex.Message}");
+                })
+            .ExecuteAsync();
         }
 
         public async Task<ResultWrapper<KycData>> VerifyAsync(KycVerificationRequest request)
         {
-            try
+            // Enhanced input validation
+            var validationResult = ValidateVerificationRequest(request);
+            if (!validationResult.IsValid)
             {
-                // Enhanced input validation
-                var validationResult = ValidateVerificationRequest(request);
-                if (!validationResult.IsValid)
-                {
-                    return ResultWrapper<KycData>.Failure(FailureReason.ValidationError, validationResult.ErrorMessage);
-                }
+                return ResultWrapper<KycData>.Failure(FailureReason.ValidationError, validationResult.ErrorMessage);
 
-                await LogAuditEvent(request.UserId, "VerificationStarted", "KYC verification process initiated");
-
-                // Verify session
-                var sessionResult = await ValidateSessionAsync(request.SessionId, request.UserId);
-                if (!sessionResult.IsSuccess)
-                {
-                    return ResultWrapper<KycData>.Failure(FailureReason.ValidationError, sessionResult.ErrorMessage);
-                }
-
-                // Get or create KYC record
-                var kycResult = await GetUserKycDataDecryptedAsync(request.UserId);
-                if (!kycResult.IsSuccess)
-                {
-                    return ResultWrapper<KycData>.Failure(FailureReason.KYCFetchError, kycResult.ErrorMessage);
-                }
-
-                var kycData = kycResult.Data;
-
-                // Process verification based on level
-                var verificationResult = await ProcessVerification(request);
-                if (!verificationResult.IsSuccess)
-                {
-                    await LogAuditEvent(request.UserId, "VerificationFailed", verificationResult.ErrorMessage);
-                    return ResultWrapper<KycData>.Failure(FailureReason.KYCFetchError, verificationResult.ErrorMessage);
-                }
-
-                // Update KYC record with verification results
-                await UpdateKycWithVerificationResults(kycData, request, verificationResult.Data);
-
-                await LogAuditEvent(request.UserId, "VerificationCompleted",
-                    $"KYC verification completed with status: {kycData.Status}");
-
-                // Send notification
-                await SendVerificationNotification(kycData);
-
-                return ResultWrapper<KycData>.Success(kycData);
             }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error in KYC verification: {ex.Message}");
-                await LogAuditEvent(request.UserId, "VerificationError", $"Error: {ex.Message}");
-                return ResultWrapper<KycData>.FromException(ex);
-            }
+
+            return await _resilienceService.CreateBuilder(
+             new Scope
+             {
+                 NameSpace = "Infrastructure.Services.KYC",
+                 FileName = "Kycrvice",
+                 OperationName = "VerifyAsync(KycVerificationRequest request)",
+                 State = {
+                    ["UserId"] = request.UserId,
+                    ["SessionId"] = request.SessionId,
+                    ["VerificationLevel"] = request.VerificationLevel,
+                 }
+             },
+             async () =>
+             {
+                 await _kycAuditService.LogAuditEvent(request.UserId, "VerificationStarted", "KYC verification process initiated");
+
+                 // Verify session
+                 var sessionResult = await _kycSessionService.ValidateSessionAsync(request.SessionId, request.UserId);
+                 if (!sessionResult.IsSuccess)
+                 {
+                     throw new ValidationException($"Invalid KYC session: {sessionResult.ErrorMessage}", []);
+                 }
+
+                 // Get or create KYC record
+                 var kycResult = await GetUserKycDataDecryptedAsync(request.UserId);
+                 if (!kycResult.IsSuccess)
+                 {
+                     throw new ResourceNotFoundException($"KYC record not found for user {request.UserId}", request.UserId.ToString());
+                 }
+
+                 var kycData = kycResult.Data;
+
+                 // Process verification based on level
+                 var verificationResult = await ProcessVerification(request);
+                 if (!verificationResult.IsSuccess)
+                 {
+                     await _kycAuditService.LogAuditEvent(request.UserId, "VerificationFailed", verificationResult.ErrorMessage);
+                     throw new ValidationException("KYC verification failed", []);
+                 }
+
+                 // Update KYC record with verification results
+                 await UpdateKycWithVerificationResults(kycData, request, verificationResult.Data);
+
+                 return kycData;
+             })
+                .OnSuccess(async (kycData) =>
+                {
+                    await _kycAuditService.LogAuditEvent(request.UserId, "VerificationCompleted",
+                        $"KYC verification completed with status: {kycData.Status}");
+
+                    await SendVerificationNotification(kycData); ;
+                })
+                .OnError(async (ex) =>
+                {
+                    await _kycAuditService.LogAuditEvent(request.UserId, "VerificationError", $"Error: {ex.Message}");
+                })
+                .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper<bool>> IsUserVerifiedAsync(Guid userId, string requiredLevel = KycLevel.Standard)
+        public async Task<ResultWrapper<bool>> IsUserVerifiedAsync(Guid userId, string requiredLevel = KycLevel.Basic)
         {
-            try
-            {
-                var kycResult = await GetUserKycDataDecryptedAsync(userId);
-                if (!kycResult.IsSuccess)
-                {
-                    return ResultWrapper<bool>.Failure(kycResult.Reason, kycResult.ErrorMessage);
-                }
+            return await _resilienceService.CreateBuilder(
+             new Scope
+             {
+                 NameSpace = "Infrastructure.Services.KYC",
+                 FileName = "Kycrvice",
+                 OperationName = "IsUserVerifiedAsync(Guid userId, string requiredLevel = KycLevel.Standard)",
+                 State = {
+                    ["UserId"] = userId,
+                    ["RequiredLevel"] = requiredLevel,
+                 }
+             },
+             async () =>
+             {
+                 var kycResult = await GetUserKycDataDecryptedAsync(userId);
+                 if (!kycResult.IsSuccess)
+                 {
+                     throw new ResourceNotFoundException($"KYC record not found for user {userId}", userId.ToString());
+                 }
 
-                var kycData = kycResult.Data;
+                 var kycData = kycResult.Data;
 
-                // Check verification status and level
-                var isVerified = kycData.Status == KycStatus.Approved &&
-                                GetKycLevelValue(kycData.VerificationLevel) >= GetKycLevelValue(requiredLevel) &&
-                                !IsVerificationExpired(kycData);
+                 // Check verification status and level
+                 var isVerified = kycData.Status == KycStatus.Approved &&
+                                 GetKycLevelValue(kycData.VerificationLevel) >= GetKycLevelValue(requiredLevel) &&
+                                 !IsVerificationExpired(kycData);
 
-                return ResultWrapper<bool>.Success(isVerified);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error checking user verification: {ex.Message}");
-                return ResultWrapper<bool>.FromException(ex);
-            }
+                 return isVerified;
+             })
+                .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper> UpdateKycStatusAsync(Guid userId, string status, string? adminUserId = null, string? reason = null)
+        public async Task<ResultWrapper<CrudResult<KycData>>> UpdateKycStatusAsync(Guid userId, string status, string? adminUserId = null, string? reason = null)
         {
-            try
+            if (!IsValidKycStatus(status))
             {
-                if (!IsValidKycStatus(status))
-                {
-                    return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid KYC status provided");
-                }
-
-                var kycResult = await GetUserKycDataDecryptedAsync(userId);
-                if (!kycResult.IsSuccess)
-                {
-                    return ResultWrapper.Failure(FailureReason.NotFound, "KYC record not found");
-                }
-
-                var kycData = kycResult.Data;
-                var previousStatus = kycData.Status;
-
-                // Update status
-                kycData.Status = status;
-                kycData.UpdatedAt = DateTime.UtcNow;
-
-                if (status == KycStatus.Approved)
-                {
-                    kycData.VerifiedAt = DateTime.UtcNow;
-                    kycData.ExpiresAt = DateTime.UtcNow.AddYears(1); // Verification expires after 1 year
-                }
-
-                // Add history entry
-                var historyEntry = new KycHistoryEntry
-                {
-                    Timestamp = DateTime.UtcNow,
-                    Action = "StatusUpdate",
-                    PreviousStatus = previousStatus,
-                    NewStatus = status,
-                    PerformedBy = adminUserId ?? "SYSTEM",
-                    Reason = reason ?? "Status updated",
-                    Details = new Dictionary<string, object>
-                    {
-                        ["UpdatedBy"] = adminUserId ?? "SYSTEM",
-                        ["UpdatedAt"] = DateTime.UtcNow
-                    }
-                };
-
-                kycData.History.Add(historyEntry);
-
-                // Update in database
-                var updateFields = new Dictionary<string, object>
-                {
-                    ["Status"] = kycData.Status,
-                    ["UpdatedAt"] = kycData.UpdatedAt,
-                    ["History"] = kycData.History
-                };
-
-                if (kycData.VerifiedAt.HasValue)
-                {
-                    updateFields["VerifiedAt"] = kycData.VerifiedAt;
-                }
-
-                if (kycData.ExpiresAt.HasValue)
-                {
-                    updateFields["ExpiresAt"] = kycData.ExpiresAt;
-                }
-
-                var updateResult = await _repository.UpdateAsync(kycData.Id, updateFields);
-                if (!updateResult.IsSuccess)
-                {
-                    throw new DatabaseException("Failed to update KYC status");
-                }
-
-                await LogAuditEvent(userId, "StatusUpdated",
-                    $"Status changed from {previousStatus} to {status} by {adminUserId ?? "SYSTEM"}");
-
-                // Send notification
-                await SendStatusUpdateNotification(kycData, previousStatus);
-
-                return ResultWrapper.Success();
+                return ResultWrapper<CrudResult<KycData>>.Failure(FailureReason.ValidationError, "Invalid KYC status provided");
             }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error updating KYC status: {ex.Message}");
-                await LogAuditEvent(userId, "StatusUpdateError", $"Error: {ex.Message}");
-                return ResultWrapper.FromException(ex);
-            }
+
+            return await _resilienceService.CreateBuilder(
+             new Scope
+             {
+                 NameSpace = "Infrastructure.Services.KYC",
+                 FileName = "Kycrvice",
+                 OperationName = "IsUserVerifiedAsync(Guid userId, string requiredLevel = KycLevel.Standard)",
+                 State = {
+                    ["UserId"] = userId,
+                    ["Status"] = status,
+                    ["AdminUserId"] = adminUserId,
+                    ["Reason"] = reason,
+                 },
+                 LogLevel = LogLevel.Critical
+             },
+             async () =>
+             {
+                 var kycResult = await GetUserKycDataDecryptedAsync(userId);
+                 if (!kycResult.IsSuccess)
+                 {
+                     throw new ResourceNotFoundException($"KYC record not found for user {userId}", userId.ToString());
+                 }
+
+                 var kycData = kycResult.Data;
+                 var previousStatus = kycData.Status;
+
+                 // Update status
+                 kycData.Status = status;
+                 kycData.UpdatedAt = DateTime.UtcNow;
+
+                 if (status == KycStatus.Approved)
+                 {
+                     kycData.VerifiedAt = DateTime.UtcNow;
+                     kycData.ExpiresAt = DateTime.UtcNow.AddYears(1); // Verification expires after 1 year
+                 }
+
+                 // Add history entry
+                 var historyEntry = new KycHistoryEntry
+                 {
+                     Timestamp = DateTime.UtcNow,
+                     Action = "StatusUpdate",
+                     PreviousStatus = previousStatus,
+                     NewStatus = status,
+                     PerformedBy = adminUserId ?? "SYSTEM",
+                     Reason = reason ?? "Status updated",
+                     Details = new Dictionary<string, object>
+                     {
+                         ["UpdatedBy"] = adminUserId ?? "SYSTEM",
+                         ["UpdatedAt"] = DateTime.UtcNow
+                     }
+                 };
+
+                 kycData.History.Add(historyEntry);
+
+                 // Update in database
+                 var updateFields = new Dictionary<string, object>
+                 {
+                     ["Status"] = kycData.Status,
+                     ["UpdatedAt"] = kycData.UpdatedAt,
+                     ["History"] = kycData.History
+                 };
+
+                 if (kycData.VerifiedAt.HasValue)
+                 {
+                     updateFields["VerifiedAt"] = kycData.VerifiedAt;
+                 }
+
+                 if (kycData.ExpiresAt.HasValue)
+                 {
+                     updateFields["ExpiresAt"] = kycData.ExpiresAt;
+                 }
+
+                 var updateResult = await UpdateAsync(kycData.Id, updateFields);
+                 if (updateResult == null || !updateResult.IsSuccess || updateResult.Data == null || !updateResult.Data.IsSuccess)
+                 {
+                     throw new DatabaseException($"Failed to update KYC status: {updateResult?.ErrorMessage ?? "Update result returned null"}");
+                 }
+
+                 return updateResult.Data;
+             })
+                .OnSuccess(async(crudResult) =>
+                {
+                    var previousStatus = crudResult.Documents.First().History.Last().PreviousStatus;
+                    var kycData = crudResult.Documents.FirstOrDefault();
+                    await _kycAuditService.LogAuditEvent(userId, "StatusUpdated",
+                     $"Status changed from {previousStatus} to {status} by {adminUserId ?? "SYSTEM"}");
+
+                    // Send notification
+                    await SendStatusUpdateNotification(kycData, previousStatus);
+                })
+                .OnError(async (ex) =>
+                {
+                    await _kycAuditService.LogAuditEvent(userId, "StatusUpdateError", $"Error: {ex.Message}");
+                })
+                .ExecuteAsync();
         }
 
         public async Task<ResultWrapper<PaginatedResult<KycData>>> GetPendingVerificationsAsync(int page = 1, int pageSize = 20)
         {
-            try
-            {
-                var statusFilter = Builders<KycData>.Filter.Or(
-                    Builders<KycData>.Filter.Eq(k => k.Status, KycStatus.Pending),
-                    Builders<KycData>.Filter.Eq(k => k.Status, KycStatus.NeedsReview)
-                );
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                 {
+                     NameSpace = "Infrastructure.Services.KYC",
+                     FileName = "Kycrvice",
+                     OperationName = "GetPendingVerificationsAsync(int page = 1, int pageSize = 20)",
+                     State = []
+                 },
+                 async () =>
+                 {
+                     var statusFilter = Builders<KycData>.Filter.Or(
+                        Builders<KycData>.Filter.Eq(k => k.Status, KycStatus.Pending),
+                        Builders<KycData>.Filter.Eq(k => k.Status, KycStatus.NeedsReview)
+                    );
 
-                var sort = Builders<KycData>.Sort.Descending(k => k.UpdatedAt);
+                     var sort = Builders<KycData>.Sort.Descending(k => k.UpdatedAt);
 
-                int totalCount = (int) await _repository.CountAsync(statusFilter);
-                var paginatedResult = await _repository.GetPaginatedAsync(statusFilter, sort, page, pageSize);
+                     var paginatedResult = await GetPaginatedAsync(statusFilter, sort, page, pageSize);
 
-                // Decrypt personal data for admin view
-                foreach (var item in paginatedResult.Items)
-                {
-                    if (item.EncryptedPersonalData != null)
-                    {
-                        item.PersonalData = DecryptPersonalData(item.EncryptedPersonalData);
-                    }
-                }
+                     if(paginatedResult == null || !paginatedResult.IsSuccess)
+                     {
+                         throw new DatabaseException($"Failed to fetch pending verifications: {paginatedResult?.ErrorMessage ?? "Fetch result returned null"}");
+                     }
 
-                var result = new PaginatedResult<KycData>
-                {
-                    Items = paginatedResult.Items,
-                    Page = page,
-                    PageSize = pageSize,
-                    TotalCount = totalCount
-                };
+                     // Decrypt personal data for admin view
+                     foreach (var item in paginatedResult.Data.Items)
+                     {
+                         if (item.EncryptedPersonalData != null)
+                         {
+                             item.PersonalData = DecryptPersonalData(item.EncryptedPersonalData);
+                         }
+                     }
 
-                return ResultWrapper<PaginatedResult<KycData>>.Success(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error getting pending verifications: {ex.Message}");
-                return ResultWrapper<PaginatedResult<KycData>>.FromException(ex);
-            }
+                     var result = new PaginatedResult<KycData>
+                     {
+                         Items = paginatedResult.Data.Items,
+                         Page = page,
+                         PageSize = pageSize,
+                         TotalCount = paginatedResult.Data.Items.Count()
+                     };
+
+                     return result;
+                 })
+                .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper> PerformAmlCheckAsync(Guid userId)
+        public async Task<ResultWrapper<AmlResult>> PerformAmlCheckAsync(Guid userId)
         {
-            try
-            {
-                await LogAuditEvent(userId, "AmlCheckStarted", "AML check initiated");
-
-                var kycResult = await GetUserKycDataDecryptedAsync(userId);
-                if (!kycResult.IsSuccess)
+            return await _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    return ResultWrapper.Failure(FailureReason.NotFound, "KYC record not found");
-                }
+                    NameSpace = "Infrastructure.Services.KYC",
+                    FileName = "Kycrvice",
+                    OperationName = "PerformAmlCheckAsync(Guid userId)",
+                    State =
+                    {
+                        ["UserId"] = userId
+                    }
+                },
+                 async () =>
+                 {
+                     await _kycAuditService.LogAuditEvent(userId, "AmlCheckStarted", "AML check initiated");
 
-                var kycData = kycResult.Data;
+                     var kycResult = await GetUserKycDataDecryptedAsync(userId);
+                     if (!kycResult.IsSuccess)
+                     {
+                         throw new ResourceNotFoundException($"KYC record not found for user {userId}", userId.ToString());
+                     }
 
-                // Perform internal AML checks
-                var amlResult = await PerformInternalAmlChecks(kycData);
+                     var kycData = kycResult.Data;
 
-                // Update KYC record with AML results
-                var updateFields = new Dictionary<string, object>
+                     // Perform internal AML checks
+                     var amlResult = await PerformInternalAmlChecks(kycData);
+
+                     // Update KYC record with AML results
+                     var updateFields = new Dictionary<string, object>
+                     {
+                         ["AmlCheckDate"] = DateTime.UtcNow,
+                         ["AmlStatus"] = amlResult.Status,
+                         ["AmlRiskScore"] = amlResult.RiskScore,
+                         ["UpdatedAt"] = DateTime.UtcNow
+                     };
+
+                     if (amlResult.RiskLevel == "HIGH")
+                     {
+                         updateFields["SecurityFlags.RequiresReview"] = true;
+                         updateFields["SecurityFlags.HighRiskIndicators"] = amlResult.RiskIndicators;
+                     }
+
+                     var updateResult = await UpdateAsync(kycData.Id, updateFields);
+
+                     if (updateResult == null || !updateResult.IsSuccess || updateResult.Data == null || !updateResult.Data.IsSuccess)
+                     {
+                         throw new DatabaseException($"Failed to update KYC AML check: {updateResult?.ErrorMessage ?? "Update result returned null"}");
+                     }
+                     return amlResult;
+                 })
+                .OnSuccess(async (amlResult) =>
                 {
-                    ["AmlCheckDate"] = DateTime.UtcNow,
-                    ["AmlStatus"] = amlResult.Status,
-                    ["AmlRiskScore"] = amlResult.RiskScore,
-                    ["UpdatedAt"] = DateTime.UtcNow
-                };
-
-                if (amlResult.RiskLevel == "HIGH")
+                    await _kycAuditService.LogAuditEvent(userId, "AmlCheckCompleted",
+                         $"AML check completed with status: {amlResult.Status}, Risk: {amlResult.RiskLevel}");
+                })
+                .OnError(async ex =>
                 {
-                    updateFields["SecurityFlags.RequiresReview"] = true;
-                    updateFields["SecurityFlags.HighRiskIndicators"] = amlResult.RiskIndicators;
-                }
-
-                await _repository.UpdateAsync(kycData.Id, updateFields);
-
-                await LogAuditEvent(userId, "AmlCheckCompleted",
-                    $"AML check completed with status: {amlResult.Status}, Risk: {amlResult.RiskLevel}");
-
-                return ResultWrapper.Success();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error performing AML check: {ex.Message}");
-                await LogAuditEvent(userId, "AmlCheckError", $"Error: {ex.Message}");
-                return ResultWrapper.FromException(ex);
-            }
+                    await _kycAuditService.LogAuditEvent(userId, "AmlCheckError", $"Error: {ex.Message}");
+                })
+                .ExecuteAsync();
         }
 
         public async Task<ResultWrapper<bool>> IsUserEligibleForTrading(Guid userId)
         {
-            try
-            {
-                var verificationResult = await IsUserVerifiedAsync(userId, KycLevel.Standard);
-                if (!verificationResult.IsSuccess)
+            return await _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    return verificationResult;
-                }
+                    NameSpace = "Infrastructure.Services.KYC",
+                    FileName = "Kycrvice",
+                    OperationName = "IsUserEligibleForTrading(Guid userId)",
+                    State =
+                    {
+                        ["UserId"] = userId
+                    }
+                },
+                 async () =>
+                 {
+                     var verificationResult = await IsUserVerifiedAsync(userId, KycLevel.Basic);
+                     if (verificationResult == null || !verificationResult.IsSuccess)
+                     {
+                         throw new KycVerificationException($"Failed to check user verification: {verificationResult?.ErrorMessage ?? "Verification result returned null"}");
+                     }
 
-                if (!verificationResult.Data)
-                {
-                    return ResultWrapper<bool>.Success(false);
-                }
+                     if (!verificationResult.Data)
+                     {
+                         return false;
+                     }
 
-                // Additional checks for trading eligibility
-                var kycResult = await GetUserKycDataDecryptedAsync(userId);
-                if (!kycResult.IsSuccess)
-                {
-                    return ResultWrapper<bool>.Success(false);
-                }
+                     // Additional checks for trading eligibility
+                     var kycResult = await GetUserKycDataDecryptedAsync(userId);
+                     if (!kycResult.IsSuccess)
+                     {
+                         return false;
+                     }
 
-                var kycData = kycResult.Data;
+                     var kycData = kycResult.Data;
 
-                // Check if user has any security flags that prevent trading
-                var isEligible = kycData.SecurityFlags?.RequiresReview != true &&
-                                kycData.AmlStatus != "BLOCKED" &&
-                                !IsVerificationExpired(kycData);
+                     // Check if user has any security flags that prevent trading
+                     var isEligible = kycData.SecurityFlags?.RequiresReview != true &&
+                                     kycData.AmlStatus != "BLOCKED" &&
+                                     !IsVerificationExpired(kycData);
 
-                return ResultWrapper<bool>.Success(isEligible);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error checking trading eligibility: {ex.Message}");
-                return ResultWrapper<bool>.FromException(ex);
-            }
-        }
-
-        public async Task<ResultWrapper<KycSessionData>> ValidateSessionAsync(Guid sessionId, Guid userId)
-        {
-            try
-            {
-                var filter = Builders<KycSessionData>.Filter.And(
-                    Builders<KycSessionData>.Filter.Eq(s => s.Id, sessionId),
-                    Builders<KycSessionData>.Filter.Eq(s => s.UserId, userId),
-                    Builders<KycSessionData>.Filter.Eq(s => s.Status, "ACTIVE"),
-                    Builders<KycSessionData>.Filter.Gt(s => s.ExpiresAt, DateTime.UtcNow)
-                );
-
-                var sessions = await _sessionRepository.GetAllAsync(filter);
-                var session = sessions?.FirstOrDefault();
-
-                if (session == null)
-                {
-                    return ResultWrapper<KycSessionData>.Failure(FailureReason.NotFound, "Session not found or expired");
-                }
-
-                // Update last accessed time and security context
-                var updateFields = new Dictionary<string, object>
-                {
-                    ["UpdatedAt"] = DateTime.UtcNow,
-                    ["SecurityContext.LastAccessedAt"] = DateTime.UtcNow,
-                    ["SecurityContext.IpAddress"] = GetClientIpAddress(),
-                    ["SecurityContext.UserAgent"] = GetUserAgent()
-                };
-
-                await _sessionRepository.UpdateAsync(session.Id, updateFields);
-
-                await LogAuditEvent(userId, "SessionValidated", $"Session {sessionId} validated successfully");
-
-                return ResultWrapper<KycSessionData>.Success(session);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error validating KYC session {sessionId} for user {userId}: {ex.Message}");
-                await LogAuditEvent(userId, "SessionValidationError", $"Error: {ex.Message}");
-                return ResultWrapper<KycSessionData>.FromException(ex);
-            }
-        }
-
-        public async Task<ResultWrapper> InvalidateSessionAsync(Guid sessionId, Guid userId, string reason = "Manual invalidation")
-        {
-            try
-            {
-                var updateFields = new Dictionary<string, object>
-                {
-                    ["Status"] = "EXPIRED",
-                    ["UpdatedAt"] = DateTime.UtcNow,
-                    ["CompletedAt"] = DateTime.UtcNow
-                };
-
-                var updateResult = await _sessionRepository.UpdateAsync(sessionId, updateFields);
-                if (!updateResult.IsSuccess)
-                {
-                    return ResultWrapper.Failure(FailureReason.DatabaseError, "Failed to invalidate session");
-                }
-
-                await LogAuditEvent(userId, "SessionInvalidated", $"Session {sessionId} invalidated: {reason}");
-                return ResultWrapper.Success();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error invalidating session {sessionId}: {ex.Message}");
-                return ResultWrapper.FromException(ex);
-            }
-        }
-
-        public async Task<ResultWrapper> UpdateSessionProgressAsync(Guid sessionId, SessionProgress progress)
-        {
-            try
-            {
-                var updateFields = new Dictionary<string, object>
-                {
-                    ["Progress"] = progress,
-                    ["UpdatedAt"] = DateTime.UtcNow
-                };
-
-                var updateResult = await _sessionRepository.UpdateAsync(sessionId, updateFields);
-                return updateResult.IsSuccess
-                    ? ResultWrapper.Success()
-                    : ResultWrapper.Failure(FailureReason.DatabaseError, "Failed to update session progress");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error updating session progress: {ex.Message}");
-                return ResultWrapper.FromException(ex);
-            }
+                     return isEligible;
+                 })
+                .ExecuteAsync();
         }
 
         // Private helper methods
-
-        private async Task<KycSessionData?> GetActiveSession(Guid userId)
-        {
-            var filter = Builders<KycSessionData>.Filter.And(
-                Builders<KycSessionData>.Filter.Eq(s => s.UserId, userId),
-                Builders<KycSessionData>.Filter.Eq(s => s.Status, "ACTIVE"),
-                Builders<KycSessionData>.Filter.Gt(s => s.ExpiresAt, DateTime.UtcNow)
-            );
-
-            var sessions = await _sessionRepository.GetAllAsync(filter);
-            return sessions?.FirstOrDefault();
-        }
 
         private ValidationResult ValidateVerificationRequest(KycVerificationRequest request)
         {
@@ -951,7 +832,7 @@ namespace Infrastructure.Services.KYC
             kycData.History.Add(historyEntry);
 
             var documents = await _documentService.GetSessionDocumentsAsync(request.SessionId, request.UserId);
-            var liveCaptures = await _documentService.GetSessionLiveCapturesAsync(request.SessionId, request.UserId);
+            var liveCaptures = await _liveCaptureService.GetSessionLiveCapturesAsync(request.SessionId, request.UserId);
 
             // Update in database
             var updateFields = new Dictionary<string, object>
@@ -977,8 +858,8 @@ namespace Infrastructure.Services.KYC
                 updateFields["ExpiresAt"] = kycData.ExpiresAt;
             }
 
-            var updateResult = await _repository.UpdateAsync(kycData.Id, updateFields);
-            if (updateResult == null || !updateResult.IsSuccess || updateResult.ModifiedCount == 0)
+            var updateResult = await UpdateAsync(kycData.Id, updateFields);
+            if (updateResult == null || !updateResult.IsSuccess || updateResult.Data.ModifiedCount == 0)
             {
                 throw new DatabaseException("Failed to update KYC record with verification results");
             }
@@ -1026,9 +907,17 @@ namespace Infrastructure.Services.KYC
             return amlResult;
         }
 
-        private string EncryptPersonalData(object personalData)
+        private string? EncryptPersonalData(object personalData)
         {
-            return _dataProtector.Protect(JsonConvert.SerializeObject(personalData));
+            try
+            {
+                return _dataProtector.Protect(JsonConvert.SerializeObject(personalData));
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogError($"Error encrypting personal data: {ex.Message}");
+                return null;
+            }
         }
 
         private Dictionary<string, object>? DecryptPersonalData(string encryptedData)
@@ -1048,7 +937,7 @@ namespace Infrastructure.Services.KYC
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error decrypting personal data: {ex.Message}");
+                _loggingService.LogError($"Error decrypting personal data: {ex.Message}");
                 return null;
             }
         }
@@ -1090,14 +979,6 @@ namespace Infrastructure.Services.KYC
             }
         }
 
-        private string GenerateSecureSessionId()
-        {
-            using var rng = RandomNumberGenerator.Create();
-            var bytes = new byte[32];
-            rng.GetBytes(bytes);
-            return Convert.ToBase64String(bytes);
-        }
-
         private bool IsValidKycLevel(string level)
         {
             return !string.IsNullOrWhiteSpace(level) &&
@@ -1124,34 +1005,6 @@ namespace Infrastructure.Services.KYC
         private bool IsVerificationExpired(KycData kycData)
         {
             return kycData.ExpiresAt.HasValue && kycData.ExpiresAt.Value <= DateTime.UtcNow;
-        }
-
-        private async Task LogAuditEvent(Guid userId, string action, string details)
-        {
-            var auditLog = new KycAuditLog
-            {
-                Id = Guid.NewGuid(),
-                UserId = userId,
-                Action = action,
-                Details = details,
-                Timestamp = DateTime.UtcNow,
-                IpAddress = GetClientIpAddress(),
-                UserAgent = GetUserAgent()
-            };
-
-            await _auditRepository.InsertAsync(auditLog);
-        }
-
-        private string GetClientIpAddress()
-        {
-            // This would be injected from HttpContext in a real implementation
-            return "127.0.0.1";
-        }
-
-        private string GetUserAgent()
-        {
-            // This would be injected from HttpContext in a real implementation
-            return "KYC-Service/1.0";
         }
 
         private async Task SendVerificationNotification(KycData kycData)

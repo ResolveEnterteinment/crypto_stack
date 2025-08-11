@@ -38,6 +38,15 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
         return AssetColors[ticker] || '#6B7280'; // Gray fallback
     };
 
+    const formatCurrency = (amount: number): string => {
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(amount);
+    };
+
     // Calculate total value to determine proportions
     const calculateTotal = (): number => {
         if (!assetHoldings || !assetHoldings.length) return 0;
@@ -218,7 +227,7 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
                                             <Col xs={12} sm={6}>
                                                 <div style={{ textAlign: 'center' }}>
                                                     <Text strong style={{ fontSize: '13px', display: 'block', color: '#52c41a' }}>
-                                                        ${holding.value.toFixed(2)}
+                                                        {formatCurrency(holding.value)}
                                                     </Text>
                                                     <Text type="secondary" style={{ fontSize: '11px' }}>
                                                         {percentage}%
@@ -249,7 +258,7 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
                         <Col>
                             <Space direction="vertical" size={0} style={{ textAlign: 'right' }}>
                                 <Text strong style={{ fontSize: '16px', color: '#52c41a' }}>
-                                    ${totalValue.toFixed(2)}
+                                    {formatCurrency(totalValue)}
                                 </Text>
                                 <Text type="secondary" style={{ fontSize: '12px' }}>
                                     {assetHoldings.length} {assetHoldings.length === 1 ? 'asset' : 'assets'}

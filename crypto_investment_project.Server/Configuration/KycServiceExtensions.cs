@@ -1,9 +1,5 @@
-using Application.Interfaces.Base;
 using Application.Interfaces.KYC;
-using Domain.DTOs.KYC;
 using Domain.DTOs.Settings;
-using Domain.Models.KYC;
-using Infrastructure.Services.Base;
 using Infrastructure.Services.KYC;
 
 namespace crypto_investment_project.Server.Configuration
@@ -18,9 +14,12 @@ namespace crypto_investment_project.Server.Configuration
             services.AddSingleton<OpenSanctionsService>();
 
             services.AddScoped<IKycService, KycService>();
+            services.AddScoped<IKycSessionService, KycSessionService>();
+            services.AddScoped<IKycAuditService, KycAuditService>();
             services.AddScoped<IDocumentService, DocumentService>();
-            services.AddScoped<ICrudRepository<DocumentRecord>, Repository<DocumentRecord>>();
-            services.AddScoped<ICrudRepository<LiveCaptureRecord>, Repository<LiveCaptureRecord>>();
+            services.AddScoped<ILiveCaptureService, LiveCaptureService>();
+            //services.AddScoped<ICrudRepository<DocumentData>, Repository<DocumentData>>();
+            //services.AddScoped<ICrudRepository<LiveCaptureData>, Repository<LiveCaptureData>>();
 
             services.AddKycMiddleware(configuration.GetSection("KYC"));
 

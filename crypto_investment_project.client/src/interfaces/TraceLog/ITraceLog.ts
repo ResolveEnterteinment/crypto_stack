@@ -10,15 +10,15 @@ export enum LogLevel {
 
 }
 
-    /*
-    | 'Trace'
-    | 'Debug'
-    | 'Information'
-    | 'Warning'
-    | 'Error'
-    | 'Critical'
-    | 'None';
-    */
+/*
+| 'Trace'
+| 'Debug'
+| 'Information'
+| 'Warning'
+| 'Error'
+| 'Critical'
+| 'None';
+*/
 
 // Allowed resolution statuses
 export enum ResolutionStatus {
@@ -88,4 +88,35 @@ export default interface ITraceLog {
      * Timestamp when the log was resolved
      */
     resolvedAt?: string;
+
+    // Enhanced stack trace properties for Error and Critical levels
+    /**
+     * Stack trace information for Error and Critical level logs
+     */
+    stackTrace?: string | null;
+
+    /**
+     * Exception type name if the log is related to an exception
+     */
+    exceptionType?: string | null;
+
+    /**
+     * Inner exception details if available
+     */
+    innerException?: string | null;
+
+    /**
+     * The method name where the log was generated
+     */
+    callerMemberName?: string | null;
+
+    /**
+     * The file path where the log was generated
+     */
+    callerFilePath?: string | null;
+
+    /**
+     * The line number where the log was generated
+     */
+    callerLineNumber?: number | null;
 }

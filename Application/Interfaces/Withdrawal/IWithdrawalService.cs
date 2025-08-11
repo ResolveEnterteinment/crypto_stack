@@ -14,16 +14,16 @@ namespace Application.Interfaces.Withdrawal
     public interface IWithdrawalService
     {
         Task<ResultWrapper<WithdrawalLimitDto>> GetUserWithdrawalLimitsAsync(Guid userId);
-        Task<ResultWrapper<WithdrawalRequestDto>> RequestWithdrawalAsync(WithdrawalRequest request);
+        Task<ResultWrapper<WithdrawalReceiptDto>> RequestCryptoWithdrawalAsync(CryptoWithdrawalRequest request);
+        //Task<ResultWrapper<WithdrawalReceiptDto>> RequestBankWithdrawalAsync(CryptoWithdrawalRequest request);
         Task<ResultWrapper<List<WithdrawalData>>> GetUserWithdrawalHistoryAsync(Guid userId);
         Task<ResultWrapper<WithdrawalData>> GetWithdrawalDetailsAsync(Guid withdrawalId);
-        Task<ResultWrapper> UpdateWithdrawalStatusAsync(Guid withdrawalId, string status, Guid processedBy, string? comment = null, string? transationHash = null);
+        Task<ResultWrapper<CrudResult<WithdrawalData>>> UpdateWithdrawalStatusAsync(Guid withdrawalId, string status, Guid processedBy, string? comment = null, string? transationHash = null);
         Task<ResultWrapper<PaginatedResult<WithdrawalData>>> GetPendingWithdrawalsAsync(int page = 1, int pageSize = 20);
         Task<ResultWrapper<decimal>> GetUserWithdrawalTotalsAsync(Guid userId, DateTime startDate, DateTime endDate);
         Task<ResultWrapper<decimal>> GetMinimumWithdrawalThresholdAsync(string assetTicker);
         Task<ResultWrapper<bool>> CanUserWithdrawAsync(Guid userId, decimal amount, string ticker);
         Task<ResultWrapper<List<NetworkDto>>> GetSupportedNetworksAsync(string assetTicker);
-        Task<ResultWrapper<bool>> ValidateWithdrawalAddressAsync(string network, string address);
         Task<ResultWrapper<decimal>> GetUserPendingTotalsAsync(Guid userId, string assetTicker);
     }
 }

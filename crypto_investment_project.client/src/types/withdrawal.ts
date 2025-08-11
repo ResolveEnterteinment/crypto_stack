@@ -17,38 +17,43 @@ export interface Withdrawal {
     amount: number;
     currency: string;
     withdrawalMethod: string;
-    withdrawalAddress: string;
     status: string;
     createdAt: string;
     processedAt?: string;
     transactionHash?: string;
     comments?: string;
     kycLevelAtTime?: string;
-    additionalDetails?: {
-        bankName?: string;
-        accountHolder?: string;
-        accountNumber?: string;
-        routingNumber?: string;
-        memo?: string;
-        network?: string;
+    additionalDetails: {
+        WithdrawalAddress: string;
+        BankName?: string;
+        AccountHolder?: string;
+        AccountNumber?: string;
+        RoutingNumber?: string;
+        Network?: string;
+        Memo?: string;
     };
 }
 
-export interface WithdrawalRequest {
-    userId: string,
-    amount: number,
-    currency: string,
-    withdrawalMethod: string,
-    withdrawalAddress: string,
-    additionalDetails?: {
-        bankName?: string;
-        accountHolder?: string;
-        accountNumber?: string;
-        routingNumber?: string;
-        network?: string;
-        memo?: string;
-        [key: string]: any;
-    };
+export interface CryptoWithdrawalRequest {
+    userId: string;
+    amount: number;
+    currency: string;
+    withdrawalMethod: string;
+    withdrawalAddress: string;
+    network?: string;
+    memo?: string;
+}
+
+export interface BankWithdrawalRequest {
+    userId: string;
+    amount: number;
+    currency: string;
+    withdrawalMethod: string;
+    withdrawalAddress: string;
+    bankName?: string;
+    accountHolder?: string;
+    accountNumber?: string;
+    routingNumber?: string;
 }
 
 export interface WithdrawalFormValues {

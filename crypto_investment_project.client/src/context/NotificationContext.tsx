@@ -132,11 +132,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
         if (unreadNotifications.length === 0) return;
 
         try {
-            const result = await markAllAsRead(unreadNotifications.map(n => n.id));
-
-            if (result.failedIds.length > 0) {
-                console.warn(`Failed to mark ${result.failedIds.length} notifications as read`);
-            }
+            const result = await markAllAsRead();
 
             // Update local state - mark all as read
             setNotifications(prev =>

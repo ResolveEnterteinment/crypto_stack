@@ -1,16 +1,20 @@
-﻿// Refactored BalanceManagementService 
-using Application.Interfaces;
+﻿using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Logging;
 using Domain.Constants;
+using Domain.Constants.Logging;
 using Domain.DTOs;
+using Domain.DTOs.Base;
+using Domain.DTOs.Exchange;
+using Domain.DTOs.Logging;
 using Domain.Events;
+using Domain.Events.Exchange;
 using Domain.Exceptions;
 using Domain.Models.Event;
+using Infrastructure.Services.Base;
 using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Driver;
-using Polly;
-using Polly.Retry;
+using Stripe.V2;
 using System.Diagnostics;
 
 namespace Infrastructure.Services.Exchange
@@ -22,11 +26,16 @@ namespace Infrastructure.Services.Exchange
     {
         private readonly IExchangeService _exchangeService;
         private readonly IEventService _eventService;
+        private readonly ICacheService<ExchangeBalance> _cacheService;
         private readonly ILoggingService _logger;
-        private readonly AsyncRetryPolicy _retryPolicy;
+        private readonly IResilienceService<ExchangeBalance> _resilienceService;
         private readonly IMemoryCache _cache;
-        private const string BALANCE_CHECK_CACHE_PREFIX = "balance_check:";
+        private const string BALANCE_CHECK_CACHE_FORMAT = "balance_check:{0}:{1}:{2}";
+        private const string BALANCE_CACHE_FORMAT = "balance:{0}:{1}";
+        private const string FUNDING_REQUEST_CACHE_FORMAT = "funding_request:{0}";
         private static readonly TimeSpan BALANCE_CHECK_CACHE_DURATION = TimeSpan.FromMinutes(1);
+        private static readonly TimeSpan BALANCE_CACHE_DURATION = TimeSpan.FromMinutes(1);
+        private static readonly TimeSpan FUNDING_REQUEST_CACHE_DURATION = TimeSpan.FromMinutes(15);
 
         /// <summary>
         /// Initializes a new instance of the <see cref="BalanceManagementService"/> class.
@@ -34,27 +43,17 @@ namespace Infrastructure.Services.Exchange
         public BalanceManagementService(
             IExchangeService exchangeService,
             IEventService eventService,
+            ICacheService<ExchangeBalance> cacheService, // Add this parameter
             ILoggingService logger,
+            IResilienceService<ExchangeBalance> resilienceService,
             IMemoryCache cache)
         {
             _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
+            _cacheService = cacheService ?? throw new ArgumentNullException(nameof(cacheService)); // Add this assignment
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _resilienceService = resilienceService ?? throw new ArgumentNullException(nameof(resilienceService));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
-
-            // Configure retry policy for exchange operations
-            _retryPolicy = Policy
-                .Handle<ExchangeApiException>()
-                .Or<MongoException>()
-                .WaitAndRetryAsync(
-                    3,
-                    retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
-                    (ex, timeSpan, retryCount, context) =>
-                    {
-                        _logger.LogWarning(
-                            "Error checking exchange balance. Retrying {RetryCount}/3 after {RetryInterval}ms",
-                            retryCount, timeSpan.TotalMilliseconds);
-                    });
         }
 
         /// <summary>
@@ -85,101 +84,97 @@ namespace Infrastructure.Services.Exchange
             }
             #endregion
 
-            var correlationId = Activity.Current?.Id ?? Guid.NewGuid().ToString();
-
             // Check cache first to avoid excessive balance checks for the same parameters
-            string cacheKey = $"{BALANCE_CHECK_CACHE_PREFIX}{exchangeName}:{ticker}:{Math.Round(amount, 2)}";
+            string cacheKey = string.Format(BALANCE_CHECK_CACHE_FORMAT, exchangeName, ticker, Math.Round(amount, 2));
 
-            if (_cache.TryGetValue(cacheKey, out ResultWrapper<bool> cachedResult))
+            if (_cache.TryGetValue(cacheKey, out bool cachedResult))
             {
                 _logger.LogInformation("Using cached balance check for {Exchange}:{Ticker}", exchangeName, ticker);
                 return cachedResult;
             }
 
-            using (_logger.BeginScope(new Dictionary<string, object>
+            var scope = new Scope
             {
-                ["Exchange"] = exchangeName,
-                ["Ticker"] = ticker,
-                ["RequiredAmount"] = amount,
-                ["Operation"] = "CheckExchangeBalance",
-                ["CorrelationId"] = correlationId
-            }))
-            {
-                try
+                NameSpace = "Infrastructure.Services.Exchange",
+                FileName = "BalanceManagementService",
+                OperationName = "CheckExchangeBalanceAsync(string exchangeName, string ticker, decimal amount)",
+                State = {
+                    ["Exchange"] = exchangeName,
+                    ["Ticker"] = ticker,
+                    ["Amount"] = amount,
+                }
+            };
+
+            // Using the fluent builder
+            return await _resilienceService.CreateBuilder<bool>(scope, async () =>
                 {
                     _logger.LogInformation("Checking balance for {Exchange}:{Ticker}", exchangeName, ticker);
 
-                    // Apply retry policy for balance check
-                    var result = await _retryPolicy.ExecuteAsync(async () =>
+                    if (!_exchangeService.Exchanges.TryGetValue(exchangeName, out var exchange))
                     {
-                        if (!_exchangeService.Exchanges.TryGetValue(exchangeName, out var exchange))
-                        {
-                            throw new ExchangeApiException($"Exchange '{exchangeName}' not found", exchangeName);
-                        }
+                        throw new ExchangeApiException($"Exchange '{exchangeName}' not found", exchangeName);
+                    }
 
-                        // Get the reserve asset (typically a stablecoin)
-                        var reserveAssetTicker = exchange.ReserveAssetTicker;
+                    // Get the reserve asset (typically a stablecoin)
+                    var reserveAssetTicker = exchange.QuoteAssetTicker;
 
-                        // Use the cached balance method from exchange service
-                        var balanceResult = await _exchangeService.GetCachedExchangeBalanceAsync(exchangeName, reserveAssetTicker);
+                    // Use the cached balance method from exchange service
+                    var balanceResult = await GetCachedExchangeBalanceAsync(exchangeName, reserveAssetTicker);
 
-                        if (!balanceResult.IsSuccess)
-                        {
-                            throw new ExchangeApiException(
-                                $"Failed to fetch exchange balance {exchange.Name}:{reserveAssetTicker}: {balanceResult.ErrorMessage}",
-                                exchangeName
-                            );
-                        }
+                    if (!balanceResult.IsSuccess)
+                    {
+                        throw new ExchangeApiException(
+                            $"Failed to fetch exchange balance {exchange.Name}:{reserveAssetTicker}: {balanceResult.ErrorMessage}",
+                            exchangeName
+                        );
+                    }
 
-                        decimal fiatBalance = balanceResult.Data?.Available ?? 0m;
-                        decimal threshold = amount * 0.05m; // 5% buffer
+                    decimal fiatBalance = balanceResult.Data?.Available ?? 0m;
+                    decimal threshold = amount * 0.05m; // 5% buffer
 
-                        _logger.LogInformation(
-                            "Balance for {Exchange}:{Ticker}: Available={Available}, Required={Required}",
-                            exchangeName, reserveAssetTicker, fiatBalance, amount);
+                    _logger.LogInformation(
+                        "Balance for {Exchange}:{Ticker}: Available={Available}, Required={Required}",
+                        exchangeName, reserveAssetTicker, fiatBalance, amount);
 
-                        if (fiatBalance < amount)
-                        {
-                            _logger.LogWarning(
-                                "Insufficient balance for {Exchange}:{Ticker}. Available: {Available}, Required: {Required}",
-                                exchangeName, reserveAssetTicker, fiatBalance, amount);
+                    if (fiatBalance < amount)
+                    {
+                        await _logger.LogTraceAsync(
+                            $"Insufficient balance for {exchangeName}:{reserveAssetTicker}. Available: {fiatBalance}, Required: {amount}",
+                            level: LogLevel.Critical, requiresResolution: true);
 
-                            // Request more funds if balance is below required amount
-                            await RequestFunding(amount - fiatBalance + threshold);
+                        // Request more funds if balance is below required amount
+                        await RequestFunding(amount - fiatBalance + threshold);
 
-                            var insufficientResult = ResultWrapper<bool>.Failure(
-                                FailureReason.InsufficientBalance,
-                                $"Insufficient balance. Available: {fiatBalance}, Required: {amount}",
-                                "INSUFFICIENT_FUNDS");
+                        var insufficientResult = ResultWrapper<bool>.Failure(
+                            FailureReason.InsufficientBalance,
+                            $"Insufficient balance. Available: {fiatBalance}, Required: {amount}",
+                            "INSUFFICIENT_FUNDS");
 
-                            // Cache the negative result for a short period
-                            _cache.Set(cacheKey, insufficientResult, TimeSpan.FromSeconds(30));
+                        // Cache the negative result for a short period
+                        _cache.Set(cacheKey, insufficientResult, TimeSpan.FromSeconds(30));
 
-                            return insufficientResult;
-                        }
+                        return false;
+                    }
 
-                        // Check if balance is getting low (less than 20% over required amount)
-                        if (fiatBalance < amount * 1.2m)
-                        {
-                            _logger.LogInformation(
-                                "Balance for {Exchange}:{Ticker} is getting low. Available: {Available}, Required: {Required}",
-                                exchangeName, reserveAssetTicker, fiatBalance, amount);
+                    // Check if balance is getting low (less than 20% over required amount)
+                    if (fiatBalance < amount * 1.2m)
+                    {
+                        await _logger.LogTraceAsync(
+                            $"Balance for {exchangeName}:{reserveAssetTicker} is getting low. Available: {fiatBalance}, Required: {amount}", level:LogLevel.Warning, requiresResolution: true);
 
-                            // Preemptively request more funds in the background
-                            _ = Task.Run(() => RequestFunding(amount));
-                        }
+                        // Preemptively request more funds in the background
+                        _ = Task.Run(() => RequestFunding(amount));
+                    }
 
-                        var successResult = ResultWrapper<bool>.Success(true);
+                    var successResult = ResultWrapper<bool>.Success(true);
 
-                        // Cache the successful result
-                        _cache.Set(cacheKey, successResult, BALANCE_CHECK_CACHE_DURATION);
+                    // Cache the successful result
+                    _cache.Set(cacheKey, successResult, BALANCE_CHECK_CACHE_DURATION);
 
-                        return successResult;
-                    });
-
-                    return result;
-                }
-                catch (Exception ex)
+                    return true;
+                })
+                .WithQuickOperationResilience(TimeSpan.FromSeconds(3))
+                .OnError(async (ex) =>
                 {
                     _logger.LogError(
                         "Error checking exchange balance for {Exchange}:{Ticker}",
@@ -189,10 +184,56 @@ namespace Infrastructure.Services.Exchange
 
                     // Cache error results for a very short time to prevent hammering the service
                     _cache.Set(cacheKey, errorResult, TimeSpan.FromSeconds(15));
+                })
+                .ExecuteAsync();
+        }
 
-                    return errorResult;
-                }
-            }
+        public async Task<ResultWrapper<ExchangeBalance>> GetCachedExchangeBalanceAsync(string exch, string ticker)
+        {
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Exchange",
+                    FileName = "ExchangeService",
+                    OperationName = "GetCachedExchangeBalanceAsync(string exch, string ticker)",
+                    State = {
+                        ["Ticker"] = ticker,
+                    },
+                    LogLevel = LogLevel.Critical
+                },
+                async () =>
+                {
+                    if (string.IsNullOrEmpty(exch) || string.IsNullOrEmpty(ticker))
+                        throw new ValidationException("Exchange and ticker required", new()
+                        {
+                            ["exchange"] = [exch],
+                            ["ticker"] = [ticker],
+                        });
+                    if(!_exchangeService.Exchanges.TryGetValue(exch, out var exchange))
+                        throw new ValidationException($"Unknown exchange {exch}", new() { ["exchange"] = new[] { exch } });
+
+                    var cachedBalance = await _cacheService.GetCachedEntityAsync(
+                        string.Format(BALANCE_CACHE_FORMAT, exch, ticker),
+                        async () =>
+                        {
+                            var balanceWrapper = await exchange.GetBalanceAsync(ticker);
+                            if (balanceWrapper == null || !balanceWrapper.IsSuccess)
+                                throw new ExchangeApiException(balanceWrapper?.ErrorMessage ?? "Exchange balance returned null", exch);
+                            return balanceWrapper.Data;
+                        },
+                        BALANCE_CACHE_DURATION);
+
+                    if (cachedBalance == null)
+                        throw new ExchangeApiException("Balance fetch result returned null", exch);
+
+                    return cachedBalance;
+                })
+                .WithExchangeOperationResilience()
+                .WithPerformanceThreshold(TimeSpan.FromSeconds(3))
+                .WithPerformanceMonitoring(
+                    TimeSpan.FromSeconds(3),
+                    TimeSpan.FromSeconds(5))
+                .ExecuteAsync();
         }
 
         /// <summary>
@@ -200,74 +241,57 @@ namespace Infrastructure.Services.Exchange
         /// </summary>
         public async Task RequestFunding(decimal amount)
         {
-            if (amount <= 0)
-            {
-                _logger.LogWarning("Invalid funding request amount: {Amount}", amount);
-                return;
-            }
-
             var correlationId = Activity.Current?.Id ?? Guid.NewGuid().ToString();
 
-            using var scope = _logger.BeginScope("BalanceManagementService::RequestFunding", new Dictionary<string, object>
-            {
-                ["RequestedAmount"] = amount,
-                ["Operation"] = "RequestFunding",
-                ["CorrelationId"] = correlationId
-            });
-
-            try
-            {
-                // Check if we've recently requested funding for a similar amount
-                string cacheKey = $"funding_request:{Math.Round(amount, 0)}";
-
-                if (_cache.TryGetValue(cacheKey, out bool _))
+            await _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    _logger.LogInformation(
-                        "Skipping duplicate funding request for {Amount} - already requested recently",
-                        amount);
-                    return;
-                }
-
-                _logger.LogInformation("Requesting additional funding of {Amount}", amount);
-
-                // Create an event record
-                var storedEvent = new EventData
-                {
-                    Name = typeof(RequestfundingEvent).Name,
-                    Payload = new
+                    NameSpace = "Infrastructure.Services.Exchange",
+                    FileName = "BalanceManagementService",
+                    OperationName = "RequestFunding(decimal amount)",
+                    State = new()
                     {
-                        Amount = amount,
-                        Timestamp = DateTime.UtcNow,
-                        CorrelationId = correlationId
-                    }
-                };
-
-                // Store the event
-                var storedEventResult = await _eventService.InsertAsync(storedEvent);
-
-                if (storedEventResult == null || !storedEventResult.IsSuccess)
+                        ["RequestedAmount"] = amount,
+                        ["Operation"] = "RequestFunding",
+                        ["CorrelationId"] = correlationId
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
                 {
-                    throw new DatabaseException(
-                        $"Failed to store {storedEvent.GetType().Name} event: {storedEventResult?.ErrorMessage ?? "Unknown error"}");
-                }
+                    if (amount <= 0)
+                    {
+                        _logger.LogWarning("Invalid funding request amount: {Amount}", amount);
+                        return Task.FromException(new ArgumentException(nameof(amount)));
+                    }
 
-                var storedEventData = storedEventResult.Data;
+                    // Check if we've recently requested funding for a similar amount
+                    string cacheKey = string.Format(FUNDING_REQUEST_CACHE_FORMAT, Math.Round(amount, 0));
 
-                // Publish the event to be handled by relevant services
-                await _eventService.PublishAsync(new RequestfundingEvent(amount, storedEventData.AffectedIds.First(), _logger.Context));
+                    if (_cacheService.TryGetValue(cacheKey, out bool _))
+                    {
+                        _logger.LogInformation(
+                            "Skipping duplicate funding request for {Amount} - already requested recently",
+                            amount);
+                        return Task.CompletedTask;
+                    }
 
-                // Cache the request to prevent duplicates
-                _cache.Set(cacheKey, true, TimeSpan.FromMinutes(15));
+                    _logger.LogInformation("Requesting additional funding of {Amount}", amount);
 
-                _logger.LogInformation(
-                    "Successfully published funding request event. Amount: {Amount}, EventId: {EventId}",
-                    amount, storedEventData.AffectedIds.First());
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Failed to request funding of {Amount}", amount);
-                throw;
-            }
+                    // Publish the event to be handled by relevant services
+                    await _eventService.PublishAsync(new RequestFundingEvent(amount, Guid.Empty, _logger.Context));
+
+                    // Cache the request to prevent duplicates
+                    _cacheService.Set(cacheKey, true, FUNDING_REQUEST_CACHE_DURATION);
+
+                    _logger.LogInformation(
+                        "Successfully published funding request event. Amount: {Amount}",
+                        amount);
+
+                    return Task.CompletedTask;
+                })
+                .WithQuickOperationResilience(TimeSpan.FromSeconds(2))
+                .ExecuteAsync();
         }
     }
 }

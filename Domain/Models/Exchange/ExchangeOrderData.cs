@@ -6,8 +6,11 @@
         public required string PaymentProviderId { get; set; }
         public required Guid SubscriptionId { get; set; }
         public required Guid AssetId { get; set; }
+        public required string Ticker { get; set; }
         public string Exchange { get; set; }
+        public required string Side { get; set; } // e.g., "buy" or "sell"
         public long? PlacedOrderId { get; set; }
+        public required string QuoteTicker { get; set; }
         public required decimal QuoteQuantity { get; set; }
         public decimal? QuoteQuantityFilled { get; set; }
         public decimal? Price { get; set; }

@@ -1,3 +1,4 @@
+using Application.Interfaces.Payment;
 using Domain.Constants.Payment;
 using Domain.Interfaces;
 using Domain.Models.Payment;
@@ -12,14 +13,14 @@ namespace WebApi.Controllers.Admin
     [Authorize(Roles = "ADMIN")]
     public class AdminPaymentController : ControllerBase
     {
-        private readonly IUnitOfWork _unitOfWork;
+        private readonly IPaymentService _paymentService;
         private readonly ILogger<AdminPaymentController> _logger;
 
         public AdminPaymentController(
-            IUnitOfWork unitOfWork,
+            IPaymentService paymentService,
             ILogger<AdminPaymentController> logger)
         {
-            _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
+            _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -64,7 +65,7 @@ namespace WebApi.Controllers.Admin
                 var sort = new SortDefinitionBuilder<PaymentData>().Ascending(p => p.CreatedAt);
 
                 // Get paginated results
-                var paymentsResult = await _unitOfWork.Payments.GetPaginatedAsync(
+                var paymentsResult = await _paymentService.GetPaginatedAsync(
                     filter,
                     sort,
                     page,
@@ -94,13 +95,13 @@ namespace WebApi.Controllers.Admin
             {
                 var stats = new
                 {
-                    TotalCount = await _unitOfWork.Payments.Repository.CountAsync(
+                    TotalCount = await _paymentService.Repository.CountAsync(
                         Builders<PaymentData>.Filter.Empty),
-                    FailedCount = await _unitOfWork.Payments.Repository.CountAsync(
+                    FailedCount = await _paymentService.Repository.CountAsync(
                         Builders<PaymentData>.Filter.Eq(p => p.Status, PaymentStatus.Failed)),
-                    PendingCount = await _unitOfWork.Payments.Repository.CountAsync(
+                    PendingCount = await _paymentService.Repository.CountAsync(
                         Builders<PaymentData>.Filter.Eq(p => p.Status, PaymentStatus.Pending)),
-                    SuccessCount = await _unitOfWork.Payments.Repository.CountAsync(
+                    SuccessCount = await _paymentService.Repository.CountAsync(
                         Builders<PaymentData>.Filter.Eq(p => p.Status, PaymentStatus.Filled))
                 };
 

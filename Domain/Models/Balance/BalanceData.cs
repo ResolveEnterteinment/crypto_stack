@@ -13,6 +13,7 @@ namespace Domain.Models.Balance
         public decimal Available { get; set; } = decimal.Zero;
         public decimal Locked { get; set; } = decimal.Zero;
         public decimal Total { get; set; } = decimal.Zero;
+        public Guid LastTransactionId { get; set; }
         [BsonIgnore]
         public AssetData? Asset { get; set; }
     }

@@ -1,11 +1,9 @@
-﻿// Let's enhance DashboardHub to handle updates more effectively
-// In Infrastructure/Hubs/DashboardHub.cs
-
-using Application.Interfaces;
+﻿using Application.Interfaces;
 using Domain.Models.Asset;
 using Domain.Models.Balance;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using System.Security.Claims;
@@ -15,23 +13,15 @@ namespace Infrastructure.Hubs
     [Authorize]
     public class DashboardHub : Hub
     {
-        private readonly IMongoCollection<BalanceData> _balances;
-        private readonly IMongoCollection<AssetData> _assets;
-        private readonly IDashboardService _dashboardService;
         private readonly ILogger<DashboardHub> _logger;
+        private readonly IServiceScopeFactory _scopeFactory;
 
         public DashboardHub(
-            IMongoDatabase database,
-            IDashboardService dashboardService,
-            ILogger<DashboardHub> logger)
+            ILogger<DashboardHub> logger,
+            IServiceScopeFactory scopeFactory)
         {
-            _balances = database.GetCollection<BalanceData>("balances");
-            _assets = database.GetCollection<AssetData>("assets");
-            _dashboardService = dashboardService ?? throw new ArgumentNullException(nameof(dashboardService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-
-            // Start monitoring for balance changes
-            StartChangeStream();
+            _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         }
 
         /// <summary>
@@ -66,14 +56,18 @@ namespace Infrastructure.Hubs
                 }
 
                 // Add the user to a group for targeted updates
-                string groupName = $"dashboard-{userId}";
+                string groupName = userId;
                 await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
 
                 _logger.LogInformation("User {UserId} subscribed to dashboard updates with connection {ConnectionId}",
                     userId, Context.ConnectionId);
 
+                // Get dashboard service when needed to avoid circular dependency
+                using var scope = _scopeFactory.CreateScope();
+                var dashboardService = scope.ServiceProvider.GetRequiredService<IDashboardService>();
+
                 // Send initial dashboard data
-                var dashboardData = await _dashboardService.GetDashboardDataAsync(userGuid);
+                var dashboardData = await dashboardService.GetDashboardDataAsync(userGuid);
                 if (dashboardData.IsSuccess && dashboardData.Data != null)
                 {
                     await Clients.Caller.SendAsync("DashboardUpdate", dashboardData.Data);
@@ -143,80 +137,30 @@ namespace Infrastructure.Hubs
                     throw new HubException("Authentication required");
                 }
 
-                // Force refresh by invalidating cache and fetching new data
-                _dashboardService.InvalidateDashboardCacheAsync(userGuid);
+                // Get dashboard service when needed
+                using var scope = _scopeFactory.CreateScope();
+                var dashboardService = scope.ServiceProvider.GetRequiredService<IDashboardService>();
 
-                // This will trigger pulling fresh data and sending it to the client
-                _logger.LogInformation("Manual dashboard refresh requested by user {UserId}", userId);
+                // Force refresh by invalidating cache and fetching new data
+                dashboardService.InvalidateDashboardCacheAsync(userGuid);
+
+                var dashboardData = await dashboardService.GetDashboardDataAsync(userGuid);
+                if (dashboardData.IsSuccess && dashboardData.Data != null)
+                {
+                    await Clients.Caller.SendAsync("DashboardUpdate", dashboardData.Data);
+                    _logger.LogInformation("Manual dashboard refresh completed for user {UserId}", userId);
+                }
+                else
+                {
+                    await Clients.Caller.SendAsync("DashboardError", "Failed to refresh dashboard data");
+                    _logger.LogWarning("Manual dashboard refresh failed for user {UserId}: {ErrorMessage}",
+                        userId, dashboardData.ErrorMessage);
+                }
             }
             catch (Exception ex) when (!(ex is HubException))
             {
                 _logger.LogError(ex, "Error during manual dashboard refresh");
                 throw new HubException($"Error refreshing dashboard: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Starts monitoring for balance changes using MongoDB change streams
-        /// </summary>
-        private void StartChangeStream()
-        {
-            try
-            {
-                var pipeline = new EmptyPipelineDefinition<ChangeStreamDocument<BalanceData>>()
-                    .Match(change =>
-                        change.OperationType == ChangeStreamOperationType.Insert ||
-                        change.OperationType == ChangeStreamOperationType.Update ||
-                        change.OperationType == ChangeStreamOperationType.Replace);
-
-                var options = new ChangeStreamOptions { FullDocument = ChangeStreamFullDocumentOption.UpdateLookup };
-                var cursor = _balances.Watch(pipeline, options);
-
-                // Process balance changes in a background task
-                Task.Run(async () =>
-                {
-                    try
-                    {
-                        // Keep watching for changes continuously
-                        await cursor.ForEachAsync(async change =>
-                        {
-                            try
-                            {
-                                var updatedBalance = change.FullDocument;
-                                if (updatedBalance == null)
-                                {
-                                    _logger.LogWarning("Received change notification with null document");
-                                    return;
-                                }
-
-                                // Get the user ID and invalidate dashboard cache
-                                var userId = updatedBalance.UserId;
-
-                                // Invalidate dashboard cache and send updates
-                                _dashboardService.InvalidateDashboardCacheAsync(userId);
-
-                                _logger.LogDebug("Dashboard updated for user {UserId} due to balance change", userId);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, "Error processing balance change notification");
-                            }
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error in balance change stream. Restarting monitor...");
-                        // Attempt to restart the change stream after a delay
-                        await Task.Delay(5000);
-                        StartChangeStream();
-                    }
-                });
-
-                _logger.LogInformation("Started balance change stream monitor");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to start balance change stream monitor");
             }
         }
     }

@@ -223,7 +223,7 @@ const AssetAllocationStep: React.FC<AssetAllocationStepProps> = ({
             <h2 className="text-2xl font-semibold text-gray-800 mb-4">Choose Your Asset Allocation</h2>
             <p className="text-gray-600 mb-6">
                 Specify which cryptocurrencies to include in your portfolio and their allocation percentages.
-                Each asset has minimum order requirements that must be met after fees are deducted.
+                Each asset has minimum investment requirements that must be met after fees are deducted.
             </p>
             <ErrorDisplay />
 
@@ -241,36 +241,6 @@ const AssetAllocationStep: React.FC<AssetAllocationStepProps> = ({
                     error={null} // We handle error state here
                 />
             ) : null}
-
-            {/* Debug information in development */}
-            {process.env.NODE_ENV === 'development' && enhancedAssets.length > 0 && (
-                <div className="mt-6 p-4 bg-gray-100 rounded-lg">
-                    <h4 className="font-medium text-gray-700 mb-2">Debug Info</h4>
-                    <div className="text-sm text-gray-600">
-                        <p>Assets loaded: {enhancedAssets.length}</p>
-                        <p>Assets with min notional: {enhancedAssets.filter(a => a.minNotional !== undefined).length}</p>
-                        <p>Gross investment: ${feeBreakdown.grossAmount.toFixed(2)}</p>
-                        <p>Net investment: ${feeBreakdown.netInvestmentAmount.toFixed(2)}</p>
-                        <p>Total fees: ${feeBreakdown.totalFees.toFixed(2)}</p>
-                        {enhancedAssets.length > 0 && (
-                            <details className="mt-2">
-                                <summary className="cursor-pointer">Asset Details</summary>
-                                <pre className="mt-2 text-xs overflow-auto">
-                                    {JSON.stringify(
-                                        enhancedAssets.map(a => ({
-                                            ticker: a.ticker,
-                                            name: a.name,
-                                            minNotional: a.minNotional
-                                        })), 
-                                        null, 
-                                        2
-                                    )}
-                                </pre>
-                            </details>
-                        )}
-                    </div>
-                </div>
-            )}
         </div>
     );
 };

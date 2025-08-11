@@ -1,7 +1,7 @@
 ﻿using Domain.Models;
 namespace Application.Interfaces.Base
 {
-    public interface ICacheService<T> where T : BaseEntity
+    public interface ICacheService<T> where T : class
     {
         Task<T?> GetCachedEntityAsync(string key, Func<Task<T?>> factory, TimeSpan? duration = null);
         public Task<List<T>?> GetCachedCollectionAsync(string key, Func<Task<List<T>?>> factory, TimeSpan? duration = null);
@@ -11,5 +11,6 @@ namespace Application.Interfaces.Base
         string GetFilterCacheKey();
         string GetCollectionCacheKey();
         public bool TryGetValue<TItem>(object key, out TItem value);
+        TItem Set<TItem>(string key, TItem value, TimeSpan? duration = null);
     }
 }

@@ -7,6 +7,36 @@ import { Subscription } from "../types/subscription";
 import Transaction from "../types/transaction";
 
 /**
+ * Fetches a subscription by Id for a user
+ * @param subscriptionId The ID of the subcription
+ * @returns Promise with array of subscription objects
+ */
+export const getSubscription = async (subscriptionId: string): Promise<Subscription> => {
+    if (!subscriptionId) {
+        console.error("getSubscriptions called with undefined subscriptionId");
+        return Promise.reject(new Error("Subscription ID is required"));
+    }
+
+    try {
+        const subscriptionResult = await api.safeRequest <Subscription>('get', `/Subscription/${subscriptionId}`);
+
+        const subscription: Subscription = {
+            ...subscriptionResult.data,
+            amount: typeof subscriptionResult.data.amount === 'number' ? subscriptionResult.data.amount : parseFloat(subscriptionResult.data.amount),
+            totalInvestments: typeof subscriptionResult.data.totalInvestments === 'number'
+                ? subscriptionResult.data.totalInvestments
+                : parseFloat(subscriptionResult.data.totalInvestments || '0'),
+            isCancelled: Boolean(subscriptionResult.data.isCancelled)
+        }
+
+        return subscription;
+    } catch (error) {
+        logApiError(error, "Fetch Subscription Error");
+        throw error;
+    }
+};
+
+/**
  * Fetches all subscriptions for a user
  * @param userId The ID of the user
  * @returns Promise with array of subscription objects
@@ -203,6 +233,62 @@ export const cancelSubscription = async (subscriptionId: string): Promise<void> 
         return response.data;
     } catch (error) {
         logApiError(error, "Cancel Subscription Error");
+        throw error;
+    }
+};
+
+/**
+ * Pauses a subscription
+ * @param subscriptionId The ID of the subscription to pause
+ * @returns Promise
+ */
+export const pauseSubscription = async (subscriptionId: string): Promise<void> => {
+    if (!subscriptionId) {
+        console.error("pauseSubscription called with undefined subscriptionId");
+        return Promise.reject(new Error("Subscription ID is required"));
+    }
+
+    try {
+        // Generate a unique idempotency key
+        const idempotencyKey = `pause-subscription-${subscriptionId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+
+        const headers: Record<string, string> = {
+            'X-Idempotency-Key': idempotencyKey
+        };
+
+        const response = await api.post(`/Subscription/pause/${subscriptionId}`, null, { headers });
+
+        return response.data;
+    } catch (error) {
+        logApiError(error, "Pause Subscription Error");
+        throw error;
+    }
+};
+
+/**
+ * Resumes a paused subscription
+ * @param subscriptionId The ID of the subscription to resume
+ * @returns Promise
+ */
+export const resumeSubscription = async (subscriptionId: string): Promise<void> => {
+    if (!subscriptionId) {
+        console.error("resumeSubscription called with undefined subscriptionId");
+        return Promise.reject(new Error("Subscription ID is required"));
+    }
+
+    try {
+        // Generate a unique idempotency key
+        const idempotencyKey = `resume-subscription-${subscriptionId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+
+        const headers: Record<string, string> = {
+            'X-Idempotency-Key': idempotencyKey
+        };
+
+        const response = await api.post(`/Subscription/resume/${subscriptionId}`, null, { headers });
+
+        return response.data;
+    } catch (error) {
+        logApiError(error, "Resume Subscription Error");
         throw error;
     }
 };

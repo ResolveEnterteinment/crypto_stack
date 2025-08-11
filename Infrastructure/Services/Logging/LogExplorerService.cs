@@ -52,7 +52,6 @@ namespace Infrastructure.Services.Logging
             var childLogs = await Repository.GetAllAsync(childFilter);
 
             rootNodes.ForEach(root => MarchChildTree(root, childLogs));
-
             return rootNodes;
         }
 

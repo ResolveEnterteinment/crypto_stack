@@ -1,11 +1,16 @@
-﻿using Application.Interfaces;
-using Application.Interfaces.Base;
+﻿using Application.Interfaces.Base;
 using Application.Interfaces.Logging;
+using Domain.Constants.Logging;
 using Domain.DTOs;
+using Domain.DTOs.Base;
+using Domain.DTOs.Logging;
+using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Events.Entity;
 using Domain.Exceptions;
 using Domain.Models;
+using Microsoft.AspNetCore.JsonPatch.Operations;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
 using System.Reflection;
 
@@ -13,12 +18,15 @@ namespace Infrastructure.Services.Base
 {
     public abstract class BaseService<T> : IBaseService<T> where T : BaseEntity
     {
-        public readonly ICrudRepository<T> _repository;
-        protected readonly ICacheService<T> CacheService;
-        protected readonly IMongoIndexService<T> IndexService;
-        protected readonly ILoggingService Logger;
-        protected readonly IEventService? EventService;
+        protected readonly ICrudRepository<T> _repository;
+        protected readonly IResilienceService<T> _resilienceService;
+        protected readonly ICacheService<T> _cacheService;
+        protected readonly IMongoIndexService<T> _indexService;
+        protected readonly ILoggingService _loggingService;
+        protected readonly IEventService _eventService;
+        protected readonly INotificationService _notificationService;
 
+        private readonly BaseServiceSettings<T> _options;
         private static readonly IReadOnlySet<string> _validPropertyNames;
 
         ICrudRepository<T> IBaseService<T>.Repository => _repository;
@@ -32,174 +40,190 @@ namespace Infrastructure.Services.Base
         }
 
         protected BaseService(
-            ICrudRepository<T> repository,
-            ICacheService<T> cacheService,
-            IMongoIndexService<T> indexService,
-            ILoggingService logger,
-            IEventService? eventService = null,
-            IEnumerable<CreateIndexModel<T>>? indexModels = null)
+            IServiceProvider serviceProvider,
+            BaseServiceSettings<T>? options = null)
         {
-            _repository = repository;
-            CacheService = cacheService;
-            IndexService = indexService;
-            Logger = logger;
-            EventService = eventService;
+            _repository = serviceProvider.GetRequiredService<ICrudRepository<T>>() ?? throw new ArgumentNullException(nameof(ICrudRepository<T>));
+            _cacheService = serviceProvider.GetRequiredService<ICacheService<T>>() ?? throw new ArgumentNullException(nameof(ICacheService<T>));
+            _indexService = serviceProvider.GetRequiredService<IMongoIndexService<T>>() ?? throw new ArgumentNullException(nameof(IMongoIndexService<T>));
+            _loggingService = serviceProvider.GetRequiredService<ILoggingService>() ?? throw new ArgumentNullException(nameof(ILoggingService));
+            _eventService = serviceProvider.GetRequiredService<IEventService>() ?? throw new ArgumentNullException(nameof(IEventService));
+            _resilienceService = serviceProvider.GetRequiredService<IResilienceService<T>>() ?? throw new ArgumentNullException(nameof(IResilienceService<T>));
+            _notificationService = serviceProvider.GetRequiredService<INotificationService>() ?? throw new ArgumentNullException(nameof(INotificationService));
 
-            if (indexModels is not null)
+            _options = options ?? new()
             {
-                _ = IndexService.EnsureIndexesAsync(indexModels);
+                PublishCRUDEvents = true,
+            };
+
+            if (options != null && _options.IndexModels != null)
+            {
+                _indexService.EnsureIndexesAsync(_options.IndexModels);
             }
         }
 
-        public virtual async Task<ResultWrapper<T>> GetByIdAsync(Guid id, CancellationToken ct = default)
+        // READ OPERATIONS - Use MongoDbReadResilience
+        public virtual Task<ResultWrapper<T?>> GetByIdAsync(Guid id, CancellationToken ct = default)
         {
-            using var Scope = Logger.BeginScope("BaseService::GetByIdAsync", new Dictionary<string, object>
-            {
-                ["EntityType"] = typeof(T).Name,
-                ["EntityId"] = id,
-            });
-
-            var result = await SafeExecute(
+            return _resilienceService.CreateBuilder<T?>(
+                CreateScope("GetByIdAsync", new { EntityId = id }),
                 () => _repository.GetByIdAsync(id, ct)
-            );
-
-            if (result == null || !result.IsSuccess)
-            {
-                await Logger.LogTraceAsync($"Entity not found: {result?.ErrorMessage ?? "Fetch result returned null"}");
-            }
-
-            return result;
+            )
+            .WithMongoDbReadResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3))
+            .ExecuteAsync();
         }
 
-        public virtual async Task<ResultWrapper<T>> GetOneAsync(FilterDefinition<T> filter, CancellationToken ct = default)
+        public virtual Task<ResultWrapper<T?>> GetOneAsync(FilterDefinition<T> filter, CancellationToken ct = default)
         {
-            using var Scope = Logger.BeginScope("BaseService::GetOneAsync", new Dictionary<string, object>
-            {
-                ["EntityType"] = typeof(T).Name,
-                ["Filter"] = filter.ToString(),
-            });
-
-            var result = await SafeExecute(
+            return _resilienceService.CreateBuilder<T?>(
+                CreateScope("GetOneAsync", new { Filter = filter?.ToString() }),
                 () => _repository.GetOneAsync(filter, ct)
-            );
-
-            if (result == null || !result.IsSuccess)
-            {
-                await Logger.LogTraceAsync($"Entity not found: {result?.ErrorMessage ?? "Fetch result returned null"}");
-            }
-
-            return result;
+            )
+            .WithMongoDbReadResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4))
+            .ExecuteAsync();
         }
 
-        public virtual async Task<ResultWrapper<List<T>>> GetManyAsync(FilterDefinition<T> filter, CancellationToken ct = default)
+        public virtual Task<ResultWrapper<List<T>>> GetManyAsync(FilterDefinition<T> filter, CancellationToken ct = default)
         {
-            using var Scope = Logger.BeginScope("BaseService::GetManyAsync", new Dictionary<string, object>
-            {
-                ["EntityType"] = typeof(T).Name,
-                ["Filter"] = filter.ToString(),
-            });
-
-            var result = await SafeExecute(
+            return _resilienceService.CreateBuilder<List<T>>(
+                CreateScope("GetManyAsync", new { Filter = filter?.ToString() }),
                 () => _repository.GetAllAsync(filter, ct)
-            );
-
-            if (result == null || !result.IsSuccess)
-            {
-                await Logger.LogTraceAsync($"Entity not found: {result?.ErrorMessage ?? "Fetch result returned null"}");
-            }
-
-            return result;
+            )
+            .WithMongoDbReadResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5))
+            .ExecuteAsync();
         }
 
-        public virtual async Task<ResultWrapper<List<T>>> GetAllAsync(CancellationToken ct = default)
+        public virtual Task<ResultWrapper<List<T>>> GetAllAsync(CancellationToken ct = default)
         {
-            using var Scope = Logger.BeginScope("BaseService::GetAllAsync", new Dictionary<string, object>
-            {
-                ["EntityType"] = typeof(T).Name,
-            });
-
-            var result = await SafeExecute(
+            return _resilienceService.CreateBuilder<List<T>>(
+                CreateScope("GetAllAsync"),
                 () => _repository.GetAllAsync(null, ct)
-            );
-
-            if (result == null || !result.IsSuccess)
-            {
-                await Logger.LogTraceAsync($"Entity not found: {result?.ErrorMessage ?? "Fetch result returned null"}");
-            }
-
-            return result;
+            )
+            .WithMongoDbReadResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(8))
+            .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper<PaginatedResult<T>>> GetPaginatedAsync(FilterDefinition<T> filter, SortDefinition<T> sort, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default)
+        public virtual Task<ResultWrapper<bool>> ExistsAsync(Guid id, CancellationToken cancellationToken = default)
         {
-            using var Scope = Logger.BeginScope("BaseService::GetPaginatedAsync", new
-            {
-                Filter = filter,
-                Sort = sort,
-                Page = page,
-                PageSize = pageSize,
-            });
+            return _resilienceService.CreateBuilder<bool>(
+                CreateScope("ExistsAsync", new { EntityId = id }),
+                () => _repository.ExistsAsync(id, cancellationToken)
+            )
+            .WithMongoDbReadResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(2))
+            .ExecuteAsync();
+        }
 
-            var result = await SafeExecute(
+        // PAGINATION OPERATIONS - Consistent pattern
+        public Task<ResultWrapper<PaginatedResult<T>>> GetPaginatedAsync(FilterDefinition<T> filter, SortDefinition<T> sort, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default)
+        {
+            return _resilienceService.CreateBuilder<PaginatedResult<T>>(
+                CreateScope("GetPaginatedAsync", new
+                {
+                    Filter = filter?.ToString(),
+                    Sort = sort?.ToString() ?? "Default (Descending by Id)",
+                    Page = page,
+                    PageSize = pageSize
+                }),
                 () => _repository.GetPaginatedAsync(filter, sort, page, pageSize, cancellationToken)
-            );
-
-            if (result == null || !result.IsSuccess)
-            {
-                await Logger.LogTraceAsync($"Failed to fetch paginated records {result?.ErrorMessage ?? "Fetch result returned null"}");
-            }
-
-            return result;
+            )
+            .WithMongoDbReadResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(6))
+            .ExecuteAsync();
         }
 
-        public virtual async Task<ResultWrapper<CrudResult>> InsertAsync(T entity, CancellationToken ct = default)
+        public virtual Task<ResultWrapper<PaginatedResult<T>>> GetPaginatedAsync(
+            FilterDefinition<T> filter,
+            int page = 1,
+            int pageSize = 20,
+            string? sortField = null,
+            bool sortAscending = false,
+            CancellationToken cancellationToken = default)
         {
-            using var Scope = Logger.BeginScope("BaseService::InsertAsync", new Dictionary<string, object>
-            {
-                ["EntityType"] = typeof(T).Name,
-                ["Entity"] = entity,
-            });
-
-            var result = await SafeExecute(async () =>
-            {
-                entity.UpdatedAt = DateTime.UtcNow;
-                var crudResult = await _repository.InsertAsync(entity, ct);  // returns CrudResult with AffectedIds, etc.
-                if (crudResult == null || !crudResult.IsSuccess)
+            return _resilienceService.CreateBuilder<PaginatedResult<T>>(
+                CreateScope("GetPaginatedAsync", new
                 {
-                    throw new DatabaseException(crudResult!.ErrorMessage!);
-                }
-
-                var id = crudResult.AffectedIds.First();
-
-                if (EventService is not null)
+                    Filter = filter?.ToString(),
+                    Page = page,
+                    PageSize = pageSize,
+                    SortField = sortField ?? "Id",
+                    SortAscending = sortAscending
+                }),
+                async () =>
                 {
-                    await EventService.PublishAsync(new EntityCreatedEvent<T>(id, entity, Logger.Context));
+                    page = Math.Max(1, page);
+                    pageSize = Math.Clamp(pageSize, 1, 100);
+
+                    var total = await _repository.CountAsync(filter, cancellationToken);
+                    SortDefinition<T> sortDef = !string.IsNullOrEmpty(sortField) && _validPropertyNames.Contains(sortField)
+                        ? (sortAscending ? Builders<T>.Sort.Ascending(sortField) : Builders<T>.Sort.Descending(sortField))
+                        : Builders<T>.Sort.Descending("Id");
+                    return await _repository.GetPaginatedAsync(filter, sortDef, page, pageSize, cancellationToken);
                 }
-
-                return crudResult;
-            });
-
-            if (result == null || !result.IsSuccess)
-            {
-                await Logger.LogTraceAsync($"Failed to insert: {result?.ErrorMessage ?? "Insert result returned null"}");
-            }
-
-            return result;
+            )
+            .WithMongoDbReadResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(6))
+            .ExecuteAsync();
         }
 
-
-        public virtual async Task<ResultWrapper<CrudResult>> UpdateAsync(Guid id, object fields, CancellationToken ct = default)
+        // WRITE OPERATIONS - Use MongoDbWriteResilience
+        public virtual Task<ResultWrapper<CrudResult<T>>> InsertAsync(T entity, CancellationToken ct = default)
         {
-            using (Logger.BeginScope("BaseService::UpdateAsync", new Dictionary<string, object>
-            {
-                ["EntityType"] = typeof(T).Name,
-                ["EntityId"] = id,
-                ["Fields"] = fields,
-            }))
-            {
-                var result = await SafeExecute(async () =>
+            return _resilienceService.CreateBuilder<CrudResult<T>>(
+                new Scope
                 {
-                    // ensure the entity exists (will throw if not)
+                    NameSpace = "Infrastructure.Services.Base",
+                    FileName = "BaseService",
+                    OperationName = "InsertAsync(T entity, CancellationToken ct = default)",
+                    State = new ()
+                    {
+                        ["EntityId"] = entity.Id,
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () => {
+                    entity.UpdatedAt = DateTime.UtcNow;
+                    var crudResult = await _repository.InsertAsync(entity, ct);
+
+                    if (crudResult == null || !crudResult.IsSuccess)
+                    {
+                        throw new DatabaseException($"Failed to insert {typeof(T).Name} entity: {entity.Id}: {crudResult?.ErrorMessage}");
+                    }
+
+                    return crudResult;
+                }
+            )
+            .WithMongoDbWriteResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
+            .OnSuccess(async result =>
+            {
+                if (_options.PublishCRUDEvents && result.AffectedIds.Any())
+                {
+                    await _eventService.PublishAsync(new EntityCreatedEvent<T>(result.AffectedIds.First(), entity, _loggingService.Context));
+                }
+            })
+            .OnError(async ex =>
+            {
+                await _loggingService.LogTraceAsync(
+                    $"Failed to insert entity {entity.Id}: {ex.Message}",
+                    "InsertAsync",
+                    LogLevel.Error,
+                    requiresResolution: true);
+            })
+            .ExecuteAsync();
+        }
+
+        public virtual Task<ResultWrapper<CrudResult<T>>> UpdateAsync(Guid id, object fields, CancellationToken ct = default)
+        {
+            return _resilienceService.CreateBuilder<CrudResult<T>>(
+                CreateScope("UpdateAsync", new { EntityId = id, Fields = fields }),
+                async () =>
+                {
+                    // Ensure the entity exists (will throw if not)
                     var toUpdate = await _repository.GetByIdAsync(id, ct)
                         ?? throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
 
@@ -209,209 +233,172 @@ namespace Infrastructure.Services.Base
                         throw new DatabaseException(crudResult.ErrorMessage!);
                     }
 
-                    var updatedResult = await GetByIdAsync(id, ct);
-                    if (updatedResult == null || !updatedResult.IsSuccess)
-                    {
-                        throw new DatabaseException($"Failed to fetch updated {typeof(T).Name} entity: {updatedResult?.ErrorMessage ?? "Fetch result returned null"}");
-                    }
+                    return crudResult;
+                }
+            )
+            .WithMongoDbWriteResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
+            .OnSuccess(async result =>
+            {
+                if (_options.PublishCRUDEvents && result.Documents.Any())
+                {
+                    await _eventService.PublishAsync(new EntityUpdatedEvent<T>(id, result.Documents.First(), _loggingService.Context));
+                }
+            })
+            .OnError(async ex =>
+            {
+                await _loggingService.LogTraceAsync(
+                    $"Failed to update entity {id}: {ex.Message}",
+                    "UpdateAsync",
+                    LogLevel.Error,
+                    requiresResolution: true);
+            })
+            .ExecuteAsync();
+        }
 
-                    if (EventService != null)
+        public virtual Task<ResultWrapper<CrudResult<T>>> DeleteAsync(Guid id, CancellationToken ct = default)
+        {
+            return _resilienceService.CreateBuilder<CrudResult<T>>(
+                CreateScope("DeleteAsync", new { EntityId = id }),
+                async () =>
+                {
+                    var crudResult = await _repository.DeleteAsync(id, ct);
+                    if (crudResult == null || !crudResult.IsSuccess)
                     {
-                        await EventService.PublishAsync(new EntityUpdatedEvent<T>(id, updatedResult.Data!, Logger.Context));
+                        throw new DatabaseException($"Failed to delete {typeof(T).Name} entity ID {id}: {crudResult?.ErrorMessage ?? "Delete result returned null"}");
                     }
 
                     return crudResult;
-                });
-
-                if (result == null || !result.IsSuccess)
-                {
-                    await Logger.LogTraceAsync($"Failed to update: {result?.ErrorMessage ?? "Update result returned null"}");
                 }
-
-                return result;
-            }
+            )
+            .WithMongoDbWriteResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
+            .OnSuccess(async result =>
+            {
+                if (_options.PublishCRUDEvents && result.Documents.Any())
+                {
+                    await _eventService.PublishAsync(new EntityDeletedEvent<T>(id, result.Documents.First(), _loggingService.Context));
+                }
+            })
+            .OnError(async ex =>
+            {
+                await _loggingService.LogTraceAsync(
+                    $"Failed to delete entity {id}: {ex.Message}",
+                    "DeleteAsync",
+                    LogLevel.Error,
+                    requiresResolution: true);
+            })
+            .ExecuteAsync();
         }
 
-        public virtual async Task<ResultWrapper<CrudResult>> DeleteAsync(Guid id, CancellationToken ct = default)
+        public virtual Task<ResultWrapper<CrudResult<T>>> DeleteManyAsync(FilterDefinition<T> filter, CancellationToken ct = default)
         {
-            using var Scope = Logger.BeginScope("BaseService::DeleteAsync", new Dictionary<string, object>
-            {
-                ["EntityType"] = typeof(T).Name,
-                ["EntityId"] = id,
-            });
-
-            var result = await SafeExecute(async () =>
-            {
-                // fetch so we can emit the deleted entity in the event
-                var toDelete = await _repository.GetByIdAsync(id, ct)
-                    ?? throw new ResourceNotFoundException(typeof(T).Name, id.ToString());
-
-                var crudResult = await _repository.DeleteAsync(id, ct);
-                if (!crudResult.IsSuccess)
+            return _resilienceService.CreateBuilder<CrudResult<T>>(
+                CreateScope("DeleteManyAsync", new { Filter = filter?.ToString() }),
+                async () =>
                 {
-                    await Logger.LogTraceAsync($"Failed to delete record: {toDelete.Id}");
-                    throw new DatabaseException(crudResult.ErrorMessage!);
+                    var crudResult = await _repository.DeleteManyAsync(filter, ct);
+                    if (crudResult == null || !crudResult.IsSuccess)
+                    {
+                        throw new DatabaseException($"Failed to delete {typeof(T).Name} filtered collection: {crudResult?.ErrorMessage ?? "Delete result returned null"}");
+                    }
+
+                    return crudResult;
                 }
-
-                if (EventService is not null)
-                {
-                    await EventService.PublishAsync(new EntityDeletedEvent<T>(id, toDelete, Logger.Context));
-                }
-
-                return crudResult;
-            });
-
-            if (result == null || !result.IsSuccess)
+            )
+            .WithMongoDbWriteResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10))
+            .OnSuccess(async result =>
             {
-                await Logger.LogTraceAsync($"Failed to delete: {result?.ErrorMessage ?? "Delete result returned null"}");
-            }
-
-            return result;
+                if (_options.PublishCRUDEvents && result.Documents.Any())
+                {
+                    await _eventService.PublishAsync(new CollectionDeletedEvent<T>(result.Documents, _loggingService.Context));
+                }
+            })
+            .OnError(async ex =>
+            {
+                await _loggingService.LogTraceAsync(
+                    $"Failed to delete entities with filter: {ex.Message}",
+                    "DeleteManyAsync",
+                    LogLevel.Error,
+                    requiresResolution: true);
+            })
+            .ExecuteAsync();
         }
 
-        public virtual async Task<ResultWrapper<CrudResult<T>>> DeleteManyAsync(FilterDefinition<T> filter, CancellationToken ct = default)
-        {
-            using var Scope = Logger.BeginScope("BaseService::DeleteManyAsync", new Dictionary<string, object>
-            {
-                ["EntityType"] = typeof(T).Name,
-                ["Filter"] = filter,
-            });
-
-            var result = await SafeExecute(async () =>
-            {
-                // invalidate all affected caches
-                var toDelete = await _repository.GetAllAsync(filter, ct)
-                    ?? throw new ResourceNotFoundException(typeof(T).Name, filter.ToString());
-
-                var crudResult = await _repository.DeleteManyAsync(filter, ct);
-
-                if (!crudResult.IsSuccess)
-                {
-                    throw new DatabaseException(crudResult.ErrorMessage!);
-                }
-
-                if (EventService is not null)
-                {
-                    await EventService.PublishAsync(new CollectionDeletedEvent<T>(toDelete, Logger.Context));
-                }
-
-                return crudResult;
-            });
-
-            if (result == null || !result.IsSuccess)
-            {
-                await Logger.LogTraceAsync($"Failed to delete: {result?.ErrorMessage ?? "Delete result returned null"}");
-            }
-
-            return result;
-        }
-        public virtual async Task<ResultWrapper<bool>> ExistsAsync(Guid id, CancellationToken cancellationToken = default)
-        {
-            using var Scope = Logger.BeginScope("BaseService::ExistsAsync", new Dictionary<string, object>
-            {
-                ["EntityType"] = typeof(T).Name,
-                ["EntityId"] = id,
-            });
-
-            var result = await SafeExecute(async () =>
-            {
-                return await _repository.CheckExistsAsync(id, cancellationToken);
-            });
-
-            if (result == null || !result.IsSuccess)
-            {
-                await Logger.LogTraceAsync($"Failed to check exists: {result?.ErrorMessage ?? "Check exists result returned null"}");
-            }
-
-            return result;
-        }
-
-        public virtual async Task<ResultWrapper<PaginatedResult<T>>> GetPaginatedAsync(
-            FilterDefinition<T> filter,
-            int page = 1,
-            int pageSize = 20,
-            string? sortField = null,
-            bool sortAscending = false,
-            CancellationToken cancellationToken = default)
-        {
-            using var Scope = Logger.BeginScope("BaseService::GetPaginatedAsync", new Dictionary<string, object>
-            {
-                ["EntityType"] = typeof(T).Name,
-            });
-
-            var result = await SafeExecute(async () =>
-            {
-                page = Math.Max(1, page);
-                pageSize = Math.Clamp(pageSize, 1, 100);
-                var total = await _repository.CountAsync(filter, cancellationToken);
-                SortDefinition<T> sortDef = !string.IsNullOrEmpty(sortField) && _validPropertyNames.Contains(sortField)
-                    ? (sortAscending ? Builders<T>.Sort.Ascending(sortField) : Builders<T>.Sort.Descending(sortField))
-                    : Builders<T>.Sort.Descending("Id");
-                var skip = (page - 1) * pageSize;
-                var items = await _repository.GetPaginatedAsync(filter, sortDef, page, pageSize, cancellationToken);
-                return items;
-            });
-
-            if (result == null || !result.IsSuccess || result.Data == null)
-            {
-                await Logger.LogTraceAsync($"Failed to get paginated data: {result?.ErrorMessage ?? "Fetch result returned null"}");
-            }
-
-            return result?.Data!;
-        }
-
+        // TRANSACTION OPERATIONS - Enhanced with resilience
         public async Task<TResult> ExecuteInTransactionAsync<TResult>(
             Func<IClientSessionHandle, Task<TResult>> action,
             CancellationToken cancellationToken = default)
         {
-            using var session = await _repository.Client.StartSessionAsync(cancellationToken: cancellationToken);
-            session.StartTransaction();
-            try
+            // Fixed: Extract the Data property from the ResultWrapper
+            var result = await _resilienceService.CreateBuilder<TResult>(
+                CreateScope("ExecuteInTransactionAsync"),
+                async () =>
+                {
+                    using var session = await _repository.Client.StartSessionAsync(cancellationToken: cancellationToken);
+                    session.StartTransaction();
+                    try
+                    {
+                        var result = await action(session);
+                        await session.CommitTransactionAsync(cancellationToken);
+                        return result;
+                    }
+                    catch
+                    {
+                        await session.AbortTransactionAsync(cancellationToken);
+                        throw;
+                    }
+                }
+            )
+            .WithMongoDbWriteResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15))
+            .OnError(async ex =>
             {
-                var result = await action(session);
-                await session.CommitTransactionAsync(cancellationToken);
-                return result;
-            }
-            catch
+                await _loggingService.LogTraceAsync(
+                    $"Transaction failed: {ex.Message}",
+                    "ExecuteInTransactionAsync",
+                    LogLevel.Error,
+                    requiresResolution: true);
+            })
+            .ExecuteAsync();
+
+            // Return the actual data or throw if the operation failed
+            if (result.IsSuccess)
             {
-                await session.AbortTransactionAsync(cancellationToken);
-                throw;
+                return result.Data;
             }
+
+            // If we get here, the resilience service should have thrown, but just in case
+            throw new DatabaseException($"Transaction failed: {result.ErrorMessage}");
         }
 
-        protected async Task<ResultWrapper<TResult>> SafeExecute<TResult>(Func<Task<TResult>> work)
+        // HELPER METHODS
+        private Scope CreateScope(string operationName, object? state = null)
         {
-            try
+            var scope = new Scope
             {
-                var data = await work();
-                return ResultWrapper<TResult>.Success(data);
-            }
-            catch (MongoWriteException mwx) when (mwx.WriteError.Category == ServerErrorCategory.DuplicateKey)
-            {
-                Logger.LogError($"Safe execute error: {mwx.Message}");
-                return ResultWrapper<TResult>.FromException(new ConcurrencyException(typeof(T).Name, mwx.Message));
-            }
-            catch (MongoCommandException mcx)
-            {
-                Logger.LogError($"Safe execute error: {mcx.Message}");
-                return ResultWrapper<TResult>.FromException(new DatabaseException(mcx.Message, mcx));
-            }
-            catch (TimeoutException tex)
-            {
-                Logger.LogError($"Safe execute error: {tex.Message}");
-                return ResultWrapper<TResult>.FromException(new DatabaseException(tex.Message, tex));
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError($"Safe execute error: {ex.Message}");
-                return ResultWrapper<TResult>.FromException(new DatabaseException(ex.Message, ex));
-            }
-        }
+                NameSpace = "Infrastructure.Services.Base",
+                FileName = "BaseService",
+                OperationName = operationName,
+                State = new Dictionary<string, object>(),
+                LogLevel = LogLevel.Error
+            };
 
-        protected async Task<ResultWrapper> SafeExecute(Func<Task> work)
-        {
-            var result = await SafeExecute(async () => { await work(); return true; });
-            return result.IsSuccess ? ResultWrapper.Success() : ResultWrapper.Failure(result.Reason, result.ErrorMessage);
+            if (state != null)
+            {
+                var properties = state.GetType().GetProperties();
+                foreach (var prop in properties)
+                {
+                    var value = prop.GetValue(state);
+                    if (value != null)
+                    {
+                        scope.State[prop.Name] = value;
+                    }
+                }
+            }
+
+            return scope;
         }
 
         protected async Task<ResultWrapper<TItem>> FetchCached<TItem>(
@@ -420,16 +407,24 @@ namespace Infrastructure.Services.Base
             TimeSpan duration,
             Func<Exception>? notFoundFactory = null)
         {
-            try
+            return await _resilienceService.CreateBuilder<TItem>(
+                CreateScope("FetchCached", new { CacheKey = cacheKey }),
+                async () =>
+                {
+                    var item = await _cacheService.GetAnyCachedAsync(cacheKey, factory, duration);
+                    return item ?? throw (notFoundFactory?.Invoke() ?? new KeyNotFoundException(cacheKey));
+                }
+            )
+            .WithMongoDbReadResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromMilliseconds(200), TimeSpan.FromSeconds(2))
+            .OnError(async ex =>
             {
-                var item = await CacheService.GetAnyCachedAsync(cacheKey, factory, duration);
-                return item is null ? throw notFoundFactory?.Invoke() ?? new KeyNotFoundException(cacheKey) : ResultWrapper<TItem>.Success(item);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError($"Fetch cached error: {ex.Message}");
-                return ResultWrapper<TItem>.FromException(ex);
-            }
+                await _loggingService.LogTraceAsync(
+                    $"Cache fetch error for key {cacheKey}: {ex.Message}",
+                    "FetchCached",
+                    LogLevel.Error);
+            })
+            .ExecuteAsync();
         }
     }
 }

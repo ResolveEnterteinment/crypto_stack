@@ -1,6 +1,3 @@
-// Fixed Production-Ready KYC Controller with Security Features
-// Controllers/KycController.cs
-
 using Application.Contracts.Requests.KYC;
 using Application.Contracts.Responses.KYC;
 using Application.Interfaces.KYC;
@@ -15,9 +12,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using System.Security.Claims;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace crypto_investment_project.Server.Controllers
@@ -31,7 +26,9 @@ namespace crypto_investment_project.Server.Controllers
     public class KycController : ControllerBase
     {
         private readonly IKycService _kycService;
+        private readonly IKycSessionService _kycSessionService;
         private readonly IDocumentService _documentService;
+        private readonly ILiveCaptureService _liveCaptureService;
         private readonly ILoggingService _logger;
         private readonly IMemoryCache _cache;
         private readonly IConfiguration _configuration;
@@ -42,20 +39,24 @@ namespace crypto_investment_project.Server.Controllers
 
         public KycController(
             IKycService kycService,
+            IKycSessionService kycSessionService,
             ILoggingService logger,
             IMemoryCache cache,
             IConfiguration configuration,
             IAntiforgery antiforgery,
             IWebHostEnvironment environment,
-            IDocumentService documentService)
+            IDocumentService documentService,
+            ILiveCaptureService liveCaptureService)
         {
             _kycService = kycService ?? throw new ArgumentNullException(nameof(kycService));
+            _kycSessionService = kycSessionService ?? throw new ArgumentNullException(nameof(kycSessionService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _antiforgery = antiforgery ?? throw new ArgumentNullException(nameof(antiforgery));
             _environment = environment ?? throw new ArgumentNullException(nameof(environment));
             _documentService = documentService ?? throw new ArgumentNullException(nameof(documentService));
+            _liveCaptureService = liveCaptureService ?? throw new ArgumentNullException(nameof(liveCaptureService));
         }
 
         /// <summary>
@@ -179,18 +180,7 @@ namespace crypto_investment_project.Server.Controllers
                     });
                 }
 
-                // Validate verification level
-                if (!IsValidVerificationLevel(request.VerificationLevel))
-                {
-                    return BadRequest(new ApiErrorResponse
-                    {
-                        Error = "INVALID_VERIFICATION_LEVEL",
-                        Message = "Invalid verification level specified",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                var result = await _kycService.GetOrCreateUserSessionAsync(userId.Value, request.VerificationLevel);
+                var result = await _kycSessionService.GetOrCreateUserSessionAsync(userId.Value);
                 if (!result.IsSuccess)
                 {
                     return BadRequest(new ApiErrorResponse
@@ -208,7 +198,7 @@ namespace crypto_investment_project.Server.Controllers
                 _cache.Remove($"kyc_status_{userId}");
 
                 await LogSecurityEvent(userId.Value, "KYC_SESSION_CREATED",
-                    $"KYC session created for verification level: {request.VerificationLevel}");
+                    $"KYC session created");
 
                 return Ok(new ApiResponse<Guid>
                 {
@@ -247,7 +237,7 @@ namespace crypto_investment_project.Server.Controllers
                     return BadRequest();
                 }
 
-                await _kycService.InvalidateSessionAsync(sessionId, userId.Value, request?.Reason ?? "User requested");
+                await _kycSessionService.InvalidateSessionAsync(sessionId, userId.Value, request?.Reason ?? "User requested");
 
                 return Ok(new ApiResponse<object>
                 {
@@ -291,7 +281,7 @@ namespace crypto_investment_project.Server.Controllers
                     });
                 }
 
-                var validationResult = await _kycService.ValidateSessionAsync(sessionId, userId.Value);
+                var validationResult = await _kycSessionService.ValidateSessionAsync(sessionId, userId.Value);
 
                 return Ok(new ApiResponse<bool>
                 {
@@ -335,7 +325,7 @@ namespace crypto_investment_project.Server.Controllers
                     });
                 }
 
-                var updateResult = await _kycService.UpdateSessionProgressAsync(sessionId, progress);
+                var updateResult = await _kycSessionService.UpdateSessionProgressAsync(sessionId, progress);
 
                 return Ok(new ApiResponse<object>
                 {
@@ -583,7 +573,10 @@ namespace crypto_investment_project.Server.Controllers
                     };
                 }
 
-                var (fileData, contentType, fileName) = downloadResult.Data;
+                var fileData = downloadResult.Data.FileData;
+                var contentType = downloadResult.Data.ContentType;
+                var fileName = downloadResult.Data.FileName;
+
                 return File(fileData, contentType, fileName);
             }
             catch (Exception ex)
@@ -622,7 +615,7 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 // Use DocumentService for download
-                var downloadResult = await _documentService.DownloadLiveCaptureAsync(
+                var downloadResult = await _liveCaptureService.DownloadLiveCaptureAsync(
                     captureId,
                     userId.Value,
                     isAdminRequest: true);
@@ -651,8 +644,10 @@ namespace crypto_investment_project.Server.Controllers
                         })
                     };
                 }
+                var fileDatas = downloadResult.Data.FileDatas;
+                var contentType = downloadResult.Data.ContentType;
+                var fileNames = downloadResult.Data.FileNames;
 
-                var (fileDatas, contentType, fileNames) = downloadResult.Data;
                 var zipFileName = $"LiveCaptures_{captureId}.zip";
 
                 using var memoryStream = new MemoryStream();
@@ -968,7 +963,7 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 // Use DocumentService for live capture processing
-                var processingResult = await _documentService.ProcessLiveDocumentCaptureAsync(userId.Value, request);
+                var processingResult = await _liveCaptureService.ProcessLiveDocumentCaptureAsync(userId.Value, request);
                 if (!processingResult.IsSuccess)
                 {
                     return BadRequest(new ApiErrorResponse
@@ -1024,7 +1019,7 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 // Use DocumentService for live capture processing
-                var processingResult = await _documentService.ProcessLiveSelfieCaptureAsync(userId.Value, request);
+                var processingResult = await _liveCaptureService.ProcessLiveSelfieCaptureAsync(userId.Value, request);
                 if (!processingResult.IsSuccess)
                 {
                     return BadRequest(new ApiErrorResponse
@@ -1266,7 +1261,7 @@ namespace crypto_investment_project.Server.Controllers
             var liveCaptures = new List<LiveCaptureDto>();
             foreach (var id in liveCaptureIds)
             {
-                var capture = await _documentService.GetLiveCaptureAsync(id);
+                var capture = await _liveCaptureService.GetLiveCaptureAsync(id);
                 if (capture.IsSuccess)
                 {
                     liveCaptures.Add(new LiveCaptureDto {

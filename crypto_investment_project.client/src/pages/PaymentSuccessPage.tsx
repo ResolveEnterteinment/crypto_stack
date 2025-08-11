@@ -2,7 +2,10 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import Navbar from '../components/Navbar';
+import * as paymentService from '../services/payment';
+import * as subscriptionService from '../services/subscription';
+import { Subscription } from '../types/subscription';
+import { PaymentStatusResponse } from '../services/payment';
 
 const PaymentSuccessPage: React.FC = () => {
     const navigate = useNavigate();
@@ -10,10 +13,45 @@ const PaymentSuccessPage: React.FC = () => {
     const [searchParams] = useSearchParams();
 
     const [loading, setLoading] = useState(true);
-    const [paymentDetails, setPaymentDetails] = useState<any>(null);
+    const [payment, setPayment] = useState<PaymentStatusResponse | null>(null);
+    const [subscription, setSubscription] = useState<Subscription | null>(null);
 
     // Get parameters from URL
-    const subscriptionId = searchParams.get('subscription_id');
+    const subscriptionId = searchParams.get('subscription_id') ?? "";
+
+    // Format date
+    const formatDate = (dateString: string | Date): string => {
+        return new Date(dateString).toLocaleDateString();
+    };
+
+    const fetchSubscription = async (subscriptionId: string) => {
+        try {
+            setLoading(true);
+
+            var subscriptionData = await subscriptionService.getSubscription(subscriptionId);
+
+            setSubscription(subscriptionData);
+        } catch (error) {
+            console.error('Error verifying payment:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchPaymentDetails = async (subscriptionId: string) => {
+        try {
+            setLoading(true);
+            // Simulate API call delay
+            var paymentData = await paymentService.getSubscriptionPaymentStatus(subscriptionId);
+
+            if (paymentData)
+            setPayment(paymentData);
+        } catch (error) {
+            console.error('Error verifying payment:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
         // Check if user is authenticated
@@ -21,31 +59,10 @@ const PaymentSuccessPage: React.FC = () => {
             navigate('/auth');
             return;
         }
-
-        // Simulate fetching payment confirmation details
-        // In a real application, you would make an API call to verify the payment
-        const fetchPaymentDetails = async () => {
-            try {
-                // Simulate API call delay
-                await new Promise(resolve => setTimeout(resolve, 1500));
-
-                // Set mock payment details (in a real app, this would come from your backend)
-                setPaymentDetails({
-                    amount: searchParams.get('amount') || '100.00',
-                    currency: searchParams.get('currency') || 'USD',
-                    subscriptionId: subscriptionId,
-                    date: new Date().toLocaleDateString(),
-                    status: 'Successful'
-                });
-
-                setLoading(false);
-            } catch (error) {
-                console.error('Error verifying payment:', error);
-                setLoading(false);
-            }
-        };
-
-        fetchPaymentDetails();
+        
+        fetchSubscription(subscriptionId);
+        fetchPaymentDetails(subscriptionId);
+        
     }, [user, navigate, subscriptionId, searchParams]);
 
     // Handler functions
@@ -90,30 +107,30 @@ const PaymentSuccessPage: React.FC = () => {
                                 />
                             </svg>
                         </div>
-                        <h1 className="text-2xl font-bold text-gray-800">Payment Successful!</h1>
+                        <h1 className="text-2xl font-bold text-gray-800">Payment {payment && payment.status == "paid" ? "Successful" : "Failed"}!</h1>
                         <p className="text-gray-600 mt-2">
                             Your investment subscription has been activated successfully.
                         </p>
                     </div>
 
-                    {paymentDetails && (
+                    {payment && subscription && (
                         <div className="border-t border-b border-gray-200 py-4 mb-6">
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <p className="text-sm text-gray-500">Amount</p>
-                                    <p className="font-medium">${paymentDetails.amount} {paymentDetails.currency}</p>
-                                </div>
-                                <div>
-                                    <p className="text-sm text-gray-500">Date</p>
-                                    <p className="font-medium">{paymentDetails.date}</p>
+                                    <p className="font-medium">${payment.totalAmount} {payment.currency.toUpperCase()}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm text-gray-500">Status</p>
-                                    <p className="font-medium text-green-600">{paymentDetails.status}</p>
+                                    <p className="font-medium text-green-600">{payment.status.toUpperCase()}</p>
                                 </div>
                                 <div>
-                                    <p className="text-sm text-gray-500">Subscription ID</p>
-                                    <p className="font-medium text-xs truncate">{paymentDetails.subscriptionId}</p>
+                                    <p className="text-sm text-gray-500">Start Date</p>
+                                    <p className="font-medium">{formatDate(subscription.createdAt)}</p>
+                                </div>
+                                <div>
+                                    <p className="text-sm text-gray-500">End Date</p>
+                                    <p className="font-medium">{subscription.endDate ? formatDate(subscription.endDate) : "Until Canceled"}</p>
                                 </div>
                             </div>
                         </div>

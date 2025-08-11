@@ -1,23 +1,26 @@
 ﻿using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
 using Application.Interfaces.Asset;
-using Application.Interfaces.Base;
-using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Domain.Constants;
 using Domain.Constants.Logging;
 using Domain.Constants.Payment;
 using Domain.DTOs;
+using Domain.DTOs.Logging;
 using Domain.DTOs.Payment;
 using Domain.DTOs.Settings;
 using Domain.DTOs.User;
 using Domain.Events;
+using Domain.Events.Payment;
+using Domain.Events.Subscription;
 using Domain.Exceptions;
 using Domain.Models.Payment;
 using Domain.Models.User;
 using Infrastructure.Services.Base;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
+using Stripe;
 using StripeLibrary;
 
 namespace Infrastructure.Services
@@ -26,32 +29,25 @@ namespace Infrastructure.Services
     {
         private readonly Dictionary<string, IPaymentProvider> _providers = new(StringComparer.OrdinalIgnoreCase);
         private readonly IPaymentProvider _defaultProvider;
-        private readonly IStripeService _stripeService;
+        private readonly StripeService _stripeService;
         private readonly IAssetService _assetService;
         private readonly IUserService _userService;
-        private readonly INotificationService _notificationService;
         private readonly IIdempotencyService _idempotencyService;
 
         public IReadOnlyDictionary<string, IPaymentProvider> Providers => _providers;
         public IPaymentProvider DefaultProvider => _defaultProvider;
 
         public PaymentService(
-            ICrudRepository<PaymentData> repository,
-            ICacheService<PaymentData> cacheService,
-            IMongoIndexService<PaymentData> indexService,
-            ILoggingService logger,
-            IEventService eventService,
+            IServiceProvider serviceProvider,
             IOptions<PaymentServiceSettings> paymentSettings,
             IOptions<StripeSettings> stripeSettings,
             IAssetService assetService,
             IUserService userService,
-            INotificationService notificationService,
             IIdempotencyService idempotencyService
-        ) : base(repository, cacheService, indexService, logger, eventService)
+        ) : base(serviceProvider)
         {
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _userService = userService ?? throw new ArgumentNullException(nameof(userService));
-            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
             _stripeService = new StripeService(stripeSettings);
             _providers.Add("Stripe", _stripeService as IPaymentProvider);
@@ -60,757 +56,918 @@ namespace Infrastructure.Services
                     ?? throw new InvalidOperationException("DefaultProvider not configured")];
         }
 
-        public async Task<ResultWrapper> ProcessInvoicePaidEvent(InvoiceRequest invoice)
+        public async Task<ResultWrapper<PaymentData>> ProcessInvoicePaidEvent(InvoiceRequest invoice)
         {
-            using var scope = Logger.BeginScope("ProcessInvoicePaidEvent", new Dictionary<string, object?>
+            var key = $"invoice-paid-{invoice.Id}";
+
+            var (hit, _) = await _idempotencyService.GetResultAsync<Guid>(key);
+            if (hit)
             {
-                ["InvoiceId"] = invoice?.Id,
-            });
-
-            try
-            {
-                ValidateInvoiceRequest(invoice);
-
-                var key = $"invoice-paid-{invoice.Id}";
-                var (hit, _) = await _idempotencyService.GetResultAsync<Guid>(key);
-                if (hit)
-                {
-                    Logger.LogWarning($"Invoice {invoice.Id} already processed.");
-                    return ResultWrapper.Success($"Invoice {invoice.Id} already processed.");
-                }
-
-                // Check existing
-                var existingWr = await GetOneAsync(
-                    Builders<PaymentData>.Filter.Eq(p => p.InvoiceId, invoice.Id));
-
-                if (existingWr.Data != null)
-                {
-                    Logger.LogWarning($"Invoice data with ID {invoice.Id} already present.");
-                    return ResultWrapper.Success($"Invoice data with ID {invoice.Id} already present.");
-                }
-
-                // Calculate amounts
-                var (total, fee, platformFee, net) = await CalculatePaymentAmounts(invoice);
-
-                var paymentData = new PaymentData
-                {
-                    UserId = Guid.Parse(invoice.UserId),
-                    SubscriptionId = Guid.Parse(invoice.SubscriptionId),
-                    ProviderSubscriptionId = invoice.ProviderSubscripitonId,
-                    Provider = invoice.Provider,
-                    PaymentProviderId = invoice.PaymentIntentId,
-                    InvoiceId = invoice.Id,
-                    TotalAmount = total,
-                    PaymentProviderFee = fee,
-                    PlatformFee = platformFee,
-                    NetAmount = net,
-                    Currency = invoice.Currency,
-                    Status = invoice.Status
-                };
-
-                var insertWr = await InsertAsync(paymentData);
-
-                if (!insertWr.IsSuccess)
-                    throw new DatabaseException(insertWr.ErrorMessage ?? "Insert failed");
-
-                await EventService!.PublishAsync(new PaymentReceivedEvent(paymentData, Logger.Context));
-
-                await SendPaymentReceivedNotification(invoice);
-
-                await _idempotencyService.StoreResultAsync(key, paymentData.Id);
-                return ResultWrapper.Success();
+                _loggingService.LogWarning($"Invoice {invoice.Id} already processed.");
+                return ResultWrapper<PaymentData>.Success();
             }
-            catch (Exception ex)
-            {
-                Logger.LogError($"Invoice paid processing failed: {ex.Message}");
-                return ResultWrapper.FromException(ex);
-            }
+
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "ProcessInvoicePaidEvent(InvoiceRequest invoice)",
+                    State = {
+                        ["InvoiceId"] = invoice.Id,
+                        ["UserId"] = invoice.UserId,
+                        ["SubscriptionId"] = invoice.SubscriptionId,
+                        ["Amount"] = invoice.Amount,
+                        ["Provider"] = invoice.Provider,
+                        ["Currency"] = invoice.Currency
+                    },
+                    LogLevel = LogLevel.Critical
+                },
+                async () =>
+                {
+                    ValidateInvoiceRequest(invoice);
+
+                    // Check existing
+                    var existingWr = await GetOneAsync(
+                        Builders<PaymentData>.Filter.Eq(p => p.InvoiceId, invoice.Id));
+
+                    if (existingWr != null && existingWr.Data != null)
+                    {
+                        _loggingService.LogWarning($"Invoice data with ID {invoice.Id} already present.");
+                        return existingWr.Data;
+                    }
+
+                    // Calculate amounts
+                    var (total, fee, platformFee, net) = await CalculatePaymentAmounts(invoice);
+
+                    var paymentData = new PaymentData
+                    {
+                        UserId = Guid.Parse(invoice.UserId),
+                        SubscriptionId = Guid.Parse(invoice.SubscriptionId),
+                        ProviderSubscriptionId = invoice.ProviderSubscripitonId,
+                        Provider = invoice.Provider,
+                        PaymentProviderId = invoice.PaymentIntentId,
+                        InvoiceId = invoice.Id,
+                        TotalAmount = total,
+                        PaymentProviderFee = fee,
+                        PlatformFee = platformFee,
+                        NetAmount = net,
+                        Currency = invoice.Currency,
+                        Status = invoice.Status
+                    };
+
+                    var insertWr = await InsertAsync(paymentData);
+
+                    if (insertWr == null || !insertWr.IsSuccess)
+                        throw new DatabaseException(insertWr?.ErrorMessage ?? "Insert result returned null");
+
+                    await _idempotencyService.StoreResultAsync(key, paymentData.Id);
+
+                    return paymentData;
+                })
+                .WithCriticalOperationResilience()
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15))
+                .WithContext("OperationType", "InvoiceProcessing")
+                .OnSuccess(async (paymentData) =>
+                {
+                    if (paymentData != null)
+                    {
+                        await _eventService!.PublishAsync(new PaymentReceivedEvent(paymentData, _loggingService.Context));
+                        await SendPaymentReceivedNotification(invoice);
+
+                        _loggingService.LogInformation("Successfully processed invoice {InvoiceId} for payment {PaymentId}",
+                            invoice.Id, paymentData.Id);
+                    }
+                })
+                .ExecuteAsync();
         }
 
         public async Task<ResultWrapper> ProcessCheckoutSessionCompletedAsync(SessionDto session)
         {
-            using var scope = Logger.BeginScope("PaymentService::ProcessCheckoutSessionCompletedAsync", new Dictionary<string, object?>
-            {
-                ["SessionId"] = session?.Id,
-            });
-            try
-            {
-                await EventService!.PublishAsync(new CheckoutSessionCompletedEvent(session, Logger.Context));
-                return ResultWrapper.Success();
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError($"Failed to process checkout.session.completed event: {ex.Message}");
-                return ResultWrapper.FromException(ex);
-            }
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "ProcessCheckoutSessionCompletedAsync(SessionDto session)",
+                    State = {
+                        ["SessionId"] = session?.Id,
+                        ["SessionProvider"] = session?.Provider,
+                        ["SessionStatus"] = session?.Status,
+                        ["SubscriptionId"] = session?.SubscriptionId,
+                        ["InvoiceId"] = session?.InvoiceId
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    await _eventService!.PublishAsync(new CheckoutSessionCompletedEvent(session, _loggingService.Context));
+                })
+                .ExecuteAsync();
         }
 
         public async Task<ResultWrapper<SessionDto>> CreateCheckoutSessionAsync(CreateCheckoutSessionDto request)
         {
-            using var scope = Logger.BeginScope("PaymentService::CreateCheckoutSessionAsync", new Dictionary<string, object?>
-            {
-                ["UserId"] = request.UserId,
-                ["SubscriptionId"] = request.SubscriptionId,
-            });
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "CreateCheckoutSessionAsync(CreateCheckoutSessionDto request)",
+                    State = {
+                        ["UserId"] = request.UserId,
+                        ["SubscriptionId"] = request.SubscriptionId
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    ValidateCheckoutRequest(request);
 
-            try
-            {
-                ValidateCheckoutRequest(request);
+                    var provider = GetProvider(request.Provider);
+                    var customerId = await GetOrCreateStripeCustomerAsync(
+                        request.UserId, request.UserEmail);
 
-                var provider = GetProvider(request.Provider);
-                var customerId = await GetOrCreateStripeCustomerAsync(
-                    request.UserId, request.UserEmail);
+                    var options = BuildCheckoutSessionOptions(request, customerId);
+                    var sessionWr = await provider.CreateCheckoutSessionWithOptions(options);
+                    if (!sessionWr.IsSuccess || sessionWr.Data == null)
+                        throw new PaymentApiException("Failed to create session", provider.Name);
 
-                var options = BuildCheckoutSessionOptions(request, customerId);
-                var sessionWr = await provider.CreateCheckoutSessionWithOptions(options);
-                if (!sessionWr.IsSuccess || sessionWr.Data == null)
-                    throw new PaymentApiException("Failed to create session", provider.Name);
+                    await _eventService!.PublishAsync(new CheckoutSessionCreatedEvent(sessionWr.Data, _loggingService.Context));
+                    return sessionWr.Data;
+                })
+                .WithHttpResilience() // Add proper resilience pattern
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(10))
+                .WithContext("OperationType", "CheckoutSessionCreation")
+                .WithContext("PaymentProvider", request.Provider ?? "Default")
+                .OnError(async (ex) =>
+                {
+                    // Log specific payment provider errors
+                    if (ex is PaymentApiException paymentEx)
+                    {
+                        await _loggingService.LogTraceAsync(
+                            $"Payment provider {paymentEx.PaymentProvider} failed to create checkout session: {paymentEx.Message}",
+                            level: LogLevel.Error,
+                            requiresResolution: true);
+                    }
+                })
+                .OnCriticalError(async (ex) =>
+                {
+                    // Handle critical failures that might affect multiple users
+                    await _loggingService.LogTraceAsync(
+                        $"Critical failure in checkout session creation: {ex.Message}",
+                        level: LogLevel.Critical,
+                        requiresResolution: true);
 
-                await EventService!.PublishAsync(new CheckoutSessionCreatedEvent(sessionWr.Data, Logger.Context));
-                return ResultWrapper<SessionDto>.Success(sessionWr.Data);
-            }
-            catch (ValidationException ex)
-            {
-                Logger.LogError($"Failed to validate create checkout session: {ex.Message}");
-                return ResultWrapper<SessionDto>.FromException(ex);
-            }
-            catch (PaymentApiException ex)
-            {
-                Logger.LogError($"Payment API Exception: {ex.Message}");
-                return ResultWrapper<SessionDto>.FromException(ex);
-            }
-            catch (Exception ex)
-            {
-                await Logger.LogTraceAsync(
-                    $"Failed to create checkout session: {ex.Message}",
-                    requiresResolution: true);
-                return ResultWrapper<SessionDto>.FromException(ex);
-            }
+                    // Could trigger alerts or fallback mechanisms here
+                })
+                .ExecuteAsync();
         }
 
-        public async Task<PaymentStatusResponse> GetPaymentStatusAsync(string paymentId)
+        public async Task<ResultWrapper<PaymentDetailsDto>> GetPaymentDetailsAsync(string paymentId)
         {
             if (string.IsNullOrWhiteSpace(paymentId))
                 throw new ArgumentException("Payment ID is required", nameof(paymentId));
 
-            using var scope = Logger.BeginScope("PaymentService::GetPaymentStatusAsync", new Dictionary<string, object?>
-            {
-                ["PaymentId"] = paymentId,
-            });
-
-            try
-            {
-                var filter = Builders<PaymentData>.Filter.Eq(p => p.PaymentProviderId, paymentId);
-                var dbWr = await GetOneAsync(filter);
-                if (dbWr.Data != null)
+            return await _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    var p = dbWr.Data;
-                    return new PaymentStatusResponse
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "GetPaymentDetailsAsync(string paymentId)",
+                    State = {
+                ["PaymentId"] = paymentId
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    // Step 1: Try to get from local database by GUID first
+                    if (Guid.TryParse(paymentId, out var guid) && guid != Guid.Empty)
                     {
-                        Id = p.Id.ToString(),
-                        Status = p.Status,
-                        Amount = p.TotalAmount,
-                        Currency = p.Currency,
-                        SubscriptionId = p.SubscriptionId.ToString(),
-                        CreatedAt = p.CreatedAt
-                    };
-                }
+                        var wr = await GetByIdAsync(guid);
+                        if (wr != null && wr.IsSuccess && wr.Data != null)
+                        {
+                            return new PaymentDetailsDto(wr.Data);
+                        }
+                    }
 
-                var pi = await (_stripeService as IStripeService)!.GetPaymentIntentAsync(paymentId);
-                if (pi != null)
-                {
-                    return new PaymentStatusResponse
-                    {
-                        Id = paymentId,
-                        Status = MapStripeStatusToLocal(pi.Status),
-                        Amount = pi.Amount / 100m,
-                        Currency = pi.Currency?.ToUpperInvariant() ?? "USD",
-                        SubscriptionId = pi.Metadata.TryGetValue("subscriptionId", out var sid) ? sid : "",
-                        CreatedAt = pi.Created,
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                }
-
-                throw new KeyNotFoundException($"Payment {paymentId} not found");
-            }
-            catch (Exception ex)
-            {
-                await Logger.LogTraceAsync($"Failed to get payment status: {ex.Message}");
-                throw;
-            }
-        }
-
-        public async Task<PaymentDetailsDto> GetPaymentDetailsAsync(string paymentId)
-        {
-            using var scope = Logger.BeginScope("PaymentService::GetPaymentDetailsAsync",
-                new Dictionary<string, object?>
-                {
-                    ["PaymentId"] = paymentId,
-                });
-
-            if (string.IsNullOrWhiteSpace(paymentId))
-                throw new ArgumentException("Payment ID is required", nameof(paymentId));
-
-            try
-            {
-                if (Guid.TryParse(paymentId, out var guid) && guid != Guid.Empty)
-                {
-                    var wr = await GetByIdAsync(guid);
-                    if (wr != null && wr.IsSuccess && wr.Data != null)
-                        return new PaymentDetailsDto(wr.Data);
-                }
-                else
-                {
+                    // Step 2: Try to get from local database by PaymentProviderId
                     var dbWr = await GetOneAsync(
                         Builders<PaymentData>.Filter.Eq(p => p.PaymentProviderId, paymentId));
-                    if (dbWr != null && dbWr.IsSuccess && dbWr.Data != null)
-                        return new PaymentDetailsDto(dbWr.Data);
 
+                    if (dbWr != null && dbWr.IsSuccess && dbWr.Data != null)
+                    {
+                        return new PaymentDetailsDto(dbWr.Data);
+                    }
+
+                    // Step 3: Fallback to external payment provider (Stripe)
                     var provider = GetProviderForPaymentId(paymentId);
                     if (provider.Name == "Stripe")
                     {
                         var dto = await GetStripePaymentDetailsAsync(paymentId);
-                        if (dto != null) return dto;
+                        if (dto != null)
+                        {
+                            return dto;
+                        }
                     }
-                }
 
-                throw new KeyNotFoundException($"Payment details not found for {paymentId}");
-            }
-            catch (Exception ex)
-            {
-                await Logger.LogTraceAsync($"Failed to get payment {paymentId} details: {ex.Message}");
-                throw;
-            }
+                    // Step 4: Not found anywhere
+                    throw new KeyNotFoundException($"Payment details not found for {paymentId}");
+                })
+                .WithComprehensiveResilience(
+                    maxRetries: 2,                    // Limited retries for read operations
+                    timeout: TimeSpan.FromSeconds(10), // Reasonable timeout for DB + external API
+                    failureRatio: 0.3                 // Circuit breaker threshold
+                )
+                .WithPerformanceMonitoring(
+                    TimeSpan.FromSeconds(2),   // Warning threshold - DB queries should be fast
+                    TimeSpan.FromSeconds(8)    // Error threshold - before overall timeout
+                )
+                .WithContext("OperationType", "PaymentDetailsLookup")
+                .WithContext("PaymentProvider", GetProviderForPaymentId(paymentId).Name)
+                .OnError(async (ex) =>
+                {
+                    // Handle specific error scenarios
+                    if (ex is KeyNotFoundException)
+                    {
+                        await _loggingService.LogTraceAsync(
+                            $"Payment {paymentId} not found in database or payment provider",
+                            level: LogLevel.Warning);
+                    }
+                    else if (ex is HttpRequestException || ex is TaskCanceledException)
+                    {
+                        await _loggingService.LogTraceAsync(
+                            $"External payment provider API failed for payment {paymentId}: {ex.Message}",
+                            level: LogLevel.Error,
+                            requiresResolution: true);
+                    }
+                    else if (ex is DatabaseException)
+                    {
+                        await _loggingService.LogTraceAsync(
+                            $"Database error retrieving payment details for {paymentId}: {ex.Message}",
+                            level: LogLevel.Error,
+                            requiresResolution: true);
+                    }
+                })
+                .OnCriticalError(async (ex) =>
+                {
+                    // Handle critical failures that might indicate system-wide issues
+                    await _loggingService.LogTraceAsync(
+                        $"Critical failure getting payment details for {paymentId}: {ex.Message}",
+                        level: LogLevel.Critical,
+                        requiresResolution: true);
+                })
+                .ExecuteAsync();
         }
-        public async Task<ResultWrapper<PaymentData>> GetByProviderIdAsync(string paymentProviderId)
+        public async Task<ResultWrapper<PaymentData?>> GetByProviderIdAsync(string paymentProviderId)
         {
-            return await SafeExecute(
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "GetByProviderIdAsync(string paymentProviderId)",
+                    State = {
+                        ["PaymentProviderId"] = paymentProviderId,
+                    },
+                    LogLevel = LogLevel.Error
+                },
                 async () =>
                 {
                     var paymentResult = await GetOneAsync(new FilterDefinitionBuilder<PaymentData>().Eq(t => t.PaymentProviderId, paymentProviderId));
                     if (paymentResult == null || !paymentResult.IsSuccess)
                         throw new KeyNotFoundException("Failed to fetch payment transactions");
                     return paymentResult.Data;
-                }
-                );
+                })
+                .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper> CancelPaymentAsync(string paymentId)
+        public async Task<ResultWrapper<CrudResult<PaymentData>>> CancelPaymentAsync(string paymentId)
         {
-            using var scope = Logger.BeginScope(new Dictionary<string, object?>
+            // Step 1: Check idempotency first to avoid duplicate cancellations
+            var key = $"payment-cancelled-{paymentId}";
+            var (hit, _) = await _idempotencyService.GetResultAsync<Guid>(key);
+            if (hit)
             {
-                ["PaymentId"] = paymentId,
-            });
-            try
-            {
-                var key = $"payment-cancelled-{paymentId}";
-                var (hit, _) = await _idempotencyService.GetResultAsync<Guid>(key);
-                if (hit)
-
-                    return ResultWrapper.Success();
-
-                if (string.IsNullOrEmpty(paymentId))
-                    throw new ArgumentException("Payment ID is required", nameof(paymentId));
-                // fetch existing payment
-                var paymentData = await GetPaymentDataForCancel(paymentId)
-                                  ?? throw new KeyNotFoundException($"Payment {paymentId} not found");
-
-                if (!IsCancellable(paymentData.Status))
-                    throw new InvalidOperationException($"Cannot cancel payment in status {paymentData.Status}");
-
-                var provider = GetProviderForPaymentId(paymentId);
-                var cancelWr = await provider.CancelPaymentAsync(paymentId);
-                if (!cancelWr.IsSuccess)
-                    throw new PaymentApiException(cancelWr.ErrorMessage ?? "Cancel failed", provider.Name, paymentId);
-
-                var updateWr = await UpdateAsync(paymentData.Id, new { Status = PaymentStatus.Failed });
-                if (!updateWr.IsSuccess)
-                    throw new DatabaseException(updateWr.ErrorMessage);
-
-                await EventService!.PublishAsync(new PaymentCancelledEvent(paymentData, Logger.Context));
-                await _idempotencyService.StoreResultAsync(key, paymentData.Id);
-                return ResultWrapper.Success();
+                _loggingService.LogInformation("Payment {PaymentId} already cancelled (idempotency check)", paymentId);
+                return ResultWrapper<CrudResult<PaymentData>>.SuccessEmpty;
             }
-            catch (Exception ex)
-            {
-                Logger.LogError("CancelPayment failed");
-                return ResultWrapper.FromException(ex);
-            }
+
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "CancelPaymentAsync(string paymentId)",
+                    State = {
+                        ["PaymentId"] = paymentId,
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    // Step 2: Fetch and validate payment data
+                    var paymentData = await GetPaymentDataForCancel(paymentId)
+                                      ?? throw new KeyNotFoundException($"Payment {paymentId} not found");
+
+                    // Step 3: Validate payment state
+                    if (!IsCancellable(paymentData.Status))
+                        throw new InvalidOperationException($"Cannot cancel payment in status {paymentData.Status}. Only {PaymentStatus.Pending} and {PaymentStatus.Queued} payments can be cancelled.");
+
+                    // Step 4: Determine provider and cancel with external provider
+                    var provider = GetProviderForPaymentId(paymentId);
+                    var cancelWr = await provider.CancelPaymentAsync(paymentId, "requested_by_customer");
+
+                    if (!cancelWr.IsSuccess)
+                        throw new PaymentApiException(
+                            cancelWr.ErrorMessage ?? "Payment cancellation failed at provider level",
+                            provider.Name,
+                            paymentId);
+
+                    // Step 5: Update local database status
+                    var updateWr = await UpdateAsync(paymentData.Id, new
+                    {
+                        Status = PaymentStatus.Failed,
+                        UpdatedAt = DateTime.UtcNow,
+                        CancellationReason = "requested_by_customer"
+                    });
+
+                    if (updateWr == null || !updateWr.IsSuccess)
+                        throw new DatabaseException($"Failed to update payment status: {updateWr?.ErrorMessage ?? "Update result returned null"}");
+
+                    // Step 6: Publish cancellation event for downstream processing
+                    await _eventService!.PublishAsync(new PaymentCancelledEvent(paymentData, _loggingService.Context));
+
+                    // Step 7: Store idempotency key to prevent duplicate processing
+                    await _idempotencyService.StoreResultAsync(key, paymentData.Id);
+
+                    _loggingService.LogInformation("Successfully cancelled payment {PaymentId} with provider {Provider}",
+                        paymentId, provider.Name);
+                    return updateWr.Data;
+                })
+                .WithCriticalOperationResilience() // Use critical operation pattern for payment cancellations
+                .WithPerformanceMonitoring(
+                    TimeSpan.FromSeconds(3),   // Warning threshold - cancellations should be relatively fast
+                    TimeSpan.FromSeconds(10)   // Error threshold - before timeout
+                )
+                .WithContext("OperationType", "PaymentCancellation")
+                .WithContext("PaymentProvider", GetProviderForPaymentId(paymentId).Name)
+                .OnSuccess(async (CrudResult<PaymentData> cancelResult) =>
+                {
+                    var paymentData = cancelResult.Documents.First();
+                    await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                    {
+                        UserId = paymentData.UserId.ToString(),
+                        Message = $"Payment cancellation confirmed for {paymentData?.TotalAmount:C} {paymentData?.Currency}",
+                        IsRead = false
+                    });
+                })
+                .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper> UpdatePaymentRetryInfoAsync(
+        public async Task<ResultWrapper<CrudResult<PaymentData>>> UpdatePaymentRetryInfoAsync(
             Guid paymentId,
             int attemptCount,
             DateTime lastAttemptAt,
             DateTime nextRetryAt,
             string failureReason)
         {
-            using var scope = Logger.BeginScope("PaymentService::UpdatePaymentRetryInfoAsync", new Dictionary<string, object?>
-            {
-                ["PaymentId"] = paymentId,
-                ["AttemptCount"] = attemptCount,
-                ["NextRetryAt"] = nextRetryAt
-            });
-
-            try
-            {
-                var updateFields = new Dictionary<string, object>
+            return await _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    ["AttemptCount"] = attemptCount,
-                    ["LastAttemptAt"] = lastAttemptAt,
-                    ["NextRetryAt"] = nextRetryAt,
-                    ["FailureReason"] = failureReason,
-                    ["Status"] = PaymentStatus.Failed
-                };
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "UpdatePaymentRetryInfoAsync(Guid paymentId, int attemptCount, DateTime lastAttemptAt, DateTime nextRetryAt, string failureReason)",
+                    State = {
+                        ["PaymentId"] = paymentId,
+                        ["AttemptCount"] = attemptCount,
+                        ["NextRetryAt"] = nextRetryAt
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    var updateFields = new Dictionary<string, object>
+                    {
+                        ["AttemptCount"] = attemptCount,
+                        ["LastAttemptAt"] = lastAttemptAt,
+                        ["NextRetryAt"] = nextRetryAt,
+                        ["FailureReason"] = failureReason,
+                        ["Status"] = PaymentStatus.Failed
+                    };
 
-                var updateResult = await UpdateAsync(paymentId, updateFields);
-                if (!updateResult.IsSuccess)
-                    throw new DatabaseException(updateResult.ErrorMessage);
+                    var updateResult = await UpdateAsync(paymentId, updateFields);
+                    if (updateResult == null || !updateResult.IsSuccess)
+                        throw new DatabaseException(updateResult?.ErrorMessage ?? "Failed to update Payment");
 
-                return ResultWrapper.Success();
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to update payment retry info: {Message}", ex.Message);
-                return ResultWrapper.FromException(ex);
-            }
+                    return updateResult.Data;
+                })
+                .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper<IEnumerable<PaymentData>>> GetPendingRetriesAsync()
+        public async Task<ResultWrapper<List<PaymentData>>> GetPendingRetriesAsync()
         {
-            using var scope = Logger.BeginScope("PaymentService::GetPendingRetriesAsync");
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "GetPendingRetriesAsync()",
+                    State = [],
+                },
+                async () =>
+                {
+                    var now = DateTime.UtcNow;
 
-            try
-            {
-                var now = DateTime.UtcNow;
+                    // Find payments with: status=failed, nextRetryAt <= now, attemptCount < max attempts
+                    var filter = Builders<PaymentData>.Filter.And(
+                        Builders<PaymentData>.Filter.Eq(p => p.Status, PaymentStatus.Failed),
+                        Builders<PaymentData>.Filter.Lte(p => p.NextRetryAt, now),
+                        Builders<PaymentData>.Filter.Lt(p => p.AttemptCount, 3) // Max attempts
+                    );
 
-                // Find payments with: status=failed, nextRetryAt <= now, attemptCount < max attempts
-                var filter = Builders<PaymentData>.Filter.And(
-                    Builders<PaymentData>.Filter.Eq(p => p.Status, PaymentStatus.Failed),
-                    Builders<PaymentData>.Filter.Lte(p => p.NextRetryAt, now),
-                    Builders<PaymentData>.Filter.Lt(p => p.AttemptCount, 3) // Max attempts
-                );
-
-                var pendingRetries = await GetManyAsync(filter);
-                return ResultWrapper<IEnumerable<PaymentData>>.Success(pendingRetries.Data);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to get pending retries: {Message}", ex.Message);
-                return ResultWrapper<IEnumerable<PaymentData>>.FromException(ex);
-            }
+                    var pendingRetries = await GetManyAsync(filter);
+                    return pendingRetries.Data;
+                })
+                .ExecuteAsync();
         }
 
         public async Task<ResultWrapper> RetryPaymentAsync(Guid paymentId)
         {
-            using var scope = Logger.BeginScope("PaymentService::RetryPaymentAsync", new Dictionary<string, object?>
+            // Step 1: Idempotency check to prevent duplicate retries
+            var idempotencyKey = $"payment-retry-{paymentId}-{DateTime.UtcNow:yyyyMMddHH}";
+            var (hit, _) = await _idempotencyService.GetResultAsync<Guid>(idempotencyKey);
+            if (hit)
             {
-                ["PaymentId"] = paymentId
-            });
-
-            try
-            {
-                // Get payment data
-                var paymentResult = await GetByIdAsync(paymentId);
-                if (!paymentResult.IsSuccess || paymentResult.Data == null)
-                    throw new KeyNotFoundException($"Payment {paymentId} not found");
-
-                var payment = paymentResult.Data;
-
-                // We already have the subscription ID in the payment data
-                // We don't need to fetch the subscription anymore
-                var provider = GetProvider(payment.Provider);
-
-                // Just retry the payment using the stored provider information
-                // You might need to store the provider subscription ID in the PaymentData model
-                var retryResult = await _stripeService.RetryPaymentAsync(
-                    payment.PaymentProviderId,
-                    payment.ProviderSubscriptionId); // You'll need to add this field to PaymentData
-
-                if (!retryResult.IsSuccess)
-                    throw new PaymentApiException(retryResult.ErrorMessage ?? "Payment retry failed", provider.Name);
-
-                // Update payment status to pending for webhook to catch
-                await UpdateAsync(paymentId, new { Status = PaymentStatus.Pending });
-
-                Logger.LogInformation("Successfully initiated retry for payment {PaymentId}", paymentId);
+                _loggingService.LogInformation("Payment {PaymentId} retry already initiated this hour", paymentId);
                 return ResultWrapper.Success();
             }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to retry payment {PaymentId}: {Message}", paymentId, ex.Message);
-                return ResultWrapper.FromException(ex);
-            }
+
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "RetryPaymentAsync(Guid paymentId)",
+                    State = {
+                        ["PaymentId"] = paymentId
+                    },
+                    LogLevel = LogLevel.Critical
+                },
+                async () =>
+                {
+                    // Step 2: Get and validate payment data
+                    var paymentResult = await GetByIdAsync(paymentId);
+                    if (!paymentResult.IsSuccess || paymentResult.Data == null)
+                        throw new KeyNotFoundException($"Payment {paymentId} not found");
+
+                    var payment = paymentResult.Data;
+
+                    // Step 3: Validate payment state and retry eligibility
+                    if (payment.Status != PaymentStatus.Failed)
+                        throw new InvalidOperationException($"Cannot retry payment in status {payment.Status}. Only failed payments can be retried.");
+
+                    if (payment.AttemptCount >= 3) // Max retry attempts
+                        throw new InvalidOperationException($"Payment {paymentId} has exceeded maximum retry attempts ({payment.AttemptCount}/3)");
+
+                    if (payment.NextRetryAt > DateTime.UtcNow)
+                        throw new InvalidOperationException($"Payment {paymentId} is not eligible for retry until {payment.NextRetryAt:yyyy-MM-dd HH:mm:ss} UTC");
+
+                    // Step 4: Validate required data for retry
+                    if (string.IsNullOrEmpty(payment.ProviderSubscriptionId))
+                        throw new InvalidOperationException($"Payment {paymentId} missing provider subscription ID required for retry");
+
+                    // Step 5: Get payment provider
+                    var provider = GetProvider(payment.Provider);
+
+                    // Step 6: Attempt to retry the payment with the payment provider
+                    var retryResult = await _stripeService.RetryPaymentAsync(
+                        payment.PaymentProviderId,
+                        payment.ProviderSubscriptionId);
+
+                    if (!retryResult.IsSuccess)
+                        throw new PaymentApiException(
+                            retryResult.ErrorMessage ?? "Payment retry failed at provider level",
+                            provider.Name,
+                            payment.PaymentProviderId);
+
+                    // Step 7: Update payment status to pending for webhook processing
+                    var updateFields = new Dictionary<string, object>
+                    {
+                        ["Status"] = PaymentStatus.Pending,
+                        ["AttemptCount"] = payment.AttemptCount + 1,
+                        ["LastAttemptAt"] = DateTime.UtcNow,
+                        ["UpdatedAt"] = DateTime.UtcNow
+                    };
+
+                    var updateResult = await UpdateAsync(paymentId, updateFields);
+                    if (!updateResult.IsSuccess)
+                        throw new DatabaseException($"Failed to update payment retry status: {updateResult.ErrorMessage}");
+
+                    // Step 8: Store idempotency key
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, paymentId);
+
+                    _loggingService.LogInformation(
+                        "Successfully initiated retry for payment {PaymentId}, attempt {AttemptCount}",
+                        paymentId, payment.AttemptCount + 1);
+                })
+                .WithCriticalOperationResilience() // Use critical operation pattern for payment retries
+                .WithPerformanceMonitoring(
+                    TimeSpan.FromSeconds(5),   // Warning threshold - retries should be reasonably fast
+                    TimeSpan.FromSeconds(15)   // Error threshold - before timeout
+                )
+                .WithContext("OperationType", "PaymentRetry")
+                .ExecuteAsync();
         }
 
         public async Task<ResultWrapper> ProcessPaymentFailedAsync(PaymentIntentRequest paymentIntentRequest)
         {
-            Logger.BeginScope(nameof(ProcessPaymentFailedAsync), new
+            if (paymentIntentRequest == null)
+                throw new ArgumentNullException(nameof(paymentIntentRequest));
+
+            // Step 1: Idempotency check to prevent duplicate processing
+            var idempotencyKey = $"payment-failed-{paymentIntentRequest.PaymentId}-{paymentIntentRequest.InvoiceId}";
+            var (hit, _) = await _idempotencyService.GetResultAsync<Guid>(idempotencyKey);
+            if (hit)
             {
-                PaymentProviderId = paymentIntentRequest.PaymentId,
-                UserId = paymentIntentRequest.UserId,
-                SubscriptionId = paymentIntentRequest.SubscriptionId
-            });
-
-            try
-            {
-                // Verify if we have a payment record for this
-                var existingPayment = await GetByProviderIdAsync(paymentIntentRequest.InvoiceId);
-
-                PaymentData paymentData;
-
-                if (existingPayment == null || !existingPayment.IsSuccess || existingPayment.Data == null)
-                {
-                    var invoice = await _stripeService.GetInvoiceAsync(paymentIntentRequest.InvoiceId);
-                    var chargeId = invoice.ChargeId;
-                    // Calculate amounts
-                    var (total, fee, platformFee, net) = await CalculatePaymentAmounts(new()
-                    {
-                        Provider = "Stripe",
-                        ChargeId = chargeId,
-                        PaymentIntentId = paymentIntentRequest.PaymentId,
-                        UserId = paymentIntentRequest.UserId,
-                        SubscriptionId = paymentIntentRequest.SubscriptionId,
-                        Amount = invoice.AmountRemaining,
-                        Currency = paymentIntentRequest.Currency,
-                        Status = paymentIntentRequest.Status
-                    });
-
-                    // Create a new failed payment record
-                    paymentData = new PaymentData
-                    {
-                        UserId = Guid.Parse(paymentIntentRequest.UserId),
-                        SubscriptionId = Guid.Parse(paymentIntentRequest.SubscriptionId),
-                        Provider = "Stripe",
-                        PaymentProviderId = paymentIntentRequest.SubscriptionId,
-                        InvoiceId = paymentIntentRequest.InvoiceId,
-                        TotalAmount = paymentIntentRequest.Amount / 100m,
-                        Currency = paymentIntentRequest.Currency?.ToUpperInvariant() ?? "USD",
-                        PaymentProviderFee = fee,
-                        PlatformFee = platformFee,
-                        NetAmount = net,
-                        Status = PaymentStatus.Failed,
-                        FailureReason = paymentIntentRequest.LastPaymentError ?? "Payment failed",
-                        AttemptCount = 1,
-                        LastAttemptAt = DateTime.UtcNow
-                    };
-
-                    var insertReult = await InsertAsync(paymentData);
-
-                    if (insertReult == null || !insertReult.IsSuccess)
-                        await Logger.LogTraceAsync(insertReult?.ErrorMessage ?? "Failed to insert PaymentData",
-                            level: LogLevel.Error);
-                }
-                else
-                {
-                    // Update existing payment
-                    paymentData = existingPayment.Data;
-                    paymentData.Status = PaymentStatus.Failed;
-                    paymentData.FailureReason = paymentIntentRequest.LastPaymentError ?? "Payment failed";
-                    paymentData.AttemptCount = (paymentData.AttemptCount) + 1;
-                    paymentData.LastAttemptAt = DateTime.UtcNow;
-
-                    var updateReult = await UpdateAsync(paymentData.Id, paymentData);
-
-                    if (updateReult == null || !updateReult.IsSuccess)
-                        await Logger.LogTraceAsync(updateReult?.ErrorMessage ?? "Failed to update PaymentData",
-                            level: LogLevel.Error);
-                }
-
-                // Publish event for payment failure handling
-                await EventService!.PublishAsync(new SubscriptionPaymentFailedEvent(
-                    paymentData,
-                    paymentData.FailureReason ?? "Payment failed",
-                    paymentData.AttemptCount,
-                    Logger.Context
-                ));
-
-                await SendPaymentFailedNotification(paymentIntentRequest);
-
+                _loggingService.LogWarning("Payment failure event for {PaymentId} already processed (idempotency check)", paymentIntentRequest.PaymentId);
                 return ResultWrapper.Success();
             }
-            catch (Exception ex)
-            {
-                await Logger.LogTraceAsync(ex.Message, level: LogLevel.Error);
-                return ResultWrapper.FromException(ex);
-            }
+
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "ProcessPaymentFailedAsync(PaymentIntentRequest paymentIntentRequest)",
+                    State = {
+                        ["PaymentProviderId"] = paymentIntentRequest.PaymentId,
+                        ["UserId"] = paymentIntentRequest.UserId,
+                        ["SubscriptionId"] = paymentIntentRequest.SubscriptionId,
+                        ["InvoiceId"] = paymentIntentRequest.InvoiceId,
+                        ["Amount"] = paymentIntentRequest.Amount,
+                        ["Currency"] = paymentIntentRequest.Currency,
+                        ["Status"] = paymentIntentRequest.Status
+                    },
+                    LogLevel = LogLevel.Critical // Payment failures are critical business events
+                },
+                async () =>
+                {
+                    
+
+                    _loggingService.LogInformation("Processing payment failure for {PaymentId}, Invoice: {InvoiceId}, Amount: {Amount}",
+                        paymentIntentRequest.PaymentId, paymentIntentRequest.InvoiceId, paymentIntentRequest.Amount / 100m);
+
+                    // Step 2: Try to find existing payment record
+                    var existingPayment = await GetByProviderIdAsync(paymentIntentRequest.InvoiceId);
+                    PaymentData paymentData;
+
+                    if (existingPayment == null || !existingPayment.IsSuccess || existingPayment.Data == null)
+                    {
+                        // Step 3: Create new payment record from Stripe invoice data
+                        paymentData = await CreateNewFailedPaymentRecord(paymentIntentRequest);
+                    }
+                    else
+                    {
+                        // Step 4: Update existing payment record
+                        paymentData = await UpdateExistingPaymentRecord(existingPayment.Data, paymentIntentRequest);
+                    }
+
+                    // Step 5: Publish payment failure event for downstream processing
+                    await _eventService!.PublishAsync(new SubscriptionPaymentFailedEvent(
+                        paymentData,
+                        paymentData.FailureReason ?? "Payment failed",
+                        paymentData.AttemptCount,
+                        _loggingService.Context
+                    ));
+
+                    // Step 6: Send user notification
+                    await SendPaymentFailedNotification(paymentIntentRequest);
+
+                    // Step 7: Store idempotency key
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, paymentData.Id);
+
+                    _loggingService.LogInformation("Successfully processed payment failure for {PaymentId}", paymentIntentRequest.PaymentId);
+                })
+                .WithCriticalOperationResilience() // Use critical operation pattern for payment failures
+                .WithPerformanceMonitoring(
+                    TimeSpan.FromSeconds(5),   // Warning threshold - payment failure processing should be reasonably fast
+                    TimeSpan.FromSeconds(15)   // Error threshold - before timeout
+                )
+                .WithContext("OperationType", "PaymentFailureProcessing")
+                .WithContext("PaymentProvider", "Stripe")
+                .WithContext("FailureReason", paymentIntentRequest.LastPaymentError ?? "Unknown")
+                .OnCriticalError(async (ex) =>
+                {
+                    // Handle critical failures that might indicate systemic issues
+                    await _loggingService.LogTraceAsync(
+                        $"Critical failure processing payment failure for {paymentIntentRequest.PaymentId}: {ex.Message}. This may indicate a systemic payment processing issue.",
+                        level: LogLevel.Critical,
+                        requiresResolution: true);
+                })
+                .OnSuccess(async () =>
+                {
+                    // Optional: Additional success processing
+                    _loggingService.LogInformation("Payment failure processing completed successfully for {PaymentId}", paymentIntentRequest.PaymentId);
+                })
+                .ExecuteAsync();
         }
         public async Task<ResultWrapper> ProcessSetupIntentSucceededAsync(Guid subscriptionId)
         {
-            Logger.BeginScope("PaymentService::ProcessSetupIntentSucceeded", new
-            {
-                SubscriptionId = subscriptionId
-            });
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "ProcessCheckoutSessionCompletedAsync(SessionDto session)",
+                    State = {
+                        ["SubscriptionId"] = subscriptionId,
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    // Instead of directly checking subscription status, publish an event
+                    await _eventService.PublishAsync(new PaymentMethodUpdatedEvent(subscriptionId, "", _loggingService.Context));
 
-            try
-            {
-                // Instead of directly checking subscription status, publish an event
-                await EventService.PublishAsync(new PaymentMethodUpdatedEvent(subscriptionId, "", Logger.Context));
-
-                // The rest is handled by event handlers in SubscriptionService
-                return ResultWrapper.Success();
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Error handling setup_intent.succeeded event: {ErrorMessage}", ex.Message);
-                return ResultWrapper.FromException(ex);
-            }
+                    // The rest is handled by event handlers in SubscriptionService
+                })
+                .ExecuteAsync();
         }
 
         public async Task<ResultWrapper<string>> CreateUpdatePaymentMethodSessionAsync(string userId, string subscriptionId)
         {
-            using var scope = Logger.BeginScope("PaymentService::CreateUpdatePaymentMethodSession", new Dictionary<string, object?>
-            {
-                ["UserId"] = userId,
-                ["SubscriptionId"] = subscriptionId,
-            });
+            // Step 1: Input validation first (before resilience wrapper)
+            if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out _))
+                throw new ArgumentException("Invalid userId", nameof(userId));
 
-            try
-            {
-                if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out _))
-                    throw new ArgumentException("Invalid userId", nameof(userId));
+            if (string.IsNullOrEmpty(subscriptionId) || !Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
+                throw new ArgumentException("Invalid subscriptionId", nameof(subscriptionId));
 
-                if (string.IsNullOrEmpty(subscriptionId) || !Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
-                    throw new ArgumentException("Invalid subscriptionId", nameof(subscriptionId));
-
-                // Get the payment data for this subscription to find the provider subscription ID
-                var filter = Builders<PaymentData>.Filter.Eq(p => p.SubscriptionId, parsedSubscriptionId);
-                var paymentResult = await GetLatestPaymentAsync(parsedSubscriptionId);
-
-                if (!paymentResult.IsSuccess || paymentResult.Data == null)
-                    throw new KeyNotFoundException($"No payment found for subscription {subscriptionId}");
-
-                var payment = paymentResult.Data;
-
-                if (string.IsNullOrEmpty(payment.ProviderSubscriptionId))
-                    throw new InvalidOperationException("No provider subscription ID found");
-
-                // Create checkout session for updating payment method
-                var sessionResult = await _stripeService.CreateUpdatePaymentMethodSessionAsync(
-                    payment.ProviderSubscriptionId,
-                    new Dictionary<string, string>
-                    {
-                        ["userId"] = userId,
-                        ["subscriptionId"] = subscriptionId
-                    });
-
-                if (sessionResult == null || !sessionResult.IsSuccess || string.IsNullOrEmpty(sessionResult.Data?.Url))
+            return await _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    await Logger.LogTraceAsync($"Failed to create update payment method session: {sessionResult.ErrorMessage ?? "Session result returned null"}",
-                        level: LogLevel.Error,
-                        requiresResolution: true);
-                    throw new PaymentApiException("Failed to create update payment method session", "Stripe");
-                }
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "CreateUpdatePaymentMethodSessionAsync(string userId, string subscriptionId)",
+                    State = {
+                        ["UserId"] = userId,
+                        ["SubscriptionId"] = subscriptionId,
+                    },
+                    LogLevel = LogLevel.Critical // Payment method updates are important but not critical
+                },
+                async () =>
+                {
+                    // Get the payment data for this subscription to find the provider subscription ID
+                    var paymentResult = await GetLatestPaymentAsync(parsedSubscriptionId);
 
-                return ResultWrapper<string>.Success(sessionResult.Data.Url);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to create update payment method session: {Message}", ex.Message);
-                return ResultWrapper<string>.FromException(ex);
-            }
+                    if (!paymentResult.IsSuccess || paymentResult.Data == null)
+                        throw new KeyNotFoundException($"No payment found for subscription {subscriptionId}");
+
+                    var payment = paymentResult.Data;
+
+                    if (string.IsNullOrEmpty(payment.ProviderSubscriptionId))
+                        throw new InvalidOperationException("No provider subscription ID found");
+
+                    // Create checkout session for updating payment method
+                    var sessionResult = await _stripeService.CreateUpdatePaymentMethodSessionAsync(
+                        payment.ProviderSubscriptionId,
+                        new Dictionary<string, string>
+                        {
+                            ["userId"] = userId,
+                            ["subscriptionId"] = subscriptionId
+                        });
+
+                    if (sessionResult == null || !sessionResult.IsSuccess || string.IsNullOrEmpty(sessionResult.Data?.Url))
+                    {
+                        await _loggingService.LogTraceAsync($"Failed to create update payment method session: {sessionResult.ErrorMessage ?? "Session result returned null"}",
+                            level: LogLevel.Error,
+                            requiresResolution: true);
+                        throw new PaymentApiException("Failed to create update payment method session", "Stripe");
+                    }
+
+                    return sessionResult.Data.Url;
+                })
+                .WithHttpResilience() // HTTP resilience for external Stripe API calls
+                .WithPerformanceMonitoring(
+                    TimeSpan.FromSeconds(3),   // Warning threshold - session creation should be fast
+                    TimeSpan.FromSeconds(10)   // Error threshold - reasonable timeout for external API
+                )
+                .WithContext("OperationType", "PaymentMethodSessionCreation")
+                .WithContext("PaymentProvider", "Stripe")
+                .WithContext("SubscriptionId", subscriptionId)
+                .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper<IEnumerable<PaymentData>>> GetPaymentsForSubscriptionAsync(Guid subscriptionId)
+        public async Task<ResultWrapper<List<PaymentData>>> GetPaymentsForSubscriptionAsync(Guid subscriptionId)
         {
-            using var scope = Logger.BeginScope("PaymentService::GetPaymentsForSubscription", new Dictionary<string, object?>
-            {
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "GetPaymentsForSubscriptionAsync(Guid subscriptionId)",
+                    State = {
                 ["SubscriptionId"] = subscriptionId
-            });
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    var filter = Builders<PaymentData>.Filter.Eq(p => p.SubscriptionId, subscriptionId);
+                    var sort = Builders<PaymentData>.Sort.Descending(p => p.CreatedAt);
 
-            try
-            {
-                var filter = Builders<PaymentData>.Filter.Eq(p => p.SubscriptionId, subscriptionId);
-                var sort = Builders<PaymentData>.Sort.Descending(p => p.CreatedAt);
+                    // Get payments using the resilient database operation
+                    var payments = await GetManyAsync(filter);
+                    if (!payments.IsSuccess)
+                        throw new DatabaseException(payments.ErrorMessage);
 
-                // You'll need to add a GetSortedAsync method to your base service
-                var payments = await GetManyAsync(filter);
-                if (!payments.IsSuccess)
-                    throw new DatabaseException(payments.ErrorMessage);
+                    // Sort the payments by date (most recent first)
+                    var sortedPayments = payments.Data.OrderByDescending(p => p.CreatedAt);
 
-                // Sort the payments by date (most recent first)
-                var sortedPayments = payments.Data.OrderByDescending(p => p.CreatedAt);
-
-                return ResultWrapper<IEnumerable<PaymentData>>.Success(sortedPayments);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to get payments for subscription {SubscriptionId}: {Message}",
-                    subscriptionId, ex.Message);
-                return ResultWrapper<IEnumerable<PaymentData>>.FromException(ex);
-            }
+                    return sortedPayments.ToList();
+                })
+                .WithMongoDbReadResilience() // Use read-specific resilience for database queries
+                .WithPerformanceMonitoring(
+                    TimeSpan.FromSeconds(2),   // Warning threshold - DB queries should be fast
+                    TimeSpan.FromSeconds(5)    // Error threshold - reasonable for read operations
+                )
+                .WithContext("OperationType", "PaymentDataRetrieval")
+                .WithContext("SubscriptionId", subscriptionId.ToString())
+                .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper<int>> GetFailedPaymentCountAsync(Guid subscriptionId)
+        public async Task<ResultWrapper<PaymentData?>> GetLatestPaymentAsync(Guid subscriptionId)
         {
-            using var scope = Logger.BeginScope("PaymentService::GetFailedPaymentCount", new Dictionary<string, object?>
-            {
-                ["SubscriptionId"] = subscriptionId
-            });
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "GetLatestPaymentAsync(Guid subscriptionId)",
+                    State = {
+                        ["SubscriptionId"] = subscriptionId
+                    },
+                },
+                async () =>
+                {
+                    var filter = Builders<PaymentData>.Filter.Eq(p => p.SubscriptionId, subscriptionId);
+                    var sort = Builders<PaymentData>.Sort.Descending(p => p.CreatedAt);
 
-            try
-            {
-                var filter = Builders<PaymentData>.Filter.And(
-                    Builders<PaymentData>.Filter.Eq(p => p.SubscriptionId, subscriptionId),
-                    Builders<PaymentData>.Filter.Eq(p => p.Status, PaymentStatus.Failed)
-                );
+                    // Use the repository to get the most recent payment
+                    var latestPayment = await _repository.GetOneAsync(filter, sort);
 
-                var count = await _repository.CountAsync(filter);
-                return ResultWrapper<int>.Success((int)count);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to get failed payment count for subscription {SubscriptionId}: {Message}",
-                    subscriptionId, ex.Message);
-                return ResultWrapper<int>.FromException(ex);
-            }
-        }
-
-        public async Task<ResultWrapper<PaymentData>> GetLatestPaymentAsync(Guid subscriptionId)
-        {
-            using var scope = Logger.BeginScope("PaymentService::GetLatestPayment", new Dictionary<string, object?>
-            {
-                ["SubscriptionId"] = subscriptionId
-            });
-
-            try
-            {
-                var filter = Builders<PaymentData>.Filter.Eq(p => p.SubscriptionId, subscriptionId);
-                var sort = Builders<PaymentData>.Sort.Descending(p => p.CreatedAt);
-
-                // Use the repository to get the most recent payment
-                var latestPayment = await _repository.GetOneAsync(filter, sort);
-
-                if (latestPayment == null)
-                    return ResultWrapper<PaymentData>.Failure(FailureReason.ResourceNotFound,
-                        $"No payments found for subscription {subscriptionId}");
-
-                return ResultWrapper<PaymentData>.Success(latestPayment);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to get latest payment for subscription {SubscriptionId}: {Message}",
-                    subscriptionId, ex.Message);
-                return ResultWrapper<PaymentData>.FromException(ex);
-            }
+                    return latestPayment;
+                })
+                .WithMongoDbReadResilience()
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3))
+                .ExecuteAsync();
         }
         public async Task<ResultWrapper<int>> FetchPaymentsBySubscriptionAsync(string stripeSubscriptionId)
         {
-            using var scope = Logger.BeginScope("PaymentService::FetchPaymentsBySubscriptionAsync", new Dictionary<string, object?>
-            {
-                ["StripeSubscriptionId"] = stripeSubscriptionId
-            });
+            // Step 1: Input validation first (before resilience wrapper)
+            if (string.IsNullOrEmpty(stripeSubscriptionId))
+                throw new ArgumentNullException(nameof(stripeSubscriptionId), "Stripe subscription ID cannot be null or empty");
 
-            try
-            {
-                if (string.IsNullOrEmpty(stripeSubscriptionId))
+            return await _resilienceService.CreateBuilder(
+                new Scope
                 {
-                    throw new ArgumentNullException(nameof(stripeSubscriptionId), "Stripe subscription ID cannot be null or empty");
-                }
-
-                // Step 1: Get all invoices from Stripe for this subscription
-                var stripeInvoices = await _stripeService.GetSubscriptionInvoicesAsync(stripeSubscriptionId);
-
-                if (stripeInvoices == null || !stripeInvoices.Any())
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "FetchPaymentsBySubscriptionAsync(string stripeSubscriptionId)",
+                    State = {
+                        ["StripeSubscriptionId"] = stripeSubscriptionId
+                    },
+                    LogLevel = LogLevel.Critical // Payment synchronization is critical for data consistency
+                },
+                async () =>
                 {
-                    Logger.LogInformation("No paid invoices found in Stripe for subscription {StripeSubscriptionId}", stripeSubscriptionId);
-                    return ResultWrapper<int>.Success(0);
-                }
+                    _loggingService.LogInformation("Starting payment fetch for Stripe subscription {StripeSubscriptionId}", stripeSubscriptionId);
 
-                // Step 2: Get existing payment records from our database for this subscription
-                var existingPaymentsFilter = Builders<PaymentData>.Filter.Eq(p => p.ProviderSubscriptionId, stripeSubscriptionId);
-                var existingPaymentsResult = await GetManyAsync(existingPaymentsFilter);
+                    // Step 1: Get all invoices from Stripe for this subscription
+                    var stripeInvoices = await _stripeService.GetSubscriptionInvoicesAsync(stripeSubscriptionId);
 
-                if (!existingPaymentsResult.IsSuccess)
-                {
-                    throw new DatabaseException(existingPaymentsResult.ErrorMessage ?? "Failed to fetch existing payments");
-                }
-
-                var existingPayments = existingPaymentsResult.Data?.ToList() ?? new List<PaymentData>();
-                var existingInvoiceIds = existingPayments.Select(p => p.InvoiceId).Where(id => !string.IsNullOrEmpty(id)).ToHashSet();
-
-                Logger.LogInformation("Found {StripeInvoiceCount} Stripe invoices and {ExistingPaymentCount} existing payment records",
-                    stripeInvoices.Count(), existingPayments.Count);
-
-                // Step 3: Find missing invoices that need to be processed
-                var missingInvoices = stripeInvoices.Where(invoice => !existingInvoiceIds.Contains(invoice.Id)).ToList();
-
-                if (!missingInvoices.Any())
-                {
-                    Logger.LogInformation("No missing payment records found for subscription {StripeSubscriptionId}", stripeSubscriptionId);
-                    return ResultWrapper<int>.Success(0);
-                }
-
-                Logger.LogInformation("Found {MissingInvoiceCount} missing payment records to process", missingInvoices.Count);
-
-                // Step 4: Process each missing invoice
-                int processedCount = 0;
-                foreach (var invoice in missingInvoices)
-                {
-                    try
+                    if (stripeInvoices == null || !stripeInvoices.Any())
                     {
-                        // Extract metadata from the subscription or invoice
-                        var metadata = invoice.SubscriptionDetails?.Metadata ?? new Dictionary<string, string>();
+                        _loggingService.LogInformation("No paid invoices found in Stripe for subscription {StripeSubscriptionId}", stripeSubscriptionId);
+                        return 0;
+                    }
 
-                        // Try to get userId and subscriptionId from metadata
-                        if (!metadata.TryGetValue("userId", out var userId) || string.IsNullOrEmpty(userId))
+                    // Step 2: Get existing payment records from our database for this subscription
+                    var existingPaymentsFilter = Builders<PaymentData>.Filter.Eq(p => p.ProviderSubscriptionId, stripeSubscriptionId);
+                    var existingPaymentsResult = await GetManyAsync(existingPaymentsFilter);
+
+                    if (!existingPaymentsResult.IsSuccess)
+                    {
+                        throw new DatabaseException(existingPaymentsResult.ErrorMessage ?? "Failed to fetch existing payments");
+                    }
+
+                    var existingPayments = existingPaymentsResult.Data?.ToList() ?? new List<PaymentData>();
+                    var existingInvoiceIds = existingPayments.Select(p => p.InvoiceId).Where(id => !string.IsNullOrEmpty(id)).ToHashSet();
+
+                    _loggingService.LogInformation("Found {StripeInvoiceCount} Stripe invoices and {ExistingPaymentCount} existing payment records",
+                        stripeInvoices.Count(), existingPayments.Count);
+
+                    // Step 3: Find missing invoices that need to be processed
+                    var missingInvoices = stripeInvoices.Where(invoice => !existingInvoiceIds.Contains(invoice.Id)).ToList();
+
+                    if (!missingInvoices.Any())
+                    {
+                        _loggingService.LogInformation("No missing payment records found for subscription {StripeSubscriptionId}", stripeSubscriptionId);
+                        return 0;
+                    }
+
+                    _loggingService.LogInformation("Found {MissingInvoiceCount} missing payment records to process", missingInvoices.Count);
+
+                    // Step 4: Process each missing invoice
+                    int processedCount = 0;
+                    foreach (var invoice in missingInvoices)
+                    {
+                        try
                         {
-                            Logger.LogWarning("Missing userId in invoice {InvoiceId} metadata, skipping", invoice.Id);
-                            continue;
+                            // Extract metadata from the subscription or invoice
+                            var metadata = invoice.SubscriptionDetails?.Metadata ?? new Dictionary<string, string>();
+
+                            // Try to get userId and subscriptionId from metadata
+                            if (!metadata.TryGetValue("userId", out var userId) || string.IsNullOrEmpty(userId))
+                            {
+                                _loggingService.LogWarning("Missing userId in invoice {InvoiceId} metadata, skipping", invoice.Id);
+                                continue;
+                            }
+
+                            if (!metadata.TryGetValue("subscriptionId", out var subscriptionId) || string.IsNullOrEmpty(subscriptionId))
+                            {
+                                _loggingService.LogWarning("Missing subscriptionId in invoice {InvoiceId} metadata, skipping", invoice.Id);
+                                continue;
+                            }
+
+                            // Create InvoiceRequest for processing
+                            var invoiceRequest = new InvoiceRequest
+                            {
+                                Id = invoice.Id,
+                                Provider = "Stripe",
+                                ChargeId = invoice.ChargeId,
+                                PaymentIntentId = invoice.PaymentIntentId,
+                                UserId = userId,
+                                SubscriptionId = subscriptionId,
+                                ProviderSubscripitonId = stripeSubscriptionId,
+                                Amount = invoice.AmountPaid,
+                                Currency = invoice.Currency?.ToUpperInvariant() ?? "USD",
+                                Status = MapInvoiceStatusToPaymentStatus(invoice.Status)
+                            };
+
+                            // Process the invoice using existing logic
+                            var processResult = await ProcessInvoicePaidEvent(invoiceRequest);
+
+                            if (processResult.IsSuccess)
+                            {
+                                processedCount++;
+                                _loggingService.LogInformation("Successfully processed missing invoice {InvoiceId}", invoice.Id);
+                            }
+                            else
+                            {
+                                _loggingService.LogWarning("Failed to process invoice {InvoiceId}: {Error}", invoice.Id, processResult.ErrorMessage);
+                            }
                         }
-
-                        if (!metadata.TryGetValue("subscriptionId", out var subscriptionId) || string.IsNullOrEmpty(subscriptionId))
+                        catch (Exception ex)
                         {
-                            Logger.LogWarning("Missing subscriptionId in invoice {InvoiceId} metadata, skipping", invoice.Id);
-                            continue;
-                        }
-
-                        // Create InvoiceRequest for processing
-                        var invoiceRequest = new InvoiceRequest
-                        {
-                            Id = invoice.Id,
-                            Provider = "Stripe",
-                            ChargeId = invoice.ChargeId,
-                            PaymentIntentId = invoice.PaymentIntentId,
-                            UserId = userId,
-                            SubscriptionId = subscriptionId,
-                            ProviderSubscripitonId = stripeSubscriptionId,
-                            Amount = invoice.AmountPaid,
-                            Currency = invoice.Currency?.ToUpperInvariant() ?? "USD",
-                            Status = MapInvoiceStatusToPaymentStatus(invoice.Status)
-                        };
-
-                        // Process the invoice using existing logic
-                        var processResult = await ProcessInvoicePaidEvent(invoiceRequest);
-
-                        if (processResult.IsSuccess)
-                        {
-                            processedCount++;
-                            Logger.LogInformation("Successfully processed missing invoice {InvoiceId}", invoice.Id);
-                        }
-                        else
-                        {
-                            Logger.LogWarning("Failed to process invoice {InvoiceId}: {Error}", invoice.Id, processResult.ErrorMessage);
+                            _loggingService.LogError("Error processing invoice {InvoiceId}: {Error}", invoice.Id, ex.Message);
+                            // Continue processing other invoices even if one fails
                         }
                     }
-                    catch (Exception ex)
+
+                    _loggingService.LogInformation("Processed {ProcessedCount} out of {TotalMissingCount} missing payment records",
+                        processedCount, missingInvoices.Count);
+
+                    return processedCount;
+                })
+                .WithComprehensiveResilience(
+                    maxRetries: 3,                      // Moderate retries for payment synchronization
+                    timeout: TimeSpan.FromMinutes(2),   // Longer timeout for bulk operations
+                    failureRatio: 0.5                   // Higher threshold as this is a batch operation
+                )
+                .WithPerformanceMonitoring(
+                    TimeSpan.FromSeconds(30),   // Warning threshold - this is a bulk operation
+                    TimeSpan.FromMinutes(1)     // Error threshold - before overall timeout
+                )
+                .WithContext("OperationType", "PaymentSynchronization")
+                .WithContext("PaymentProvider", "Stripe")
+                .WithContext("SubscriptionId", stripeSubscriptionId)
+                .OnSuccess(async (processedCount) =>
+                {
+                    if (processedCount > 0)
                     {
-                        Logger.LogError("Error processing invoice {InvoiceId}: {Error}", invoice.Id, ex.Message);
-                        // Continue processing other invoices even if one fails
+                        _loggingService.LogInformation("Successfully synchronized {ProcessedCount} missing payment records for subscription {StripeSubscriptionId}",
+                            processedCount, stripeSubscriptionId);
                     }
-                }
-
-                Logger.LogInformation("Processed {ProcessedCount} out of {TotalMissingCount} missing payment records",
-                    processedCount, missingInvoices.Count);
-
-                return ResultWrapper<int>.Success(processedCount);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to fetch payments by subscription {StripeSubscriptionId}: {Message}",
-                    stripeSubscriptionId, ex.Message);
-                return ResultWrapper<int>.FromException(ex);
-            }
+                    else
+                    {
+                        _loggingService.LogInformation("No payment records needed synchronization for subscription {StripeSubscriptionId}",
+                            stripeSubscriptionId);
+                    }
+                })
+                .ExecuteAsync();
         }
 
         /// <summary>
@@ -821,50 +978,294 @@ namespace Infrastructure.Services
         /// <returns>The first matching Stripe subscription ID, or null if not found</returns>
         public async Task<ResultWrapper<string?>> SearchStripeSubscriptionByMetadataAsync(string metadataKey, string metadataValue)
         {
-            using var scope = Logger.BeginScope("PaymentService::SearchStripeSubscriptionByMetadataAsync", new Dictionary<string, object?>
+            // Step 1: Input validation first (before resilience wrapper)
+            if (string.IsNullOrEmpty(metadataKey))
+                throw new ArgumentNullException(nameof(metadataKey), "Metadata key cannot be null or empty");
+
+            if (string.IsNullOrEmpty(metadataValue))
+                throw new ArgumentNullException(nameof(metadataValue), "Metadata value cannot be null or empty");
+
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "SearchStripeSubscriptionByMetadataAsync(string metadataKey, string metadataValue)",
+                    State = {
+                        ["MetadataKey"] = metadataKey,
+                        ["MetadataValue"] = metadataValue
+                    },
+                    LogLevel = LogLevel.Error // Search operations are important but not critical
+                },
+                async () =>
+                {
+                    _loggingService.LogInformation("Searching for Stripe subscription with metadata {MetadataKey}={MetadataValue}",
+                        metadataKey, metadataValue);
+
+                    // Search for Stripe subscriptions with the specified metadata
+                    var stripeSubscriptions = await _stripeService.SearchSubscriptionsByMetadataAsync(metadataKey, metadataValue);
+
+                    // Return the first matching subscription ID, or null if none found
+                    var firstSubscription = stripeSubscriptions?.FirstOrDefault();
+                    var subscriptionId = firstSubscription?.Id;
+
+                    if (!string.IsNullOrEmpty(subscriptionId))
+                    {
+                        _loggingService.LogInformation("Found Stripe subscription {StripeSubscriptionId} for metadata {MetadataKey}={MetadataValue}",
+                            subscriptionId, metadataKey, metadataValue);
+                    }
+                    else
+                    {
+                        _loggingService.LogInformation("No Stripe subscription found for metadata {MetadataKey}={MetadataValue}",
+                            metadataKey, metadataValue);
+                    }
+
+                    return subscriptionId;
+                })
+                .WithHttpResilience() // HTTP resilience for external Stripe API calls
+                .WithPerformanceMonitoring(
+                    TimeSpan.FromSeconds(3),   // Warning threshold - search operations should be reasonably fast
+                    TimeSpan.FromSeconds(10)   // Error threshold - reasonable timeout for external API
+                )
+                .WithContext("OperationType", "StripeSubscriptionSearch")
+                .WithContext("PaymentProvider", "Stripe")
+                .WithContext("SearchCriteria", $"{metadataKey}:{metadataValue}")
+                .ExecuteAsync();
+        }
+
+        public async Task<ResultWrapper> CancelStripeSubscriptionAsync(string stripeSubscriptionId)
+        {
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "CancelStripeSubscription(string stripeSubscriptionId)",
+                    State = {
+                        ["StripeSubscriptionId"] = stripeSubscriptionId
+                    },
+                },
+                async () =>
+                {
+                    // Get the Stripe service from payment providers
+                    if (!Providers.TryGetValue("Stripe", out var stripeProvider))
+                        throw new InvalidOperationException("Stripe payment provider not available");
+
+                    var stripeService = stripeProvider as IStripeService;
+                    if (stripeService == null)
+                        throw new InvalidOperationException("Stripe service not properly configured");
+
+                    var stripeCancelResult = await stripeService.CancelSubscription(stripeSubscriptionId);
+
+                    if (stripeCancelResult == null || !stripeCancelResult.IsSuccess)
+                    {
+                        throw new PaymentApiException(
+                            $"Failed to cancel Stripe subscription {stripeSubscriptionId}: {stripeCancelResult.ErrorMessage}. " +
+                            "Cannot proceed with domain cancellation as user may still be charged.",
+                            "Stripe",
+                            stripeSubscriptionId);
+                    }
+                })
+                .WithHttpResilience() // For Stripe API calls
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(45)) // Allow more time for Stripe operations
+                .OnError(async (ex) =>
+                {
+                    _loggingService.LogError("❌ CRITICAL ERROR cancelling subscription {SubscriptionId}: {Error}. " +
+                        "If this was a Stripe cancellation failure, user may still be charged!",
+                        stripeSubscriptionId, ex.Message);
+                })
+                .ExecuteAsync();
+        }
+
+        public async Task<ResultWrapper> ReactivateStripeSubscriptionAsync(string stripeSubscriptionId)
+        {
+            throw new NotImplementedException();
+        }
+
+        public async Task<ResultWrapper> PauseStripeSubscriptionAsync(string stripeSubscriptionId)
+        {
+            // Step 1: Input validation
+            if (string.IsNullOrEmpty(stripeSubscriptionId))
+                throw new ArgumentNullException(nameof(stripeSubscriptionId), "Stripe subscription ID cannot be null or empty");
+
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "PauseStripeSubscriptionAsync(string stripeSubscriptionId)",
+                    State = {
+                        ["StripeSubscriptionId"] = stripeSubscriptionId
+                    },
+                    LogLevel = LogLevel.Critical
+                },
+                async () =>
+                {
+                    _loggingService.LogInformation("Pausing Stripe subscription {StripeSubscriptionId}", stripeSubscriptionId);
+
+                    // Get the Stripe service from payment providers
+                    if (!Providers.TryGetValue("Stripe", out var stripeProvider))
+                        throw new InvalidOperationException("Stripe payment provider not available");
+
+                    var stripeService = stripeProvider as IStripeService;
+                    if (stripeService == null)
+                        throw new InvalidOperationException("Stripe service not properly configured");
+
+                    // Pause the subscription in Stripe by setting pause_collection
+                    var stripePauseResult = await stripeService.PauseSubscriptionAsync(stripeSubscriptionId);
+
+                    if (stripePauseResult == null || !stripePauseResult.IsSuccess)
+                    {
+                        throw new PaymentApiException(
+                            $"Failed to pause Stripe subscription {stripeSubscriptionId}: {stripePauseResult?.ErrorMessage}",
+                            "Stripe",
+                            stripeSubscriptionId);
+                    }
+
+                    _loggingService.LogInformation("Successfully paused Stripe subscription {StripeSubscriptionId}", stripeSubscriptionId);
+                })
+                .WithHttpResilience() // For Stripe API calls
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30))
+                .WithContext("OperationType", "SubscriptionPause")
+                .WithContext("PaymentProvider", "Stripe")
+                .OnError(async (ex) =>
+                {
+                    _loggingService.LogError("❌ CRITICAL ERROR pausing Stripe subscription {StripeSubscriptionId}: {Error}",
+                        stripeSubscriptionId, ex.Message);
+                })
+                .ExecuteAsync();
+        }
+
+        public async Task<ResultWrapper> ResumeStripeSubscriptionAsync(string stripeSubscriptionId)
+        {
+            // Step 1: Input validation
+            if (string.IsNullOrEmpty(stripeSubscriptionId))
+                throw new ArgumentNullException(nameof(stripeSubscriptionId), "Stripe subscription ID cannot be null or empty");
+
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Payment",
+                    FileName = "PaymentService",
+                    OperationName = "ResumeStripeSubscriptionAsync(string stripeSubscriptionId)",
+                    State = {
+                        ["StripeSubscriptionId"] = stripeSubscriptionId
+                    },
+                    LogLevel = LogLevel.Critical
+                },
+                async () =>
+                {
+                    _loggingService.LogInformation("Resuming Stripe subscription {StripeSubscriptionId}", stripeSubscriptionId);
+
+                    // Get the Stripe service from payment providers
+                    if (!Providers.TryGetValue("Stripe", out var stripeProvider))
+                        throw new InvalidOperationException("Stripe payment provider not available");
+
+                    var stripeService = stripeProvider as IStripeService;
+                    if (stripeService == null)
+                        throw new InvalidOperationException("Stripe service not properly configured");
+
+                    // Resume the subscription in Stripe by removing pause_collection
+                    var stripeResumeResult = await stripeService.ResumeSubscriptionAsync(stripeSubscriptionId);
+
+                    if (stripeResumeResult == null || !stripeResumeResult.IsSuccess)
+                    {
+                        throw new PaymentApiException(
+                            $"Failed to resume Stripe subscription {stripeSubscriptionId}: {stripeResumeResult?.ErrorMessage}",
+                            "Stripe",
+                            stripeSubscriptionId);
+                    }
+
+                    _loggingService.LogInformation("Successfully resumed Stripe subscription {StripeSubscriptionId}", stripeSubscriptionId);
+                })
+                .WithHttpResilience() // For Stripe API calls
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30))
+                .WithContext("OperationType", "SubscriptionResume")
+                .WithContext("PaymentProvider", "Stripe")
+                .OnError(async (ex) =>
+                {
+                    _loggingService.LogError("❌ CRITICAL ERROR resuming Stripe subscription {StripeSubscriptionId}: {Error}",
+                        stripeSubscriptionId, ex.Message);
+                })
+                .ExecuteAsync();
+        }
+
+        #region Helpers
+
+        /// <summary>
+        /// Creates a new failed payment record from Stripe invoice data
+        /// </summary>
+        private async Task<PaymentData> CreateNewFailedPaymentRecord(PaymentIntentRequest paymentIntentRequest)
+        {
+            _loggingService.LogInformation("Creating new failed payment record for {PaymentId}", paymentIntentRequest.PaymentId);
+
+            // Get invoice details from Stripe
+            var invoice = await _stripeService.GetInvoiceAsync(paymentIntentRequest.InvoiceId);
+            if (invoice == null)
+                throw new ValidationException($"Invoice {paymentIntentRequest.InvoiceId} not found in Stripe",
+                    new Dictionary<string, string[]> { ["InvoiceId"] = new[] { "Invoice not found" } });
+
+            var chargeId = invoice.ChargeId;
+
+            // Calculate payment amounts
+            var (total, fee, platformFee, net) = await CalculatePaymentAmounts(new()
             {
-                ["MetadataKey"] = metadataKey,
-                ["MetadataValue"] = metadataValue
+                Provider = "Stripe",
+                ChargeId = chargeId,
+                PaymentIntentId = paymentIntentRequest.PaymentId,
+                UserId = paymentIntentRequest.UserId,
+                SubscriptionId = paymentIntentRequest.SubscriptionId,
+                Amount = invoice.AmountRemaining,
+                Currency = paymentIntentRequest.Currency,
+                Status = paymentIntentRequest.Status
             });
 
-            try
+            // Create new failed payment record
+            var paymentData = new PaymentData
             {
-                if (string.IsNullOrEmpty(metadataKey))
-                {
-                    throw new ArgumentNullException(nameof(metadataKey), "Metadata key cannot be null or empty");
-                }
+                UserId = Guid.Parse(paymentIntentRequest.UserId),
+                SubscriptionId = Guid.Parse(paymentIntentRequest.SubscriptionId),
+                Provider = "Stripe",
+                PaymentProviderId = paymentIntentRequest.PaymentId, // This should be PaymentId, not SubscriptionId
+                InvoiceId = paymentIntentRequest.InvoiceId,
+                TotalAmount = paymentIntentRequest.Amount / 100m,
+                Currency = paymentIntentRequest.Currency?.ToUpperInvariant() ?? "USD",
+                PaymentProviderFee = fee,
+                PlatformFee = platformFee,
+                NetAmount = net,
+                Status = PaymentStatus.Failed,
+                FailureReason = paymentIntentRequest.LastPaymentError ?? "Payment failed",
+                AttemptCount = 1,
+                LastAttemptAt = DateTime.UtcNow
+            };
 
-                if (string.IsNullOrEmpty(metadataValue))
-                {
-                    throw new ArgumentNullException(nameof(metadataValue), "Metadata value cannot be null or empty");
-                }
+            var insertResult = await InsertAsync(paymentData);
+            if (insertResult == null || !insertResult.IsSuccess)
+                throw new DatabaseException(insertResult?.ErrorMessage ?? "Failed to insert failed payment record");
 
-                // Search for Stripe subscriptions with the specified metadata
-                var stripeSubscriptions = await _stripeService.SearchSubscriptionsByMetadataAsync(metadataKey, metadataValue);
+            _loggingService.LogInformation("Created new failed payment record {PaymentDataId} for {PaymentId}", paymentData.Id, paymentIntentRequest.PaymentId);
+            return paymentData;
+        }
 
-                // Return the first matching subscription ID, or null if none found
-                var firstSubscription = stripeSubscriptions?.FirstOrDefault();
-                var subscriptionId = firstSubscription?.Id;
+        /// <summary>
+        /// Updates existing payment record with failure information
+        /// </summary>
+        private async Task<PaymentData> UpdateExistingPaymentRecord(PaymentData existingPayment, PaymentIntentRequest paymentIntentRequest)
+        {
+            _loggingService.LogInformation("Updating existing payment record {PaymentDataId} for {PaymentId}", existingPayment.Id, paymentIntentRequest.PaymentId);
 
-                if (!string.IsNullOrEmpty(subscriptionId))
-                {
-                    Logger.LogInformation("Found Stripe subscription {StripeSubscriptionId} for metadata {MetadataKey}={MetadataValue}",
-                        subscriptionId, metadataKey, metadataValue);
-                }
-                else
-                {
-                    Logger.LogInformation("No Stripe subscription found for metadata {MetadataKey}={MetadataValue}",
-                        metadataKey, metadataValue);
-                }
+            // Update payment with failure details
+            existingPayment.Status = PaymentStatus.Failed;
+            existingPayment.FailureReason = paymentIntentRequest.LastPaymentError ?? "Payment failed";
+            existingPayment.AttemptCount = existingPayment.AttemptCount + 1;
+            existingPayment.LastAttemptAt = DateTime.UtcNow;
 
-                return ResultWrapper<string?>.Success(subscriptionId);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to search Stripe subscription by metadata {MetadataKey}={MetadataValue}: {Message}",
-                    metadataKey, metadataValue, ex.Message);
-                return ResultWrapper<string?>.FromException(ex);
-            }
+            var updateResult = await UpdateAsync(existingPayment.Id, existingPayment);
+            if (updateResult == null || !updateResult.IsSuccess)
+                throw new DatabaseException(updateResult?.ErrorMessage ?? "Failed to update existing payment record");
+
+            _loggingService.LogInformation("Updated existing payment record {PaymentDataId} for {PaymentId}", existingPayment.Id, paymentIntentRequest.PaymentId);
+            return existingPayment;
         }
 
         /// <summary>
@@ -883,8 +1284,6 @@ namespace Infrastructure.Services
                 _ => PaymentStatus.Pending
             };
         }
-
-        #region Helpers
         private void ValidateCharge(ChargeRequest c)
         {
             if (c == null) throw new ValidationException("Charge is null", new Dictionary<string, string[]>());
@@ -936,7 +1335,7 @@ namespace Infrastructure.Services
             list.Add(msg);
         }
 
-        public async Task<(decimal total, decimal fee, decimal platform, decimal net)> CalculatePaymentAmounts(InvoiceRequest i)
+        private async Task<(decimal total, decimal fee, decimal platform, decimal net)> CalculatePaymentAmounts(InvoiceRequest i)
         {
             var total = i.Amount / 100m;
             var fee = await Providers["stripe"].GetFeeAsync(i.PaymentIntentId);
@@ -944,7 +1343,7 @@ namespace Infrastructure.Services
             var net = total - fee - platformFee;
             if (net <= 0)
             {
-                await Logger.LogTraceAsync("Invalid net amount. Amount must be > 0", "CalculatePaymentAmounts");
+                await _loggingService.LogTraceAsync("Invalid net amount. Amount must be > 0", "CalculatePaymentAmounts");
                 throw new ValidationException("Net<=0", new Dictionary<string, string[]> { { "NetAmount", new[] { "Must>0" } } });
             }
             return (total, fee, platformFee, net);
@@ -973,13 +1372,13 @@ namespace Infrastructure.Services
                 await _notificationService.CreateAndSendNotificationAsync(new NotificationData
                 {
                     UserId = r.UserId,
-                    Message = $"Payment {(r.Amount / 100m)} {r.Currency} received.",
+                    Message = $"A payment {(r.Amount / 100m)} {r.Currency.ToUpper()} is received.",
                     IsRead = false
                 });
             }
             catch (Exception ex)
             {
-                Logger.LogWarning("Notification failed: {ErrorMessage}", ex.Message);
+                _loggingService.LogWarning("Notification failed: {ErrorMessage}", ex.Message);
             }
         }
 
@@ -990,13 +1389,13 @@ namespace Infrastructure.Services
                 await _notificationService.CreateAndSendNotificationAsync(new NotificationData
                 {
                     UserId = r.UserId,
-                    Message = $"Payment {(r.Amount / 100m)} {r.Currency} failed.",
+                    Message = $"Processing of {(r.Amount / 100m)} {r.Currency.ToUpper()} payment failed.",
                     IsRead = false
                 });
             }
             catch (Exception ex)
             {
-                Logger.LogWarning("Notification failed: {ErrorMessage}", ex.Message);
+                _loggingService.LogWarning("Notification failed: {ErrorMessage}", ex.Message);
             }
         }
 
@@ -1068,7 +1467,7 @@ namespace Infrastructure.Services
 
             var newCust = await stripeProvider.CreateCustomerAsync(new() { ["email"] = email, ["metadata"] = new Dictionary<string, string> { { "userId", userId } } });
             if (newCust == null) throw new PaymentApiException("Failed create customer", "Stripe");
-            await _userService.UpdateAsync(uid, new UserData { PaymentProviderCustomerId = newCust.Id });
+            await _userService.UpdateAsync(uid, new UserUpdateDTO { PaymentProviderCustomerId = newCust.Id });
             return newCust.Id;
         }
 
