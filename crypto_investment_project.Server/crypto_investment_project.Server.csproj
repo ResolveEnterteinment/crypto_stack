@@ -8,6 +8,7 @@
     <SpaProxyLaunchCommand>npm run dev</SpaProxyLaunchCommand>
     <SpaProxyServerUrl>https://localhost:5173</SpaProxyServerUrl>
     <UserSecretsId>f517acc5-f457-4b41-8070-0d190ad8b467</UserSecretsId>
+    <PreserveCompilationContext>true</PreserveCompilationContext>
   </PropertyGroup>
 
   <ItemGroup>
@@ -51,6 +52,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Folder Include="Configuration\Idempotency\" />
     <Folder Include="Middleware\" />
     <Folder Include="secure\uploads\kyc\" />
   </ItemGroup>

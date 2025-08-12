@@ -606,32 +606,34 @@ namespace BinanceLibrary
             if (tickers.Count() == 0)
                 throw new ArgumentException("Tickers cannot be empty", nameof(tickers));
 
+                Dictionary<string, string> symbolsDict = new ();
             try
             {
                 Dictionary<string, decimal> priceDict = new();
-                var symbols = new List<string>();
                 foreach (var ticker in tickers)
                 {
-                    symbols.Add($"{ticker}{_reserveAssetTicker}");
+                    if (symbolsDict.ContainsKey(ticker)) continue;
+                    var symbol = $"{ticker}{_reserveAssetTicker}";
+                    symbolsDict.TryAdd(ticker, symbol);
                 };
 
-                _logger.LogInformation("Fetching prices for {Symbols}", string.Join(",", symbols));
+                _logger.LogInformation("Fetching prices for {Symbols}", string.Join(",", symbolsDict.Values));
 
                 return await _retryPolicy.ExecuteAsync(async () =>
                 {
-                    var binancePriceResult = await _binanceClient.SpotApi.ExchangeData.GetPricesAsync(symbols);
+                    var binancePriceResult = await _binanceClient.SpotApi.ExchangeData.GetPricesAsync(symbolsDict.Values);
                     if (binancePriceResult is null || !binancePriceResult.Success || binancePriceResult.Data is null)
                     {
-                        throw new Exception($"Failed to fetch Binance price for {string.Join(",", tickers)}: {binancePriceResult?.Error?.Message ?? "Binance price returned null."}");
+                        throw new Exception($"Failed to fetch Binance prices for {string.Join(",", symbolsDict)}: {binancePriceResult?.Error?.Message ?? "Binance price returned null."}");
                     }
 
                     var prices = binancePriceResult.Data;
 
                     Dictionary<string, decimal> priceDict = new();
 
-                    foreach (var ticker in tickers)
+                    foreach (var ticker in symbolsDict.Keys)
                     {
-                        priceDict.Add(ticker, prices.Where(p => p.Symbol.StartsWith(ticker)).Select(p => p.Price).First());
+                        priceDict.Add(ticker, prices.Where(p => p.Symbol.StartsWith(ticker)).Select(p => p.Price).FirstOrDefault());
                     }
 
                     return ResultWrapper<Dictionary<string, decimal>>.Success(priceDict);
@@ -641,7 +643,7 @@ namespace BinanceLibrary
             }
             catch (Exception ex)
             {
-                _logger.LogError("Error fetching price for {Ticker}: {Message}", string.Join(",", tickers), ex.Message);
+                _logger.LogError("Error fetching prices for {Ticker}: {Message}", string.Join(",", symbolsDict.Keys), ex.Message);
                 return ResultWrapper<Dictionary<string, decimal>>.FromException(ex);
             }
         }

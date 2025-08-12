@@ -1,4 +1,5 @@
 ﻿using crypto_investment_project.Server.Configuration;
+using crypto_investment_project.Server.Configuration.Idempotency;
 using crypto_investment_project.Server.Middleware;
 using Encryption;
 using HealthChecks.UI.Client;
@@ -17,6 +18,7 @@ builder.Services
     .AddEncryptionServices()
     .AddIdentityConfiguration(builder.Configuration)
     .AddAuthenticationServices(builder.Configuration)
+    .AddIdempotencyMiddleware(builder.Configuration)
     .AddCoreServices(builder.Environment)
     .AddCacheServices()
     .AddHttpContextServices()
@@ -82,7 +84,7 @@ app.UseAuthorization();
 Console.WriteLine("✅ Authentication configured");
 
 app.UseHttpsRedirection();
-
+app.UseIdempotency();
 Console.WriteLine("✅ Middleware pipeline configured");
 
 // Configure health checks endpoints

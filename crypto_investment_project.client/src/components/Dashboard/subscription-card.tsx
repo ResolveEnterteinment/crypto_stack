@@ -18,9 +18,8 @@ import {
     Col,
     Typography,
     Progress,
-    Badge,
     Tooltip,
-    Tag
+    Tag,
 } from 'antd';
 import {
     PlusOutlined,
@@ -227,6 +226,8 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
             setSyncing(true);
             
             var result = await syncPayments(subscription.id);
+
+            message
         } catch (syncError: any) {
             console.error('Payment syncronization error:', syncError);
             const errorMessage = formatApiError(syncError);
@@ -626,8 +627,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                                                         {retrying ? 'Retrying...' : 'Retry Payment'}
                                                     </Button>
                                                 )}
-
-                                                {subscription.status === SubscriptionStatus.PENDING && (
+  
                                                     <Button
                                                         size="small"
                                                         loading={syncing}
@@ -637,7 +637,6 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                                                     >
                                                         {retrying ? 'Retrying...' : 'Sync Payments'}
                                                     </Button>
-                                                )}
 
                                                 {subscription.status !== SubscriptionStatus.PENDING && (
                                                     <Button

@@ -3,11 +3,12 @@ import api from "./api";
 
 // Payment status enum (should match backend)
 export enum PaymentStatus {
-    Pending = 'Pending',
-    Completed = 'Completed',
-    Failed = 'Failed',
-    Cancelled = 'Cancelled',
-    Paid = 'Paid'
+    Pending = 'PENDING',
+    Completed = 'COMPLETED',
+    Failed = 'FAILED',
+    Cancelled = 'CANCELLED',
+    Paid = 'PAID',
+    Filled = 'FILLED'
 }
 
 // Data for payment request

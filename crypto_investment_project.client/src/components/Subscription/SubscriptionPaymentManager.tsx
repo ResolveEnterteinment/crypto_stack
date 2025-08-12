@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { PaymentData } from "../../types/payment";
-import { Subscription } from '../../types/subscription';
+import { Subscription, SubscriptionStatus } from '../../types/subscription';
 import { AlertTriangle, Check, AlertCircle, Clock, CreditCard, RefreshCw, Info, CheckCircle } from 'lucide-react';
 import api from '../../services/api'; // Import the API service
+import { PaymentStatus } from '../../services/payment';
 
 interface ApiResponse<T> {
     data: T | null;
@@ -99,12 +100,12 @@ const PaymentStatusCard = ({
     };
 
     const getStatusIcon = (status: string) => {
-        switch (status) {
-            case 'FILLED':
+        switch (status.toUpperCase()) {
+            case PaymentStatus.Filled:
                 return <Check className="h-5 w-5 text-green-500" />;
-            case 'PENDING':
+            case PaymentStatus.Pending:
                 return <Clock className="h-5 w-5 text-yellow-500" />;
-            case 'FAILED':
+            case PaymentStatus.Failed:
                 return <AlertTriangle className="h-5 w-5 text-red-500" />;
             default:
                 return <AlertCircle className="h-5 w-5 text-gray-500" />;
@@ -119,6 +120,7 @@ const PaymentStatusCard = ({
             'PENDING': 'bg-yellow-100 text-yellow-800',
             'CANCELED': 'bg-gray-100 text-gray-800',
             'SUSPENDED': 'bg-red-100 text-red-800',
+            'PAID': 'bg-gray-100 text-gray-800',
             'UNKNOWN': 'bg-gray-100 text-gray-800'
         };
 
@@ -132,10 +134,10 @@ const PaymentStatusCard = ({
     };
 
     // Check if the subscription is suspended
-    const isSuspended = subscription?.status === 'SUSPENDED';
+    const isSuspended = subscription?.status === SubscriptionStatus.Suspended;
 
     // Check if there are any failed payments
-    const hasFailedPayments = payments.some(payment => payment.status === 'FAILED');
+    const hasFailedPayments = payments.some(payment => payment.status === PaymentStatus.Failed);
 
     // Info section for no payment records
     const renderNoPaymentRecordsInfo = () => (
@@ -260,7 +262,7 @@ const PaymentStatusCard = ({
                                             <p className="text-sm font-medium text-gray-900 truncate">
                                                 {new Date(payment.createdAt).toLocaleDateString()} - {payment.currency} {payment.totalAmount}
                                             </p>
-                                            {payment.status === 'FAILED' && (
+                                            {payment.status === PaymentStatus.Failed && (
                                                 <p className="text-sm text-red-500 truncate">
                                                     {payment.failureReason || 'Payment failed'}
                                                     {payment.nextRetryAt && (
@@ -382,7 +384,7 @@ const SubscriptionPaymentManager = ({
                 />
             )}
 
-            {subscription?.status === 'SUSPENDED' && (
+            {(subscription?.status === 'SUSPENDED' || subscription?.status === PaymentStatus.Pending) && (
                 <div className="mt-4 px-4 py-3 bg-yellow-50 rounded-lg">
                     <div className="flex">
                         <div className="flex-shrink-0">

@@ -474,7 +474,7 @@ namespace Infrastructure.Services
             {
                 var groupBalances = group.ToList();
 
-                var exchangeName = groupBalances.First().Asset!.Exchange;
+                var exchangeName = group.Key;
                 if (!_exchangeService.Exchanges.TryGetValue(exchangeName, out var exchange))
                     continue;
 

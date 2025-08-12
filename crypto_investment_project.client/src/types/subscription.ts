@@ -32,5 +32,6 @@ export interface SubscriptionCardProps {
 export const SubscriptionStatus: Record<string, string> = {
     ACTIVE: 'ACTIVE',
     CANCELLED: 'CANCELLED',
-    PENDING: 'PENDING'
+    PENDING: 'PENDING',
+    SUSPENDED: 'SUSPENDED'
 }
