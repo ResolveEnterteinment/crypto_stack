@@ -13,7 +13,8 @@ public static class HealthChecksExtensions
                 clientFactory: sp => new MongoClient(configuration["MongoDB:ConnectionString"]),
                 name: "mongodb",
                 tags: new[] { "readiness" },
-                timeout: TimeSpan.FromSeconds(3));
+                timeout: TimeSpan.FromSeconds(3))
+            .AddCheck<FlowEngineHealthCheck>("flow_engine");
 
         return services;
     }

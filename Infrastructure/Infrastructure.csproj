@@ -34,6 +34,7 @@
 
   <ItemGroup>
     <Folder Include="Services\Background\" />
+    <Folder Include="Services\Security\" />
   </ItemGroup>
 
 </Project>

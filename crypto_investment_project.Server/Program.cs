@@ -4,6 +4,7 @@ using crypto_investment_project.Server.Middleware;
 using Encryption;
 using HealthChecks.UI.Client;
 using Infrastructure.Hubs;
+using Infrastructure.Services.FlowEngine.Extensions;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
 
@@ -28,7 +29,8 @@ builder.Services
     .AddHealthChecksServices(builder.Configuration)
     .ConfigureCorsPolicy(builder.Environment, builder.Configuration)
     .AddSwaggerServices()
-    .AddHostedServices(builder.Environment);
+    .AddHostedServices(builder.Environment)
+    .AddFlowEngine(builder.Configuration);
 
 builder.Host.UseSerilog();
 
