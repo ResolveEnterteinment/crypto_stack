@@ -109,7 +109,7 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
     const fetchWithdrawalLimits = async (): Promise<void> => {
         try {
             setIsLoadingLimits(true);
-            var userLimits = await withdrawalService.getLevels();
+            var userLimits = await withdrawalService.getCurrentUserLimits();
             setLimits(userLimits);
             console.log("WithdrawalForm::fetchWithdrawalLimits => userLimits: ", userLimits);
         } catch (err) {

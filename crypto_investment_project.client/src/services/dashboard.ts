@@ -1,5 +1,11 @@
-﻿import { Dashboard } from "../types/dashboardTypes";
+﻿import { AssetHolding, Dashboard } from "../types/dashboardTypes";
 import api from "./api";
+
+// API endpoints
+const ENDPOINTS = {
+    GET_DASHBOARD: () => `/dashboard`,
+    HEALTH_CHECK: '/dashboard/health'
+} as const;
 
 /**
  * Fetches dashboard data for a user from the dedicated endpoint
@@ -14,22 +20,13 @@ export const getDashboardData = async (userId: string): Promise<Dashboard> => {
 
     try {
         // Use the dedicated dashboard endpoint
-        const response = await api.get(`/Dashboard/user/${userId}`);
+        const response = await api.get<Dashboard>(ENDPOINTS.GET_DASHBOARD());
 
-        // Ensure we have proper typing and default values
-        const dashboardData: Dashboard = {
-            assetHoldings: Array.isArray(response.data?.assetHoldings)
-                ? response.data.assetHoldings
-                : [],
-            portfolioValue: typeof response.data?.portfolioValue === 'number'
-                ? response.data.portfolioValue
-                : 0,
-            totalInvestments: typeof response.data?.totalInvestments === 'number'
-                ? response.data.totalInvestments
-                : 0
-        };
+        if (response == null || response.data == null || !response.success) {
+            throw new Error(response.message || 'Failed to get dashboard data');
+        }
 
-        return dashboardData;
+        return response.data;
     } catch (error) {
         console.error("Error fetching dashboard data:", error);
         throw error;

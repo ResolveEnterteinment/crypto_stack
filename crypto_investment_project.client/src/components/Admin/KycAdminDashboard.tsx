@@ -39,20 +39,6 @@ interface KycVerification {
     isPoliticallyExposed: boolean;
     isHighRisk: boolean;
     amlStatus?: 'CLEARED' | 'REVIEW_REQUIRED' | 'BLOCKED';
-    /*personalInfo?: {
-        fullName: string;
-        dateOfBirth: string;
-        governmentIdNumber: string;
-        nationality: string;
-        phoneNumber: string;
-        address: {
-            street: string;
-            city: string;
-            state: string;
-            zipCode: string;
-            country: string;
-        };
-    };*/
     personalInfo: Record<string, object>,
     liveCaptures: LiveCaptureInfo[];
     documents: DocumentInfo[];
@@ -66,6 +52,15 @@ interface KycVerification {
     verificationResults?: VerificationResults;
 }
 
+interface PaginatedResult {
+    items: KycVerification[];
+    page: number;
+    pageSize: number;
+    totalCount: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+}
 interface LiveCaptureInfo {
     id: string;
     type: string;
@@ -170,11 +165,11 @@ const KycAdminDashboard: React.FC = () => {
     const loadVerifications = async () => {
         try {
             setLoading(true);
-            const response = await api.get('/v1/kyc/admin/pending');
+            const response = await api.get <PaginatedResult>('/v1/kyc/admin/pending');
 
-            if (response.data && response.data.success) {
+            if (response.data && response.success) {
                 // Safely extract data with fallbacks
-                const items = response.data.data?.items || [];
+                const items = response.data.items || [];
                 // Ensure all items have required fields with safe fallbacks
                 const processedItems = items.map((item: any) => ({
                     ...item,
@@ -209,8 +204,8 @@ const KycAdminDashboard: React.FC = () => {
         try {
             const response = await api.get('/api/admin/kyc/stats');
 
-            if (response.data && response.data.success) {
-                const statsData = response.data.data || {};
+            if (response.data && response.success) {
+                const statsData = response.data || {};
                 setStats({
                     totalPending: safeNumber(statsData.totalPending, 0),
                     totalApproved: safeNumber(statsData.totalApproved, 0),
@@ -495,7 +490,7 @@ const KycAdminDashboard: React.FC = () => {
                 verificationIds: selectedRowKeys
             });
 
-            if (!response.data.success) {
+            if (!response.success) {
                 throw new Error('Failed to perform bulk action');
             }
 
@@ -557,7 +552,7 @@ const KycAdminDashboard: React.FC = () => {
                 reason: `Quick ${status.toLowerCase()} by admin`
             });
 
-            if (!response.data.success) {
+            if (!response.success) {
                 throw new Error('Failed to update status');
             }
 

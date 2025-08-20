@@ -23,9 +23,11 @@ namespace Infrastructure.Services.KYC
         public KycSessionService(
             IServiceProvider serviceProvider,
             IConfiguration configuration,
+            IKycAuditService kycAuditService,
             IHttpContextService httpContextService) : base(serviceProvider)
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+            _kycAuditService = kycAuditService ?? throw new ArgumentNullException(nameof(kycAuditService));
             _httpContextService = httpContextService ?? throw new ArgumentNullException(nameof(httpContextService));
             _sessionTimeout = TimeSpan.FromHours(_configuration.GetValue("KYC:SessionTimeoutHours", 24));
         }

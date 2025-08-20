@@ -187,7 +187,7 @@ namespace Infrastructure.Services.Transaction
 
                     if (insertResult == null || !insertResult.IsSuccess)
                     {
-                        throw new DatabaseException($"Failed to upsert balance for user {payment.UserId}: {insertResult?.ErrorMessage ?? "Upsert result returned null"}");
+                        throw new DatabaseException($"Failed to create transaction for user {payment.UserId}: {insertResult?.ErrorMessage ?? "Upsert result returned null"}");
                     }
                 })
                 .ExecuteAsync();

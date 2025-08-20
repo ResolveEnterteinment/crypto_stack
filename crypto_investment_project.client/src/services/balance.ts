@@ -1,66 +1,102 @@
 ﻿import { Balance } from "../types/balanceTypes";
 import api from "./api";
 
-export const getBalance = async (ticker: string): Promise<Balance | null> => {
+// API endpoints
+const ENDPOINTS = {
+    GET_ALL: () => `/balance/get/all`,
+    GET_BY_ASSET: (ticker: string) => `/balance/get/asset/${ticker}`,
+    GET_BY_USER_AND_ASSET: (userId: string, ticker: string) => `/balance/admin/user/${userId}/asset/${ticker}`,
+    GET_TOTAL_INVESTMENTS: () => `/balance/totalInvestments`,
+    GET_PORTFOLIO_VALUE: () => `/balance/portfolioValue`,
+    HEALTH_CHECK: '/balance/health'
+} as const;
+
+export const getBalance = async (ticker: string): Promise<Balance> => {
     if (!ticker) {
-        console.error("getBalances called with undefined ticker");
-        return null;
+        throw new Error("Ticker is required to get balance");
     }
-    const response = await api.safeRequest('get', `/Balance/asset/${ticker}`);
-    console.log("BalanceService::getBalance => response: ", response);
-    if (response == null || response.data == null || response.success != true)
-        throw `Failed to get balance for ${ticker}`;
-    return response.data;
+
+    try {
+        const response = await api.get<Balance>(ENDPOINTS.GET_BY_ASSET(ticker));
+        if (response == null || response.data == null || response.success != true) {
+            throw new Error(response.message || `Failed to get balance`);
+        }
+        return response.data;
+    } catch (error) {
+        console.error(`Error fetching balance for ${ticker}:`, error);
+        throw error;
+    }
 };
 
-export const getUserBalance = async (userId: string, ticker: string): Promise<Balance | null> => {
+export const getUserBalance = async (userId: string, ticker: string): Promise<Balance> => {
     if (!ticker) {
-        console.error("getBalances called with undefined ticker");
-        return null;
+        throw new Error("Ticker is required to get user balance");
     }
 
     if (!userId) {
-        console.error("getBalances called with undefined user id");
-        return null;
+        throw new Error("User ID is required to get user balance");
     }
-    const response = await api.safeRequest('get', `/Balance/user/${userId}/asset/${ticker}`);
-    console.log("BalanceService::getUserBalance => response: ", response);
-    if (response == null || response.data == null || response.success != true)
-        throw `Failed to get ${ticker} balance for user ID ${userId}`;
-    return response.data;
+    try {
+        const response = await api.get<Balance>(ENDPOINTS.GET_BY_USER_AND_ASSET(userId, ticker));
+        if (response == null || response.data == null || response.success != true) {
+            throw new Error(response.message || `Failed to get balance`);
+        }
+        return response.data;
+    } catch (e) {
+        console.error(`Error fetching ${ticker} balance for user ID ${userId}:`, e);
+        throw e;
+    }
+    
 };
 
-export const getBalances = async (userId: string): Promise<Balance[] | []>  => {
+export const getBalances = async (userId: string): Promise<Balance[]>  => {
     if (!userId) {
-        console.error("getBalances called with undefined userId");
-        return [];
+        throw new Error("User ID is required to get balances");
     }
-    const response = await api.safeRequest('get', `/Balance/user/${userId}`);
-    if (response == null || response.data == null || response.success != true)
-        throw `Failed to get balances for user ID ${userId}`;
-    return response.data;
+
+    const response = await api.get<Balance[]>(ENDPOINTS.GET_ALL());
+
+    if (response == null || response.data == null || response.success != true) {
+        throw new Error(response.message || `Failed to get balances`);
+    }
+
+    return response.data ?? [];
 };
 
-export const getTotalInvestments = async (userId: string) => {
+export const getTotalInvestments = async (userId: string) : Promise<number> => {
     if (!userId) {
-        console.error("getTotalInvestments called with undefined userId");
-        return [];
+        throw new Error("User ID is required to get total investments");
     }
-    const { data } = await api.get(`/Balance/totalInvestments/${userId}`);
-    return data;
+
+    try {
+        const response = await api.get<number>(ENDPOINTS.GET_TOTAL_INVESTMENTS());
+
+        if (response == null || response.data == null || response.success != true) {
+            throw new Error(response.message || `Failed to get total investments`);
+        }
+
+        return response.data;
+    } catch (error) {
+        console.error(`Error fetching total investments for user ID ${userId}:`, error);
+        throw error;
+    }
 };
 
-export const getPortfolioValue = async (userId: string) => {
+export const getPortfolioValue = async (userId: string) : Promise<number> => {
     if (!userId) {
-        console.error("getPortfolioValue called with undefined userId");
-        return [];
+        throw new Error("User ID is required to get portfolio value");
     }
-    const { data } = await api.get(`/Balance/portfolioValue/${userId}`);
-    return data;
-};
 
-export const updateSubscription = async (subscriptionId: string, updateFields: object) => {
-    await api.post(`/Subscription/update/${subscriptionId}`, updateFields)
-        .then((response) => console.log(response))
-        .catch((error) => console.error(error));
+    try {
+        const response = await api.get<number>(ENDPOINTS.GET_PORTFOLIO_VALUE());
+
+        if (response == null || response.data == null || response.success != true) {
+            throw new Error(response.message || `Failed to get portfolio value`);
+        }
+
+        return response.data;
+    } catch (error) {
+        console.error(`Error fetching portfolio value for user ID ${userId}:`, error);
+        throw error;
+    }
 };

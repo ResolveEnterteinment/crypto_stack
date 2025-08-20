@@ -65,7 +65,7 @@ const WithdrawalLimitsComponent: React.FC<WithdrawalLimitsProps> = ({
                 setLoading(true);
             }
 
-            const userLimits = await withdrawalService.getLevels();
+            const userLimits = await withdrawalService.getCurrentUserLimits();
             setWithdrawalLimits(userLimits);
             console.log("WithdrawalLimitsComponent::fetchWithdrawalLimits => userLimits: ", userLimits);
 

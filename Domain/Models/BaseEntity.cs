@@ -15,6 +15,6 @@ namespace Domain.Models
 
         [Required]
         [BsonRepresentation(BsonType.DateTime)]
-        public DateTime? UpdatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 }

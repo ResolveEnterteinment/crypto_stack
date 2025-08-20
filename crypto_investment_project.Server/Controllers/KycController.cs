@@ -1,9 +1,10 @@
 using Application.Contracts.Requests.KYC;
 using Application.Contracts.Responses.KYC;
+using Application.Extensions;
 using Application.Interfaces.KYC;
-using Application.Interfaces.Logging;
 using Domain.Constants;
 using Domain.Constants.KYC;
+using Domain.DTOs;
 using Domain.DTOs.KYC;
 using Domain.Models.KYC;
 using Microsoft.AspNetCore.Antiforgery;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using Newtonsoft.Json;
+using System.Diagnostics;
 using System.Security.Claims;
 using System.Text.RegularExpressions;
 
@@ -29,18 +31,19 @@ namespace crypto_investment_project.Server.Controllers
         private readonly IKycSessionService _kycSessionService;
         private readonly IDocumentService _documentService;
         private readonly ILiveCaptureService _liveCaptureService;
-        private readonly ILoggingService _logger;
+        private readonly ILogger<KycController> _logger;
         private readonly IMemoryCache _cache;
         private readonly IConfiguration _configuration;
         private readonly IAntiforgery _antiforgery;
         private readonly IWebHostEnvironment _environment;
+
         private readonly string[] _allowedFileTypes = { ".jpg", ".jpeg", ".png", ".pdf", ".webp" };
         private readonly long _maxFileSize = 10 * 1024 * 1024; // 10MB
 
         public KycController(
             IKycService kycService,
             IKycSessionService kycSessionService,
-            ILoggingService logger,
+            ILogger<KycController> logger,
             IMemoryCache cache,
             IConfiguration configuration,
             IAntiforgery antiforgery,
@@ -62,165 +65,163 @@ namespace crypto_investment_project.Server.Controllers
         /// <summary>
         /// Get current KYC status for the authenticated user
         /// </summary>
+        /// <returns>Current KYC status information</returns>
+        /// <response code="200">Returns the user's KYC status</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="500">If an internal error occurs</response>
         [HttpGet("status")]
-        [ProducesResponseType(typeof(ApiResponse<KycStatusResponse>), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status500InternalServerError)]
+        [ProducesResponseType(typeof(KycStatusResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> GetKycStatus()
         {
-            try
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                var userId = GetUserId();
-                if (!userId.HasValue)
-                {
-                    return Unauthorized(new ApiErrorResponse
-                    {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid user authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                // Check cache first
-                var cacheKey = $"kyc_status_{userId}";
-                if (_cache.TryGetValue(cacheKey, out KycStatusResponse? cachedStatus) && cachedStatus != null)
-                {
-                    return Ok(new ApiResponse<KycStatusResponse>
-                    {
-                        Success = true,
-                        Data = cachedStatus,
-                        Message = "KYC status retrieved from cache"
-                    });
-                }
-
-                var result = await _kycService.GetUserKycStatusAsync(userId.Value);
-                if (!result.IsSuccess)
-                {
-                    return StatusCode(500, new ApiErrorResponse
-                    {
-                        Error = "KYC_FETCH_ERROR",
-                        Message = result.ErrorMessage,
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                var statusResponse = MapToStatusResponse(result.Data);
-
-                // Cache for 5 minutes
-                _cache.Set(cacheKey, statusResponse, TimeSpan.FromMinutes(5));
-
-                return Ok(new ApiResponse<KycStatusResponse>
-                {
-                    Success = true,
-                    Data = statusResponse,
-                    Message = "KYC status retrieved successfully"
-                });
-            }
-            catch (Exception ex)
+                ["Operation"] = "GetKycStatus",
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
             {
-                _logger.LogError($"Error retrieving KYC status: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
+                try
                 {
-                    Error = "INTERNAL_ERROR",
-                    Message = "An error occurred while retrieving KYC status",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                    var userId = GetUserId();
+                    if (!userId.HasValue)
+                    {
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
+
+                    // Check cache first
+                    var cacheKey = $"kyc_status_{userId}";
+
+                    if (_cache.TryGetValue(cacheKey, out KycStatusResponse? cachedStatus) && cachedStatus != null)
+                    {
+                        _logger.LogInformation("KYC status retrieved from cache for user {UserId}", userId);
+                        return ResultWrapper.Success(cachedStatus, "KYC status retrieved from cache")
+                            .ToActionResult(this);
+                    }
+
+                    var result = await _kycService.GetUserKycStatusAsync(userId.Value);
+
+                    if (!result.IsSuccess)
+                    {
+                        throw new Exception($"Failed to retrieve KYC status: {result.ErrorMessage}");
+                    }
+
+                    var statusResponse = MapToStatusResponse(result.Data);
+
+                    // Cache for 5 minutes
+                    _cache.Set(cacheKey, statusResponse, TimeSpan.FromMinutes(5));
+
+                    _logger.LogInformation("KYC status retrieved successfully for user {UserId}", userId);
+
+                    return ResultWrapper.Success(statusResponse, "KYC status retrieved successfully")
+                        .ToActionResult(this);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error retrieving KYC status");
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
             }
         }
 
         /// <summary>
         /// Create a new KYC verification session
         /// </summary>
+        /// <param name="request">Session creation request</param>
+        /// <returns>The ID of the created session</returns>
+        /// <response code="200">Returns the session ID</response>
+        /// <response code="400">If the request is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="429">If too many requests are made</response>
         [HttpPost("session")]
-        [ProducesResponseType(typeof(ApiResponse<Guid>), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
+        [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         public async Task<IActionResult> CreateKycSession([FromBody] CreateSessionRequest request)
         {
-            try
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                // Validate input
-                if (!ModelState.IsValid)
+                ["Operation"] = "CreateKycSession",
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
+            {
+                try
                 {
-                    return BadRequest(new ApiErrorResponse
+                    // Validate input
+                    if (!ModelState.IsValid)
                     {
-                        Error = "VALIDATION_ERROR",
-                        Message = "Invalid request data",
-                        Details = ModelState.ToDictionary(
+                        var errors = ModelState.ToDictionary(
                             kvp => kvp.Key,
                             kvp => kvp.Value?.Errors.Select(e => e.ErrorMessage).ToArray() ?? Array.Empty<string>()
-                        ),
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        );
 
-                var userId = GetUserId();
-                if (!userId.HasValue)
-                {
-                    return Unauthorized(new ApiErrorResponse
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Invalid request data",
+                            "INVALID_REQUEST",
+                            errors)
+                            .ToActionResult(this);
+                    }
+
+                    var userId = GetUserId();
+                    if (!userId.HasValue)
                     {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid user authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
 
-                // Rate limiting check
-                var rateLimitKey = $"kyc_session_creation_{userId}";
-                var sessionCount = _cache.TryGetValue(rateLimitKey, out int count) ? count : 0;
+                    // Rate limiting check
+                    var rateLimitKey = $"kyc_session_creation_{userId}";
+                    var sessionCount = _cache.TryGetValue(rateLimitKey, out int count) ? count : 0;
 
-                if (sessionCount >= 5)
-                {
-                    return StatusCode(429, new ApiErrorResponse
+                    if (sessionCount >= 5)
                     {
-                        Error = "RATE_LIMIT_EXCEEDED",
-                        Message = "Too many session creation attempts. Please try again later.",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Too many session creation attempts. Please try again later.",
+                            "RATE_LIMIT_EXCEEDED")
+                            .ToActionResult(this);
+                    }
 
-                var result = await _kycSessionService.GetOrCreateUserSessionAsync(userId.Value);
-                if (!result.IsSuccess)
-                {
-                    return BadRequest(new ApiErrorResponse
+                    var result = await _kycSessionService.GetOrCreateUserSessionAsync(userId.Value);
+
+                    if (!result.IsSuccess)
                     {
-                        Error = "SESSION_CREATION_ERROR",
-                        Message = result.ErrorMessage,
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                        throw new Exception($"Failed to create KYC session: {result.ErrorMessage}");
+                    }
+
+                    // Update rate limit counter
+                    _cache.Set(rateLimitKey, sessionCount + 1, TimeSpan.FromHours(1));
+
+                    // Clear KYC status cache
+                    _cache.Remove($"kyc_status_{userId}");
+
+                    await LogSecurityEvent(userId.Value, "KYC_SESSION_CREATED", "KYC session created");
+
+                    _logger.LogInformation("KYC session created successfully for user {UserId}", userId);
+
+                    return ResultWrapper.Success(result.Data.Id, "KYC session created successfully")
+                        .ToActionResult(this);
                 }
-
-                // Update rate limit counter
-                _cache.Set(rateLimitKey, sessionCount + 1, TimeSpan.FromHours(1));
-
-                // Clear KYC status cache
-                _cache.Remove($"kyc_status_{userId}");
-
-                await LogSecurityEvent(userId.Value, "KYC_SESSION_CREATED",
-                    $"KYC session created");
-
-                return Ok(new ApiResponse<Guid>
+                catch (Exception ex)
                 {
-                    Success = true,
-                    Data = result.Data.Id,
-                    Message = "KYC session created successfully"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error creating KYC session: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
-                {
-                    Error = "INTERNAL_ERROR",
-                    Message = "An error occurred while creating KYC session",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                    _logger.LogError(ex, "Error creating KYC session");
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
             }
         }
 
+        /// <summary>
+        /// Invalidate a KYC session
+        /// </summary>
+        /// <param name="request">Session invalidation request</param>
+        /// <returns>Success confirmation</returns>
         [HttpDelete("session")]
-        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> InvalidateSession([FromBody] InvalidateSessionRequest request)
         {
             try
@@ -228,33 +229,45 @@ namespace crypto_investment_project.Server.Controllers
                 var userId = GetUserId();
                 if (!userId.HasValue)
                 {
-                    return Unauthorized();
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
                 }
 
                 var sessionHeader = HttpContext.Request.Headers["X-KYC-Session"].FirstOrDefault();
                 if (string.IsNullOrEmpty(sessionHeader) || !Guid.TryParse(sessionHeader, out var sessionId))
                 {
-                    return BadRequest();
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid or missing session ID",
+                        "INVALID_REQUEST")
+                        .ToActionResult(this);
                 }
 
-                await _kycSessionService.InvalidateSessionAsync(sessionId, userId.Value, request?.Reason ?? "User requested");
+                var result = await _kycSessionService.InvalidateSessionAsync(sessionId, userId.Value, request?.Reason ?? "User requested");
 
-                return Ok(new ApiResponse<object>
+                if (!result.IsSuccess)
                 {
-                    Success = true,
-                    Data = new { invalidated = true },
-                    Message = "Session invalidated successfully"
-                });
+                    throw new Exception($"Failed to invalidate KYC session: {result.ErrorMessage}");
+                }
+
+                return ResultWrapper.Success(new { invalidated = true }, "Session invalidated successfully")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error invalidating session: {ex.Message}");
-                return StatusCode(500);
+                _logger.LogError(ex, "Error invalidating session");
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
+        /// <summary>
+        /// Validate a KYC session
+        /// </summary>
+        /// <returns>Session validation result</returns>
         [HttpGet("session/validate")]
-        [ProducesResponseType(typeof(ApiResponse<bool>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(bool), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> ValidateSession()
         {
             try
@@ -262,49 +275,47 @@ namespace crypto_investment_project.Server.Controllers
                 var userId = GetUserId();
                 if (!userId.HasValue)
                 {
-                    return Unauthorized(new ApiErrorResponse
-                    {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid user authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
                 }
 
                 var sessionHeader = HttpContext.Request.Headers["X-KYC-Session"].FirstOrDefault();
                 if (string.IsNullOrEmpty(sessionHeader) || !Guid.TryParse(sessionHeader, out var sessionId))
                 {
-                    return BadRequest(new ApiErrorResponse
-                    {
-                        Error = "INVALID_SESSION",
-                        Message = "Invalid or missing session ID",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid or missing session ID",
+                        "INVALID_REQUEST")
+                        .ToActionResult(this);
                 }
 
                 var validationResult = await _kycSessionService.ValidateSessionAsync(sessionId, userId.Value);
 
-                return Ok(new ApiResponse<bool>
+                if(!validationResult.IsSuccess)
                 {
-                    Success = validationResult.IsSuccess,
-                    Data = validationResult.IsSuccess,
-                    Message = validationResult.IsSuccess ? "Session is valid" : "Session is invalid"
-                });
+                    throw new Exception($"Failed to validate KYC session: {validationResult.ErrorMessage}");
+                }
+
+                var message = validationResult.IsSuccess ? "Session is valid" : "Session is invalid";
+                return ResultWrapper.Success(validationResult.IsSuccess, message)
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error validating session: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
-                {
-                    Error = "INTERNAL_ERROR",
-                    Message = "An error occurred while validating session",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                _logger.LogError(ex, "Error validating session");
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
-
         }
 
+        /// <summary>
+        /// Update session progress
+        /// </summary>
+        /// <param name="progress">Progress information</param>
+        /// <returns>Update confirmation</returns>
         [HttpPatch("session/progress")]
-        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> UpdateSessionProgress([FromBody] SessionProgress progress)
         {
             try
@@ -312,221 +323,226 @@ namespace crypto_investment_project.Server.Controllers
                 var userId = GetUserId();
                 if (!userId.HasValue)
                 {
-                    return Unauthorized();
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
                 }
 
                 var sessionHeader = HttpContext.Request.Headers["X-KYC-Session"].FirstOrDefault();
                 if (string.IsNullOrEmpty(sessionHeader) || !Guid.TryParse(sessionHeader, out var sessionId))
                 {
-                    return BadRequest(new ApiErrorResponse
-                    {
-                        Error = "INVALID_SESSION",
-                        Message = "Invalid or missing session ID"
-                    });
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid or missing session ID",
+                        "INVALID_REQUEST")
+                        .ToActionResult(this);
                 }
 
                 var updateResult = await _kycSessionService.UpdateSessionProgressAsync(sessionId, progress);
 
-                return Ok(new ApiResponse<object>
-                {
-                    Success = updateResult.IsSuccess,
-                    Data = new { updated = updateResult.IsSuccess },
-                    Message = updateResult.IsSuccess ? "Progress updated" : updateResult.ErrorMessage
-                });
+                var message = updateResult.IsSuccess ? "Progress updated" : updateResult.ErrorMessage;
+                return ResultWrapper.Success(new { updated = updateResult.IsSuccess }, message)
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error updating session progress: {ex.Message}");
-                return StatusCode(500);
+                _logger.LogError(ex, "Error updating session progress");
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
         /// <summary>
         /// Submit KYC verification data
         /// </summary>
+        /// <param name="submission">KYC verification submission</param>
+        /// <returns>Verification result</returns>
+        /// <response code="200">Returns the verification result</response>
+        /// <response code="400">If the submission is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
         [HttpPost("verify")]
         [RequestSizeLimit(52428800)] // 50MB limit
-        [ProducesResponseType(typeof(ApiResponse<KycVerificationResponse>), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(typeof(KycVerificationResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> VerifyKyc([FromBody] KycVerificationSubmissionRequest submission)
         {
-            try
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                // Validate input
-                if (!ModelState.IsValid)
+                ["Operation"] = "VerifyKyc",
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
+            {
+                try
                 {
-                    return BadRequest(new ApiErrorResponse
+                    // Validate input
+                    if (!ModelState.IsValid)
                     {
-                        Error = "VALIDATION_ERROR",
-                        Message = "Invalid submission data",
-                        Details = ModelState.ToDictionary(
+                        var errors = ModelState.ToDictionary(
                             kvp => kvp.Key,
                             kvp => kvp.Value?.Errors.Select(e => e.ErrorMessage).ToArray() ?? Array.Empty<string>()
-                        ),
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        );
 
-                var userId = GetUserId();
-                if (!userId.HasValue)
-                {
-                    return Unauthorized(new ApiErrorResponse
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Invalid submission data",
+                            "INVALID_REQUEST",
+                            errors)
+                            .ToActionResult(this);
+                    }
+
+                    var userId = GetUserId();
+                    if (!userId.HasValue)
                     {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid user authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
 
-                // Enhanced security validation
-                var securityValidation = await ValidateSubmissionSecurity(submission, userId.Value);
-                if (!securityValidation.IsValid)
-                {
-                    return BadRequest(new ApiErrorResponse
+                    // Enhanced security validation
+                    var securityValidation = await ValidateSubmissionSecurity(submission, userId.Value);
+
+                    if (!securityValidation.IsValid)
                     {
-                        Error = "SECURITY_VALIDATION_FAILED",
-                        Message = securityValidation.ErrorMessage,
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            securityValidation.ErrorMessage,
+                            "SECURITY_VALIDATION_ERROR")
+                            .ToActionResult(this);
+                    }
 
-                // Create verification request
-                var verificationRequest = new KycVerificationRequest
-                {
-                    UserId = userId.Value,
-                    SessionId = submission.SessionId,
-                    VerificationLevel = submission.VerificationLevel,
-                    Data = submission.Data,
-                    ConsentGiven = submission.ConsentGiven,
-                    TermsAccepted = submission.TermsAccepted
-                };
-
-                var result = await _kycService.VerifyAsync(verificationRequest);
-                if (!result.IsSuccess)
-                {
-                    await LogSecurityEvent(userId.Value, "KYC_VERIFICATION_FAILED",
-                        $"KYC verification failed: {result.ErrorMessage}");
-
-                    return BadRequest(new ApiErrorResponse
+                    // Create verification request
+                    var verificationRequest = new KycVerificationRequest
                     {
-                        Error = "VERIFICATION_FAILED",
-                        Message = result.ErrorMessage,
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        UserId = userId.Value,
+                        SessionId = submission.SessionId,
+                        VerificationLevel = submission.VerificationLevel,
+                        Data = submission.Data,
+                        ConsentGiven = submission.ConsentGiven,
+                        TermsAccepted = submission.TermsAccepted
+                    };
 
-                // Clear cache
-                _cache.Remove($"kyc_status_{userId}");
+                    var result = await _kycService.VerifyAsync(verificationRequest);
+                    if (!result.IsSuccess)
+                    {
+                        await LogSecurityEvent(userId.Value, "KYC_VERIFICATION_FAILED",
+                            $"KYC verification failed: {result.ErrorMessage}");
 
-                await LogSecurityEvent(userId.Value, "KYC_VERIFICATION_SUBMITTED",
-                    $"KYC verification submitted with status: {result.Data.Status}");
+                        return ResultWrapper.Failure(FailureReason.KycVerificationError,
+                            "KYC verification failed.",
+                            "VERIFICATION_FAILED")
+                            .ToActionResult(this);
+                    }
 
-                return Ok(new ApiResponse<KycVerificationResponse>
-                {
-                    Success = true,
-                    Data = new KycVerificationResponse
+                    // Clear cache
+                    _cache.Remove($"kyc_status_{userId}");
+
+                    await LogSecurityEvent(userId.Value, "KYC_VERIFICATION_SUBMITTED",
+                        $"KYC verification submitted with status: {result.Data.Status}");
+
+                    var response = new KycVerificationResponse
                     {
                         Status = result.Data.Status,
                         VerificationLevel = result.Data.VerificationLevel,
-                        SubmittedAt = result.Data.UpdatedAt ?? DateTime.UtcNow,
+                        SubmittedAt = result.Data.UpdatedAt,
                         NextSteps = GetNextSteps(result.Data.Status)
-                    },
-                    Message = "KYC verification submitted successfully"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error in KYC verification: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
+                    };
+
+                    _logger.LogInformation("KYC verification submitted successfully for user {UserId}", userId);
+
+                    return ResultWrapper.Success(response, "KYC verification submitted successfully")
+                        .ToActionResult(this);
+                }
+                catch (Exception ex)
                 {
-                    Error = "INTERNAL_ERROR",
-                    Message = "An error occurred during KYC verification",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                    _logger.LogError(ex, "Error in KYC verification");
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
             }
         }
 
         /// <summary>
         /// Upload document for KYC verification
         /// </summary>
+        /// <param name="request">Document upload request</param>
+        /// <returns>Upload result</returns>
+        /// <response code="200">Returns the upload result</response>
+        /// <response code="400">If the upload request is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
         [HttpPost("document/upload")]
         [RequestSizeLimit(10485760)] // 10MB limit
-        [ProducesResponseType(typeof(ApiResponse<DocumentUploadResponse>), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(DocumentUploadResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> UploadDocument([FromForm] DocumentUploadRequest request)
         {
-            try
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                var userId = GetUserId();
-                if (!userId.HasValue)
-                {
-                    return Unauthorized(new ApiErrorResponse
-                    {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid user authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                // Validate Session ID
-                if (!Guid.TryParse(request.SessionId, out var sessionId))
-                {
-                    return BadRequest(new ApiErrorResponse
-                    {
-                        Error = "SESSION_VALIDATION_ERROR",
-                        Message = "Invalid Session ID",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                // Use DocumentService for upload
-                var uploadResult = await _documentService.UploadDocumentAsync(
-                    userId.Value,
-                    sessionId,
-                    request.File,
-                    request.DocumentType);
-
-                if (!uploadResult.IsSuccess)
-                {
-                    return BadRequest(new ApiErrorResponse
-                    {
-                        Error = "UPLOAD_FAILED",
-                        Message = uploadResult.ErrorMessage,
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                await LogSecurityEvent(userId.Value, "DOCUMENT_UPLOADED",
-                    $"Document uploaded: {request.DocumentType}, Size: {request.File.Length} bytes");
-
-                return Ok(new ApiResponse<DocumentUploadResponse>
-                {
-                    Success = true,
-                    Data = uploadResult.Data,
-                    Message = "Document uploaded successfully"
-                });
-            }
-            catch (Exception ex)
+                ["Operation"] = "UploadDocument",
+                ["DocumentType"] = request?.DocumentType,
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
             {
-                _logger.LogError($"Error uploading document: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
+                try
                 {
-                    Error = "UPLOAD_ERROR",
-                    Message = "An error occurred during document upload",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                    var userId = GetUserId();
+                    if (!userId.HasValue)
+                    {
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
+
+                    // Validate Session ID
+                    if (!Guid.TryParse(request.SessionId, out var sessionId))
+                    {
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Invalid Session ID",
+                            "SESSION_VALIDATION_ERROR")
+                            .ToActionResult(this);
+                    }
+
+                    // Use DocumentService for upload
+                    var uploadResult = await _documentService.UploadDocumentAsync(
+                        userId.Value,
+                        sessionId,
+                        request.File,
+                        request.DocumentType);
+
+                    if (!uploadResult.IsSuccess)
+                    {
+                        return ResultWrapper.Failure(uploadResult.Reason,
+                            uploadResult.ErrorMessage,
+                            "UPLOAD_FAILED")
+                            .ToActionResult(this);
+                    }
+
+                    await LogSecurityEvent(userId.Value, "DOCUMENT_UPLOADED",
+                        $"Document uploaded: {request.DocumentType}, Size: {request.File.Length} bytes");
+
+                    _logger.LogInformation("Document uploaded successfully for user {UserId}, type {DocumentType}",
+                        userId, request.DocumentType);
+
+                    return ResultWrapper.Success(uploadResult.Data, "Document uploaded successfully")
+                        .ToActionResult(this);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error uploading document");
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
             }
         }
 
         /// <summary>
         /// Download document for review (Admin only)
         /// </summary>
+        /// <param name="documentId">Document ID</param>
+        /// <returns>Document file</returns>
+        /// <response code="200">Returns the document file</response>
+        /// <response code="404">If document is not found</response>
+        /// <response code="403">If access is denied</response>
         [HttpGet("admin/document/{documentId}")]
         [Authorize(Roles = "ADMIN")]
         [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
         public async Task<IActionResult> DownloadDocument(Guid documentId)
         {
             try
@@ -534,12 +550,8 @@ namespace crypto_investment_project.Server.Controllers
                 var userId = GetUserId();
                 if (!userId.HasValue)
                 {
-                    return Unauthorized(new ApiErrorResponse
-                    {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid user authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
                 }
 
                 // Use DocumentService for download
@@ -550,27 +562,9 @@ namespace crypto_investment_project.Server.Controllers
 
                 if (!downloadResult.IsSuccess)
                 {
-                    return downloadResult.Reason switch
-                    {
-                        FailureReason.NotFound => NotFound(new ApiErrorResponse
-                        {
-                            Error = "DOCUMENT_NOT_FOUND",
-                            Message = "Document not found or access denied",
-                            TraceId = HttpContext.TraceIdentifier
-                        }),
-                        FailureReason.SecurityError => StatusCode(422, new ApiErrorResponse
-                        {
-                            Error = "SECURITY_ERROR",
-                            Message = downloadResult.ErrorMessage,
-                            TraceId = HttpContext.TraceIdentifier
-                        }),
-                        _ => StatusCode(500, new ApiErrorResponse
-                        {
-                            Error = "DOWNLOAD_ERROR",
-                            Message = downloadResult.ErrorMessage,
-                            TraceId = HttpContext.TraceIdentifier
-                        })
-                    };
+                    ResultWrapper.Failure(downloadResult.Reason,
+                            downloadResult.ErrorMessage,
+                            "DOWNLOAD_FAILED").ToActionResult(this);
                 }
 
                 var fileData = downloadResult.Data.FileData;
@@ -581,24 +575,25 @@ namespace crypto_investment_project.Server.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error downloading document: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
-                {
-                    Error = "DOWNLOAD_ERROR",
-                    Message = "An error occurred during document download",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                _logger.LogError(ex, "Error downloading document {DocumentId}", documentId);
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
         /// <summary>
         /// Download live-capture for review (Admin only)
         /// </summary>
+        /// <param name="captureId">Live capture ID</param>
+        /// <returns>Zip file containing live capture files</returns>
+        /// <response code="200">Returns the live capture files as zip</response>
+        /// <response code="404">If live capture is not found</response>
+        /// <response code="403">If access is denied</response>
         [HttpGet("admin/live-capture/{captureId}")]
         [Authorize(Roles = "ADMIN")]
         [ProducesResponseType(StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
         public async Task<IActionResult> DownloadLiveCapture(Guid captureId)
         {
             try
@@ -606,12 +601,8 @@ namespace crypto_investment_project.Server.Controllers
                 var userId = GetUserId();
                 if (!userId.HasValue)
                 {
-                    return Unauthorized(new ApiErrorResponse
-                    {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid user authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
                 }
 
                 // Use DocumentService for download
@@ -622,28 +613,11 @@ namespace crypto_investment_project.Server.Controllers
 
                 if (!downloadResult.IsSuccess)
                 {
-                    return downloadResult.Reason switch
-                    {
-                        FailureReason.NotFound => NotFound(new ApiErrorResponse
-                        {
-                            Error = "DOCUMENT_NOT_FOUND",
-                            Message = "Document not found or access denied",
-                            TraceId = HttpContext.TraceIdentifier
-                        }),
-                        FailureReason.SecurityError => StatusCode(422, new ApiErrorResponse
-                        {
-                            Error = "SECURITY_ERROR",
-                            Message = downloadResult.ErrorMessage,
-                            TraceId = HttpContext.TraceIdentifier
-                        }),
-                        _ => StatusCode(500, new ApiErrorResponse
-                        {
-                            Error = "DOWNLOAD_ERROR",
-                            Message = downloadResult.ErrorMessage,
-                            TraceId = HttpContext.TraceIdentifier
-                        })
-                    };
+                    return ResultWrapper.Failure(downloadResult.Reason,
+                            downloadResult.ErrorMessage,
+                            "DOWNLOAD_FAILED").ToActionResult(this);
                 }
+
                 var fileDatas = downloadResult.Data.FileDatas;
                 var contentType = downloadResult.Data.ContentType;
                 var fileNames = downloadResult.Data.FileNames;
@@ -666,22 +640,21 @@ namespace crypto_investment_project.Server.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error downloading live capture: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
-                {
-                    Error = "DOWNLOAD_ERROR",
-                    Message = "An error occurred during live capture download",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                _logger.LogError(ex, "Error downloading live capture {CaptureId}", captureId);
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
         /// <summary>
         /// Get KYC verification requirements
         /// </summary>
+        /// <param name="level">Verification level</param>
+        /// <returns>KYC requirements for the specified level</returns>
+        /// <response code="200">Returns the KYC requirements</response>
         [HttpGet("requirements")]
         [AllowAnonymous]
-        [ProducesResponseType(typeof(ApiResponse<KycRequirementsResponse>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(KycRequirementsResponse), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetKycRequirements([FromQuery] string level = "STANDARD")
         {
             try
@@ -702,30 +675,27 @@ namespace crypto_investment_project.Server.Controllers
                     }
                 };
 
-                return Ok(new ApiResponse<KycRequirementsResponse>
-                {
-                    Success = true,
-                    Data = requirements,
-                    Message = "KYC requirements retrieved successfully"
-                });
+                return ResultWrapper.Success(requirements, "KYC requirements retrieved successfully")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error retrieving KYC requirements: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
-                {
-                    Error = "INTERNAL_ERROR",
-                    Message = "An error occurred while retrieving requirements",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                _logger.LogError(ex, "Error retrieving KYC requirements");
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
         /// <summary>
         /// Check if user meets KYC requirements for a specific level
         /// </summary>
+        /// <param name="requiredLevel">Required verification level</param>
+        /// <returns>User's KYC eligibility status</returns>
+        /// <response code="200">Returns the eligibility status</response>
+        /// <response code="401">If the user is not authenticated</response>
         [HttpGet("eligibility")]
-        [ProducesResponseType(typeof(ApiResponse<KycEligibilityResponse>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(KycEligibilityResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> CheckKycEligibility([FromQuery] string requiredLevel = "STANDARD")
         {
             try
@@ -733,12 +703,8 @@ namespace crypto_investment_project.Server.Controllers
                 var userId = GetUserId();
                 if (!userId.HasValue)
                 {
-                    return Unauthorized(new ApiErrorResponse
-                    {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid user authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
                 }
 
                 var isVerified = await _kycService.IsUserVerifiedAsync(userId.Value, requiredLevel);
@@ -752,22 +718,14 @@ namespace crypto_investment_project.Server.Controllers
                     CheckedAt = DateTime.UtcNow
                 };
 
-                return Ok(new ApiResponse<KycEligibilityResponse>
-                {
-                    Success = true,
-                    Data = eligibilityResponse,
-                    Message = "KYC eligibility checked successfully"
-                });
+                return ResultWrapper.Success(eligibilityResponse, "KYC eligibility checked successfully")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error checking KYC eligibility: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
-                {
-                    Error = "INTERNAL_ERROR",
-                    Message = "An error occurred while checking eligibility",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                _logger.LogError(ex, "Error checking KYC eligibility");
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -775,148 +733,146 @@ namespace crypto_investment_project.Server.Controllers
         /// <summary>
         /// Get pending KYC verifications (Admin only)
         /// </summary>
+        /// <param name="page">Page number</param>
+        /// <param name="pageSize">Items per page</param>
+        /// <returns>Paginated list of pending verifications</returns>
+        /// <response code="200">Returns the pending verifications</response>
+        /// <response code="403">If user is not an admin</response>
         [HttpGet("admin/pending")]
         [Authorize(Roles = "ADMIN")]
-        [ProducesResponseType(typeof(ApiResponse<PaginatedResult<KycAdminView>>), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(typeof(PaginatedResult<KycAdminView>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
         public async Task<IActionResult> GetPendingVerifications([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
-            try
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                var result = await _kycService.GetPendingVerificationsAsync(page, pageSize);
-                if (!result.IsSuccess)
+                ["Operation"] = "GetPendingVerifications",
+                ["Page"] = page,
+                ["PageSize"] = pageSize,
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
+            {
+                try
                 {
-                    return StatusCode(500, new ApiErrorResponse
+                    var result = await _kycService.GetPendingVerificationsAsync(page, pageSize);
+                    if (!result.IsSuccess)
                     {
-                        Error = "FETCH_ERROR",
-                        Message = result.ErrorMessage,
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                        return ResultWrapper.Failure(result.Reason,
+                            result.ErrorMessage,
+                            "FETCH_ERROR")
+                            .ToActionResult(this);
+                    }
+
+                    var adminViews = result.Data.Items.Select(MapToAdminView).ToList();
+                    var adminResult = new PaginatedResult<KycAdminView>
+                    {
+                        Items = adminViews,
+                        Page = result.Data.Page,
+                        PageSize = result.Data.PageSize,
+                        TotalCount = result.Data.TotalCount,
+                    };
+
+                    _logger.LogInformation("Retrieved {Count} pending KYC verifications", adminViews.Count);
+
+                    return ResultWrapper.Success(adminResult, "Pending verifications retrieved successfully")
+                        .ToActionResult(this);
                 }
-
-                var adminViews = result.Data.Items.Select(MapToAdminView).ToList();
-                var adminResult = new PaginatedResult<KycAdminView>
+                catch (Exception ex)
                 {
-                    Items = adminViews,
-                    Page = result.Data.Page,
-                    PageSize = result.Data.PageSize,
-                    TotalCount = result.Data.TotalCount,
-                    TotalPages = result.Data.TotalPages,
-                    HasPreviousPage = result.Data.HasPreviousPage,
-                    HasNextPage = result.Data.HasNextPage
-                };
-
-                return Ok(new ApiResponse<PaginatedResult<KycAdminView>>
-                {
-                    Success = true,
-                    Data = adminResult,
-                    Message = "Pending verifications retrieved successfully"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error retrieving pending verifications: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
-                {
-                    Error = "INTERNAL_ERROR",
-                    Message = "An error occurred while retrieving pending verifications",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                    _logger.LogError(ex, "Error retrieving pending verifications");
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
             }
         }
 
         /// <summary>
         /// Update KYC status (Admin only)
         /// </summary>
+        /// <param name="userId">User ID</param>
+        /// <param name="request">Status update request</param>
+        /// <returns>Update result</returns>
+        /// <response code="200">Returns the update result</response>
+        /// <response code="400">If the request is invalid</response>
+        /// <response code="401">If user is not authenticated as admin</response>
+        /// <response code="404">If user KYC record is not found</response>
         [HttpPut("admin/status/{userId}")]
         [Authorize(Roles = "ADMIN")]
-        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> UpdateKycStatus(
             Guid userId,
             [FromBody] UpdateKycStatusRequest request)
         {
-            try
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                // Validate input
-                if (!ModelState.IsValid)
+                ["Operation"] = "UpdateKycStatus",
+                ["TargetUserId"] = userId,
+                ["NewStatus"] = request?.Status,
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
+            {
+                try
                 {
-                    return BadRequest(new ApiErrorResponse
+                    // Validate input
+                    if (!ModelState.IsValid)
                     {
-                        Error = "VALIDATION_ERROR",
-                        Message = "Invalid request data",
-                        Details = ModelState.ToDictionary(
+                        var errors = ModelState.ToDictionary(
                             kvp => kvp.Key,
                             kvp => kvp.Value?.Errors.Select(e => e.ErrorMessage).ToArray() ?? Array.Empty<string>()
-                        ),
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        );
 
-                var adminUserId = GetUserId();
-                if (!User.IsInRole("ADMIN"))
-                {
-                    return Unauthorized(new ApiErrorResponse
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Invalid request data",
+                            "INVALID_REQUEST",
+                            errors)
+                            .ToActionResult(this);
+                    }
+
+                    var adminUserId = GetUserId();
+
+                    // Validate the new status
+                    if (!KycStatus.AllValues.Contains(request.Status, StringComparer.OrdinalIgnoreCase))
                     {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid admin authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Invalid KYC status provided",
+                            "INVALID_STATUS")
+                            .ToActionResult(this);
+                    }
 
-                // Validate the new status
-                if (!KycStatus.AllValues.Contains(request.Status, StringComparer.OrdinalIgnoreCase))
-                {
-                    return BadRequest(new ApiErrorResponse
+                    // Check if user exists and get current status
+                    var currentKycResult = await _kycService.GetUserKycDataDecryptedAsync(userId);
+                    if (!currentKycResult.IsSuccess)
                     {
-                        Error = "INVALID_STATUS",
-                        Message = "Invalid KYC status provided",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        return ResultWrapper.NotFound("User KYC record", userId.ToString())
+                            .ToActionResult(this);
+                    }
 
-                // Check if user exists and get current status
-                var currentKycResult = await _kycService.GetUserKycDataDecryptedAsync(userId);
-                if (!currentKycResult.IsSuccess)
-                {
-                    return NotFound(new ApiErrorResponse
+                    // Update KYC status
+                    var updateResult = await _kycService.UpdateKycStatusAsync(
+                        userId,
+                        request.Status,
+                        adminUserId.Value.ToString(),
+                        request.Reason);
+
+                    if (!updateResult.IsSuccess)
                     {
-                        Error = "USER_NOT_FOUND",
-                        Message = "User KYC record not found",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                        return ResultWrapper.Failure(FailureReason.Unknown,
+                            updateResult.ErrorMessage,
+                            "UPDATE_FAILED")
+                            .ToActionResult(this);
+                    }
 
-                // Update KYC status
-                var updateResult = await _kycService.UpdateKycStatusAsync(
-                    userId,
-                    request.Status,
-                    adminUserId.Value.ToString(),
-                    request.Reason);
+                    // Clear user's KYC status cache
+                    _cache.Remove($"kyc_status_{userId}");
 
-                if (!updateResult.IsSuccess)
-                {
-                    return BadRequest(new ApiErrorResponse
-                    {
-                        Error = "UPDATE_FAILED",
-                        Message = updateResult.ErrorMessage,
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
+                    // Log security event
+                    await LogSecurityEvent(adminUserId.Value, "KYC_STATUS_UPDATED",
+                        $"Admin updated KYC status for user {userId} from {currentKycResult.Data.Status} to {request.Status}. Reason: {request.Reason ?? "No reason provided"}");
 
-                // Clear user's KYC status cache
-                _cache.Remove($"kyc_status_{userId}");
-
-                // Log security event
-                await LogSecurityEvent(adminUserId.Value, "KYC_STATUS_UPDATED",
-                    $"Admin updated KYC status for user {userId} from {currentKycResult.Data.Status} to {request.Status}. Reason: {request.Reason ?? "No reason provided"}");
-
-                return Ok(new ApiResponse<object>
-                {
-                    Success = true,
-                    Data = new
+                    var responseData = new
                     {
                         userId = userId,
                         previousStatus = currentKycResult.Data.Status,
@@ -924,134 +880,139 @@ namespace crypto_investment_project.Server.Controllers
                         updatedBy = adminUserId.Value,
                         updatedAt = DateTime.UtcNow,
                         reason = request.Reason
-                    },
-                    Message = "KYC status updated successfully"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Error updating KYC status for user {userId}: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
+                    };
+
+                    _logger.LogInformation("KYC status updated successfully for user {UserId} by admin {AdminId}",
+                        userId, adminUserId);
+
+                    return ResultWrapper.Success(responseData, "KYC status updated successfully")
+                        .ToActionResult(this);
+                }
+                catch (Exception ex)
                 {
-                    Error = "INTERNAL_ERROR",
-                    Message = "An error occurred while updating KYC status",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                    _logger.LogError(ex, "Error updating KYC status for user {UserId}", userId);
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
             }
         }
 
         /// <summary>
         /// Submit live capture data for KYC verification
         /// </summary>
+        /// <param name="request">Live document capture request</param>
+        /// <returns>Live capture processing result</returns>
+        /// <response code="200">Returns the processing result</response>
+        /// <response code="400">If the request is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
         [HttpPost("document/live-capture")]
         [RequestSizeLimit(20971520)] // 20MB limit for high-quality images
-        [ProducesResponseType(typeof(ApiResponse<LiveCaptureResponse>), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(LiveCaptureResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> ProcessLiveDocumentCapture([FromBody] LiveDocumentCaptureRequest request)
         {
-            try
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                var userId = GetUserId();
-                if (!userId.HasValue)
-                {
-                    return Unauthorized(new ApiErrorResponse
-                    {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid user authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                // Use DocumentService for live capture processing
-                var processingResult = await _liveCaptureService.ProcessLiveDocumentCaptureAsync(userId.Value, request);
-                if (!processingResult.IsSuccess)
-                {
-                    return BadRequest(new ApiErrorResponse
-                    {
-                        Error = "LIVE_CAPTURE_PROCESSING_FAILED",
-                        Message = processingResult.ErrorMessage,
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                await LogSecurityEvent(userId.Value, "LIVE_DOCUMENT_CAPTURED",
-                    $"Live document captured: {request.DocumentType}, Quality: {request.ImageData.Sum(s => s.QualityScore)/ request.ImageData.Count()}%, Live: {request.IsLive}");
-
-                return Ok(new ApiResponse<LiveCaptureResponse>
-                {
-                    Success = true,
-                    Data = processingResult.Data,
-                    Message = "Live capture processed successfully"
-                });
-            }
-            catch (Exception ex)
+                ["Operation"] = "ProcessLiveDocumentCapture",
+                ["DocumentType"] = request?.DocumentType,
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
             {
-                _logger.LogError($"Error processing live capture: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
+                try
                 {
-                    Error = "LIVE_CAPTURE_ERROR",
-                    Message = "An error occurred during live capture processing",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                    var userId = GetUserId();
+                    if (!userId.HasValue)
+                    {
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
+
+                    // Use DocumentService for live capture processing
+                    var processingResult = await _liveCaptureService.ProcessLiveDocumentCaptureAsync(userId.Value, request);
+                    if (!processingResult.IsSuccess)
+                    {
+                        return ResultWrapper.Failure(processingResult.Reason,
+                            processingResult.ErrorMessage,
+                            "INVALID_REQUEST")
+                            .ToActionResult(this);
+                    }
+
+                    await LogSecurityEvent(userId.Value, "LIVE_DOCUMENT_CAPTURED",
+                        $"Live document captured: {request.DocumentType}, Quality: {request.ImageData.Sum(s => s.QualityScore) / request.ImageData.Count()}%, Live: {request.IsLive}");
+
+                    _logger.LogInformation("Live document capture processed successfully for user {UserId}", userId);
+
+                    return ResultWrapper.Success(processingResult.Data, "Live capture processed successfully")
+                        .ToActionResult(this);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error processing live capture");
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
             }
         }
 
         /// <summary>
-        /// Submit live capture data for KYC verification
+        /// Submit live selfie capture data for KYC verification
         /// </summary>
+        /// <param name="request">Live selfie capture request</param>
+        /// <returns>Live capture processing result</returns>
+        /// <response code="200">Returns the processing result</response>
+        /// <response code="400">If the request is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
         [HttpPost("selfie/live-capture")]
         [RequestSizeLimit(20971520)] // 20MB limit for high-quality images
-        [ProducesResponseType(typeof(ApiResponse<LiveCaptureResponse>), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(LiveCaptureResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<IActionResult> ProcessLiveSelfieCapture([FromBody] LiveSelfieCaptureRequest request)
         {
-            try
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                var userId = GetUserId();
-                if (!userId.HasValue)
-                {
-                    return Unauthorized(new ApiErrorResponse
-                    {
-                        Error = "UNAUTHORIZED",
-                        Message = "Invalid user authentication",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                // Use DocumentService for live capture processing
-                var processingResult = await _liveCaptureService.ProcessLiveSelfieCaptureAsync(userId.Value, request);
-                if (!processingResult.IsSuccess)
-                {
-                    return BadRequest(new ApiErrorResponse
-                    {
-                        Error = "LIVE_CAPTURE_PROCESSING_FAILED",
-                        Message = processingResult.ErrorMessage,
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                await LogSecurityEvent(userId.Value, "LIVE_SELFIE_CAPTURED",
-                    $"Live selfie captured, Live: {request.IsLive}");
-
-                return Ok(new ApiResponse<LiveCaptureResponse>
-                {
-                    Success = true,
-                    Data = processingResult.Data,
-                    Message = "Live capture processed successfully"
-                });
-            }
-            catch (Exception ex)
+                ["Operation"] = "ProcessLiveSelfieCapture",
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
             {
-                _logger.LogError($"Error processing live capture: {ex.Message}");
-                return StatusCode(500, new ApiErrorResponse
+                try
                 {
-                    Error = "LIVE_CAPTURE_ERROR",
-                    Message = "An error occurred during live capture processing",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                    var userId = GetUserId();
+                    if (!userId.HasValue)
+                    {
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
+
+                    // Use DocumentService for live capture processing
+                    var processingResult = await _liveCaptureService.ProcessLiveSelfieCaptureAsync(userId.Value, request);
+                    if (!processingResult.IsSuccess)
+                    {
+                        return ResultWrapper.Failure(processingResult.Reason,
+                            processingResult.ErrorMessage,
+                            "INVALID_REQUEST")
+                            .ToActionResult(this);
+                    }
+
+                    await LogSecurityEvent(userId.Value, "LIVE_SELFIE_CAPTURED",
+                        $"Live selfie captured, Live: {request.IsLive}");
+
+                    _logger.LogInformation("Live selfie capture processed successfully for user {UserId}", userId);
+
+                    return ResultWrapper.Success(processingResult.Data, "Live capture processed successfully")
+                        .ToActionResult(this);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error processing live capture");
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
             }
         }
-        // Private helper methods
+
+        #region Private helper methods
         private Guid? GetUserId()
         {
             var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -1185,12 +1146,6 @@ namespace crypto_investment_project.Server.Controllers
             return errors;
         }
 
-        private bool IsValidVerificationLevel(string verificationLevel)
-        {
-            // Check if the provided verification level is valid
-            return VerificationLevel.AllValues.Contains(verificationLevel, StringComparer.OrdinalIgnoreCase);
-        }
-
         private bool IsValidName(string? name)
         {
             if (string.IsNullOrWhiteSpace(name))
@@ -1264,7 +1219,8 @@ namespace crypto_investment_project.Server.Controllers
                 var capture = await _liveCaptureService.GetLiveCaptureAsync(id);
                 if (capture.IsSuccess)
                 {
-                    liveCaptures.Add(new LiveCaptureDto {
+                    liveCaptures.Add(new LiveCaptureDto
+                    {
                         Id = capture.Data.Id,
                         Type = capture.Data.DocumentType,
                         FileSize = capture.Data.FileSize,
@@ -1356,27 +1312,11 @@ namespace crypto_investment_project.Server.Controllers
                 Timestamp = DateTime.UtcNow
             };
 
-            _logger.LogInformation($"Security Event: {eventType} - User: {userId} - {details}");
+            _logger.LogInformation("Security Event: {EventType} - User: {UserId} - {Details}", eventType, userId, details);
 
             // Additional security event logging would go here
         }
-    }
-
-    public class ApiResponse<T>
-    {
-        public bool Success { get; set; }
-        public T Data { get; set; } = default!;
-        public string Message { get; set; } = string.Empty;
-        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-    }
-
-    public class ApiErrorResponse
-    {
-        public string Error { get; set; } = string.Empty;
-        public string Message { get; set; } = string.Empty;
-        public string TraceId { get; set; } = string.Empty;
-        public Dictionary<string, string[]>? Details { get; set; }
-        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+        #endregion
     }
 
     public class KycVerificationResponse
@@ -1416,9 +1356,9 @@ namespace crypto_investment_project.Server.Controllers
         public bool RequiresReview { get; set; }
         public string RiskLevel { get; set; } = string.Empty;
         public Dictionary<string, object>? PersonalInfo { get; set; }
-        public List<LiveCaptureDto> LiveCaptures { get; set; }
-        public List<DocumentDto> Documents { get; set; }
-        public List<KycHistoryEntry> History { get; set; }
+        public List<LiveCaptureDto> LiveCaptures { get; set; } = new();
+        public List<DocumentDto> Documents { get; set; } = new();
+        public List<KycHistoryEntry> History { get; set; } = new();
     }
 
     public class SecurityEvent
@@ -1431,15 +1371,9 @@ namespace crypto_investment_project.Server.Controllers
         public DateTime Timestamp { get; set; }
     }
 
-    // Required interface for PaginatedResult
-    public class PaginatedResult<T>
+    public class ValidationResult
     {
-        public List<T> Items { get; set; } = new();
-        public int Page { get; set; }
-        public int PageSize { get; set; }
-        public int TotalCount { get; set; }
-        public int TotalPages { get; set; }
-        public bool HasPreviousPage { get; set; }
-        public bool HasNextPage { get; set; }
+        public bool IsValid { get; set; }
+        public string ErrorMessage { get; set; } = string.Empty;
     }
 }

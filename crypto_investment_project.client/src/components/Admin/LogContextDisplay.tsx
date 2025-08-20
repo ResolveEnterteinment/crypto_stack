@@ -20,7 +20,7 @@ const LogContextDisplay: React.FC<LogContextDisplayProps> = ({ context }) => {
             // If it's not valid JSON, return simple pre display
             return (
                 <pre className="text-xs bg-gray-50 p-2 rounded overflow-x-auto max-h-40 border border-gray-200">
-                    {context}
+                    {context.toString()}
                 </pre>
             );
         }

@@ -1,6 +1,7 @@
+using Application.Extensions;
 using Application.Interfaces.Payment;
 using Domain.Constants.Payment;
-using Domain.Interfaces;
+using Domain.DTOs;
 using Domain.Models.Payment;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -71,17 +72,13 @@ namespace WebApi.Controllers.Admin
                     page,
                     pageSize);
 
-                if (!paymentsResult.IsSuccess)
-                {
-                    return StatusCode(500, paymentsResult.ErrorMessage);
-                }
-
-                return Ok(new { data = paymentsResult.Data });
+                return paymentsResult.ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting admin payments");
-                return StatusCode(500, "An error occurred while processing your request");
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -105,12 +102,14 @@ namespace WebApi.Controllers.Admin
                         Builders<PaymentData>.Filter.Eq(p => p.Status, PaymentStatus.Filled))
                 };
 
-                return Ok(new { data = stats });
+                return ResultWrapper.Success(stats)
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting payment stats");
-                return StatusCode(500, "An error occurred while processing your request");
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
     }

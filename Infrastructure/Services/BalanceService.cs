@@ -274,7 +274,7 @@ namespace Infrastructure.Services
                         Builders<BalanceData>.Filter.Eq(b => b.AssetId, balanceUpdateDto.AssetId)
                     );
 
-                    var existingResult = await GetByIdAsync(balanceUpdateDto.AssetId);
+                    var existingResult = await GetOneAsync(filter);
 
                     BalanceData resultBalance;
 
@@ -383,6 +383,38 @@ namespace Infrastructure.Services
                         transaction.UserId, transaction.Id);
                 })
                 .ExecuteAsync();
+        }
+        
+        public async Task<ResultWrapper<BalanceCacheStats>> GetCacheStatsAsync(Guid userId)
+        {
+            try
+            {
+                var stats = new BalanceCacheStats
+                {
+                    UserId = userId,
+                    UserBalanceExists = _cacheService.TryGetValue<List<BalanceData>>(string.Format(USER_BALANCE_CACHE_KEY, userId), out _),
+                    BalancesWithAssetsExists = _cacheService.TryGetValue<List<BalanceData>>(string.Format(USER_BALANCES_WITH_ASSETS_CACHE_KEY, userId, "all"), out _),
+                    Timestamp = DateTime.UtcNow
+                };
+
+                // Check some common ticker caches
+                var commonTickers = new[] { "BTC", "USDT", "ETH" };
+                stats.CommonTickerCacheHits = 0;
+                foreach (var ticker in commonTickers)
+                {
+                    var cacheKey = string.Format(USER_BALANCE_BY_TICKER_CACHE_KEY, userId, ticker);
+                    if (_cacheService.TryGetValue<BalanceData>(cacheKey, out _))
+                    {
+                        stats.CommonTickerCacheHits++;
+                    }
+                }
+
+                return ResultWrapper<BalanceCacheStats>.Success(stats);
+            }
+            catch (Exception ex)
+            {
+                return ResultWrapper<BalanceCacheStats>.FromException(ex);
+            }
         }
 
         /// <summary>
@@ -511,36 +543,5 @@ namespace Infrastructure.Services
         /// Gets cache statistics for monitoring balance cache health
         /// </summary>
         /// <param name="userId">The user ID to get stats for</param>
-        public async Task<ResultWrapper<BalanceCacheStats>> GetCacheStatsAsync(Guid userId)
-        {
-            try
-            {
-                var stats = new BalanceCacheStats
-                {
-                    UserId = userId,
-                    UserBalanceExists = _cacheService.TryGetValue<List<BalanceData>>(string.Format(USER_BALANCE_CACHE_KEY, userId), out _),
-                    BalancesWithAssetsExists = _cacheService.TryGetValue<List<BalanceData>>(string.Format(USER_BALANCES_WITH_ASSETS_CACHE_KEY, userId, "all"), out _),
-                    Timestamp = DateTime.UtcNow
-                };
-
-                // Check some common ticker caches
-                var commonTickers = new[] { "BTC", "USDT", "ETH" };
-                stats.CommonTickerCacheHits = 0;
-                foreach (var ticker in commonTickers)
-                {
-                    var cacheKey = string.Format(USER_BALANCE_BY_TICKER_CACHE_KEY, userId, ticker);
-                    if (_cacheService.TryGetValue<BalanceData>(cacheKey, out _))
-                    {
-                        stats.CommonTickerCacheHits++;
-                    }
-                }
-
-                return ResultWrapper<BalanceCacheStats>.Success(stats);
-            }
-            catch (Exception ex)
-            {
-                return ResultWrapper<BalanceCacheStats>.FromException(ex);
-            }
-        }
     }
 }

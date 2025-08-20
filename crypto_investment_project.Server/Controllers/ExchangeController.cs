@@ -1,7 +1,11 @@
 using Application.Extensions;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
+using CryptoExchange.Net.CommonObjects;
+using Domain.Constants;
+using Domain.DTOs;
 using Domain.DTOs.Error;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Diagnostics;
@@ -15,8 +19,6 @@ namespace crypto_investment_project.Server.Controllers
     public class ExchangeController : ControllerBase
     {
         private readonly IExchangeService _exchangeService;
-        private readonly IPaymentProcessingService _paymentProcessingService;
-        private readonly IBalanceManagementService _balanceManagementService;
         private readonly IAssetService _assetService;
         private readonly ILogger<ExchangeController> _logger;
 
@@ -28,8 +30,6 @@ namespace crypto_investment_project.Server.Controllers
             ILogger<ExchangeController> logger)
         {
             _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
-            _paymentProcessingService = paymentProcessingService ?? throw new ArgumentNullException(nameof(paymentProcessingService));
-            _balanceManagementService = balanceManagementService ?? throw new ArgumentNullException(nameof(balanceManagementService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -38,9 +38,9 @@ namespace crypto_investment_project.Server.Controllers
         /// Gets current price for a specific asset
         /// </summary>
         /// <param name="ticker">Asset ticker symbol</param>
-        /// <param name="exchange">Exchange name (optional)</param>
         /// <returns>Current asset price</returns>
         [HttpGet("price/{ticker}")]
+        [Authorize]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(typeof(decimal), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
@@ -53,20 +53,21 @@ namespace crypto_investment_project.Server.Controllers
             {
                 if (string.IsNullOrEmpty(ticker))
                 {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "Asset ticker is required",
-                        Code = "MISSING_TICKER",
-                        TraceId = correlationId
-                    });
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                    "Asset ticker is required",
+                    "INVALID_REQUEST")
+                    .ToActionResult(this);
                 }
 
                 // Get asset from database to determine exchange
                 var assetResult = await _assetService.GetByTickerAsync(ticker);
+
                 if (assetResult == null || !assetResult.IsSuccess || assetResult.Data == null)
                 {
-                    return assetResult.ToActionResult(this);
+                    return ResultWrapper.NotFound("Asset", ticker)
+                        .ToActionResult(this);
                 }
+
                 var asset = assetResult.Data;
 
                 // Use provided exchange or default to asset's exchange
@@ -75,12 +76,13 @@ namespace crypto_investment_project.Server.Controllers
                 // Verify exchange exists
                 if (!_exchangeService.Exchanges.ContainsKey(exchangeName))
                 {
-                    return BadRequest(new ErrorResponse
+                    if (string.IsNullOrEmpty(ticker))
                     {
-                        Message = $"Exchange {exchangeName} not supported",
-                        Code = "EXCHANGE_NOT_SUPPORTED",
-                        TraceId = correlationId
-                    });
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                        $"Exchange {exchangeName} not supported",
+                        "INVALID_REQUEST")
+                        .ToActionResult(this);
+                    }
                 }
 
                 // Get price from exchange
@@ -88,21 +90,71 @@ namespace crypto_investment_project.Server.Controllers
 
                 if (priceResult == null || !priceResult.IsSuccess)
                 {
-                    return priceResult.ToActionResult(this);
+                    return ResultWrapper.Failure(FailureReason.ExchangeApiError, 
+                        $"Failed to fetch asset price for {ticker}",
+                        "PRICE_FETCH_ERROR")
+                        .ToActionResult(this);
                 }
 
-                return Ok(priceResult.Data);
+                return ResultWrapper.Success(priceResult.Data, 
+                    "Asset price retrieved successfully")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error fetching price for {Ticker}: {ErrorMessage}", ticker, ex.Message);
 
-                return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
+            }
+        }
+
+        /// <summary>
+        /// Gets current prices for a collection of assets
+        /// </summary>
+        /// <param name="ticker">Asset ticker symbols</param>
+        /// <returns>Current asset price</returns>
+        [HttpGet("prices/{ticker}")]
+        [Authorize]
+        [EnableRateLimiting("standard")]
+        [ProducesResponseType(typeof(decimal), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetAssetPrices([FromQuery] string[] tickers)
+        {
+            var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+
+            try
+            {
+                if (tickers.Length == 0 || !tickers.All(t => !string.IsNullOrWhiteSpace(t)))
                 {
-                    Message = "An error occurred while fetching the asset price",
-                    Code = "PRICE_FETCH_ERROR",
-                    TraceId = correlationId
-                });
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                    "Asset tickers is required and can not contain any empty elements",
+                    "INVALID_REQUEST")
+                    .ToActionResult(this);
+                }
+
+                // Get price from exchange
+                var pricesResult = await _exchangeService.GetCachedAssetPricesAsync(tickers);
+
+                if (pricesResult == null || !pricesResult.IsSuccess)
+                {
+                    return ResultWrapper.Failure(FailureReason.ExchangeApiError,
+                        $"Failed to fetch asset prices for {string.Join(',', tickers)}",
+                        "PRICE_FETCH_ERROR")
+                        .ToActionResult(this);
+                }
+
+                return ResultWrapper.Success(pricesResult.Data,
+                    "Asset price retrieved successfully")
+                    .ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching prices for {Tickers}: {ErrorMessage}", string.Join(',', tickers), ex.Message);
+
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
             }
         }
 
@@ -125,12 +177,10 @@ namespace crypto_investment_project.Server.Controllers
             {
                 if (string.IsNullOrEmpty(ticker))
                 {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "Asset ticker is required",
-                        Code = "MISSING_TICKER",
-                        TraceId = correlationId
-                    });
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                    "Asset ticker is required",
+                    "INVALID_REQUEST")
+                    .ToActionResult(this);
                 }
 
                 // Use the new service method with caching
@@ -138,21 +188,22 @@ namespace crypto_investment_project.Server.Controllers
 
                 if (minNotionalResult == null || !minNotionalResult.IsSuccess)
                 {
-                    return minNotionalResult.ToActionResult(this);
+                    return ResultWrapper.Failure(FailureReason.ExchangeApiError,
+                        $"Failed to fetch min notional for {ticker}",
+                        "MIN_NOTIONAL_FETCH_ERROR")
+                        .ToActionResult(this);
                 }
 
-                return Ok(minNotionalResult.Data);
+                return ResultWrapper.Success(minNotionalResult.Data,
+                    "Minimum notional value retrieved successfully")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error fetching minimum notional for {Ticker}: {ErrorMessage}", ticker, ex.Message);
 
-                return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
-                {
-                    Message = "An error occurred while fetching the minimum notional value",
-                    Code = "MIN_NOTIONAL_FETCH_ERROR",
-                    TraceId = correlationId
-                });
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
             }
         }
 
@@ -190,18 +241,18 @@ namespace crypto_investment_project.Server.Controllers
                     return minNotionalsResult.ToActionResult(this);
                 }
 
+                return ResultWrapper.Success(minNotionalsResult.Data,
+                    "Minimum notional values retrieved successfully")
+                    .ToActionResult(this);
+
                 return Ok(minNotionalsResult.Data);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error fetching min notionals for tickers: {ErrorMessage}", ex.Message);
+                _logger.LogError(ex, "Error fetching minimum notional for {Tickers}: {ErrorMessage}", string.Join('s', tickers), ex.Message);
 
-                return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
-                {
-                    Message = "An error occurred while fetching minimum notional values",
-                    Code = "MIN_NOTIONAL_FETCH_ERROR",
-                    TraceId = correlationId
-                });
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
             }
         }
 
@@ -209,7 +260,7 @@ namespace crypto_investment_project.Server.Controllers
         /// Gets a list of supported exchanges
         /// </summary>
         /// <returns>List of supported exchanges</returns>
-        [HttpGet("exchanges")]
+        [HttpGet("supported")]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(typeof(List<string>), StatusCodes.Status200OK)]
         public IActionResult GetSupportedExchanges()
@@ -217,18 +268,15 @@ namespace crypto_investment_project.Server.Controllers
             try
             {
                 var exchanges = _exchangeService.Exchanges.Keys.ToList();
-                return Ok(exchanges);
+                return ResultWrapper.Success(exchanges, "Supported exchanges retrieved successfully")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error fetching supported exchanges: {ErrorMessage}", ex.Message);
 
-                return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
-                {
-                    Message = "An error occurred while fetching supported exchanges",
-                    Code = "EXCHANGES_FETCH_ERROR",
-                    TraceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier
-                });
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
             }
         }
     }

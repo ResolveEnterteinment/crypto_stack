@@ -12,7 +12,7 @@ import KycPage from "./pages/KycPage";
 import EmailConfirmation from './pages/EmailConfirmation';
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
-import { AuthProvider } from "./context/AuthContext";
+import { AuthProvider } from './context/AuthContext';
 import { NotificationProvider } from "./context/NotificationContext";
 import PaymentCancelPage from "./pages/PaymentCancelPage";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";

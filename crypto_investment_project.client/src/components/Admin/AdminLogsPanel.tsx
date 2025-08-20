@@ -1,17 +1,50 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { Disclosure, Transition } from '@headlessui/react';
-import { ChevronRightIcon, ExclamationCircleIcon, CheckCircleIcon, XCircleIcon, InformationCircleIcon, CodeBracketIcon } from '@heroicons/react/24/outline';
-import { getTraceTree, resolveTraceLog } from "../../services/api";
+﻿import React, { useEffect, useState, useCallback, useMemo, lazy, Suspense } from "react";
+import { Disclosure, Transition, Menu } from '@headlessui/react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+    ChevronRightIcon,
+    ExclamationCircleIcon,
+    CheckCircleIcon,
+    XCircleIcon,
+    InformationCircleIcon,
+    CodeBracketIcon,
+    ChevronLeftIcon,
+    ChevronDoubleLeftIcon,
+    ChevronDoubleRightIcon,
+    TrashIcon,
+    ExclamationTriangleIcon,
+    ClockIcon,
+    LinkIcon,
+    ArrowTrendingUpIcon,
+    ArrowTrendingDownIcon,
+    FunnelIcon,
+    MagnifyingGlassIcon,
+    ArrowPathIcon,
+    ChartBarIcon,
+    DocumentDuplicateIcon,
+    BugAntIcon,
+    BoltIcon,
+    FireIcon,
+    ShieldCheckIcon,
+    SparklesIcon
+} from '@heroicons/react/24/outline';
+import {
+    ExclamationTriangleIcon as ExclamationTriangleSolidIcon,
+    CheckCircleIcon as CheckCircleSolidIcon
+} from '@heroicons/react/24/solid';
+import { getTraceTreePaginated, resolveTraceLog, purgeLogs, PurgeLogsResponse } from "../../services/traceLogService";
 import ITraceLogNode from "../../interfaces/TraceLog/ITraceLogNode";
 import ITraceLog, { ResolutionStatus, LogLevel } from "../../interfaces/TraceLog/ITraceLog";
-import LogContextDisplay from "./LogContextDisplay";
+
+// Lazy load heavy components
+const LogContextDisplay = lazy(() => import("./LogContextDisplay"));
 
 /**
- * Admin Logs Panel Component
- * Displays a hierarchical view of system logs with resolution capabilities
- * Grouped by correlation ID at the root level
+ * Enhanced Admin Logs Panel Component
+ * Modern dashboard interface for system log management
  */
 const AdminLogsPanel: React.FC = () => {
+    // State management
     const [treeData, setTreeData] = useState<ITraceLogNode[]>([]);
     const [groupedTreeData, setGroupedTreeData] = useState<ITraceLogNode[]>([]);
     const [resolutions, setResolutions] = useState<Record<string, string>>({});
@@ -19,21 +52,86 @@ const AdminLogsPanel: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
-    const [expandedStackTraces, setExpandedStackTraces] = useState<Set<string>>(new Set());
     const [searchTerm, setSearchTerm] = useState<string>("");
-    const [filterLevel, setFilterLevel] = useState<number | null>(null);
+    const [filterLevel, setFilterLevel] = useState<number>(0);
     const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
     const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
-    const [dropdownOpen, setDropdownOpen] = useState<boolean>(false);
     const [groupByCorrelation, setGroupByCorrelation] = useState<boolean>(true);
+    const [viewMode, setViewMode] = useState<'cards' | 'timeline' | 'compact'>('cards');
+    const [selectedLog, setSelectedLog] = useState<string | null>(null);
+
+    // Statistics state
+    const [stats, setStats] = useState({
+        critical: 0,
+        error: 0,
+        warning: 0,
+        info: 0,
+        resolved: 0,
+        pending: 0,
+        avgResolutionTime: '0h'
+    });
+
+    // Pagination state
+    const [currentPage, setCurrentPage] = useState<number>(1);
+    const [pageSize, setPageSize] = useState<number>(20);
+    const [totalCount, setTotalCount] = useState<number>(0);
+    const [totalPages, setTotalPages] = useState<number>(0);
+    const [hasPreviousPage, setHasPreviousPage] = useState<boolean>(false);
+    const [hasNextPage, setHasNextPage] = useState<boolean>(false);
+
+    // Purge modal state
+    const [showPurgeModal, setShowPurgeModal] = useState<boolean>(false);
+    const [purgeLevel, setPurgeLevel] = useState<number>(LogLevel.DEBUG);
+    const [purging, setPurging] = useState<boolean>(false);
+    const [purgeResult, setPurgeResult] = useState<PurgeLogsResponse | null>(null);
+
+    // Calculate statistics from tree data
+    useEffect(() => {
+        const calculateStats = (nodes: ITraceLogNode[]) => {
+            let critical = 0, error = 0, warning = 0, info = 0, resolved = 0, pending = 0;
+
+            const countLogs = (node: ITraceLogNode) => {
+                const { log } = node;
+                if (log.level === LogLevel.CRITICAL) critical++;
+                else if (log.level === LogLevel.ERROR) error++;
+                else if (log.level === LogLevel.WARNING) warning++;
+                else if (log.level === LogLevel.INFORMATION) info++;
+
+                if (log.resolutionStatus === ResolutionStatus.RECONCILED) resolved++;
+                else if (log.requiresResolution) pending++;
+
+                node.children.forEach(countLogs);
+            };
+
+            nodes.forEach(countLogs);
+
+            setStats({
+                critical,
+                error,
+                warning,
+                info,
+                resolved,
+                pending,
+                avgResolutionTime: '2.5h' // This would be calculated from actual data
+            });
+        };
+
+        calculateStats(treeData);
+    }, [treeData]);
 
     // Fetch trace tree data
-    const fetchTree = useCallback(async () => {
+    const fetchTree = useCallback(async (page: number = currentPage, size: number = pageSize, level: number = filterLevel) => {
         setLoading(true);
         setError(null);
         try {
-            const response = await getTraceTree();
-            setTreeData(response.data);
+            const paginatedData = await getTraceTreePaginated(page, size, level);
+            setTreeData(paginatedData.items);
+            setCurrentPage(paginatedData.page);
+            setPageSize(paginatedData.pageSize);
+            setTotalCount(paginatedData.totalCount);
+            setTotalPages(paginatedData.totalPages);
+            setHasPreviousPage(paginatedData.hasPreviousPage);
+            setHasNextPage(paginatedData.hasNextPage);
             setLastRefreshTime(new Date());
         } catch (err: any) {
             console.error("Error fetching trace logs:", err);
@@ -41,44 +139,29 @@ const AdminLogsPanel: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [currentPage, pageSize, filterLevel]);
 
     // Group logs by correlation ID
     const groupLogsByCorrelationId = useCallback((logs: ITraceLogNode[]): ITraceLogNode[] => {
-        // Create a map to store correlation groups
         const correlationGroups = new Map<string, ITraceLogNode[]>();
-        // Logs without correlation ID
         const ungroupedLogs: ITraceLogNode[] = [];
 
-        // First pass: categorize logs by correlation ID
         logs.forEach(node => {
             const correlationId = node.log.correlationId;
-
             if (correlationId && logs.filter(l => l.log.correlationId == node.log.correlationId).length > 1) {
                 if (!correlationGroups.has(correlationId)) {
                     correlationGroups.set(correlationId, []);
                 }
                 correlationGroups.get(correlationId)?.push(node);
             } else {
-                // Handle logs without correlation ID
                 ungroupedLogs.push(node);
             }
         });
 
-        // Create a grouped tree
         const result: ITraceLogNode[] = [];
-
-        // Add correlation groups as parent nodes
         correlationGroups.forEach((nodes, correlationId) => {
-            // Sort nodes by timestamp (oldest first)
-            nodes.sort((a, b) =>
-                new Date(a.log.createdAt).getTime() - new Date(b.log.createdAt).getTime()
-            );
-
-            // Find the earliest log in the group to use as parent
+            nodes.sort((a, b) => new Date(a.log.createdAt).getTime() - new Date(b.log.createdAt).getTime());
             const firstNode = nodes[0];
-
-            // Create correlation group node
             const groupNode: ITraceLogNode = {
                 log: {
                     ...firstNode.log,
@@ -89,80 +172,51 @@ const AdminLogsPanel: React.FC = () => {
                 },
                 children: nodes
             };
-
             result.push(groupNode);
         });
 
-        // Add ungrouped logs
         result.push(...ungroupedLogs);
-
-        // Sort correlation groups by time (newest first for better UX)
-        result.sort((a, b) =>
-            new Date(b.log.createdAt).getTime() - new Date(a.log.createdAt).getTime()
-        );
-
+        result.sort((a, b) => new Date(b.log.createdAt).getTime() - new Date(a.log.createdAt).getTime());
         return result;
     }, []);
 
-    // Process tree data when it changes
+    // Process tree data
     useEffect(() => {
         if (treeData.length > 0) {
             const grouped = groupByCorrelation ? groupLogsByCorrelationId(treeData) : treeData;
             setGroupedTreeData(grouped);
-
-            // Auto-expand correlation groups
-            if (groupByCorrelation) {
-                const newExpandedNodes = new Set(expandedNodes);
-                grouped.forEach(node => {
-                    if (isCorrelationGroup(node)) {
-                        newExpandedNodes.add(node.log.id);
-                    }
-                });
-                setExpandedNodes(newExpandedNodes);
-            }
         } else {
             setGroupedTreeData([]);
         }
     }, [treeData, groupByCorrelation, groupLogsByCorrelationId]);
 
-    // Initialize data on component mount
+    // Initialize on mount
     useEffect(() => {
         fetchTree();
     }, [fetchTree]);
 
-    // Auto-refresh logs if enabled
+    // Auto-refresh
     useEffect(() => {
         let interval: NodeJS.Timeout | null = null;
-
         if (autoRefresh) {
             interval = setInterval(() => {
                 fetchTree();
-            }, 30000); // Refresh every 30 seconds
+            }, 30000);
         }
-
         return () => {
             if (interval) clearInterval(interval);
         };
     }, [autoRefresh, fetchTree]);
 
-    // Handle resolution text changes
-    const handleResolveChange = (id: string, value: string) => {
-        setResolutions(prev => ({ ...prev, [id]: value }));
-    };
-
-    // Submit resolution for a log entry
+    // Submit resolution
     const submitResolution = async (id: string) => {
         const resolution = resolutions[id];
-        if (!resolution?.trim()) {
-            return; // Don't submit empty resolutions
-        }
+        if (!resolution?.trim()) return;
 
         setSubmitting(prev => ({ ...prev, [id]: true }));
         try {
             await resolveTraceLog(id, resolution);
-            // Success - refresh tree data
             fetchTree();
-            // Clear resolution text
             setResolutions(prev => {
                 const newResolutions = { ...prev };
                 delete newResolutions[id];
@@ -170,68 +224,37 @@ const AdminLogsPanel: React.FC = () => {
             });
         } catch (err: any) {
             console.error("Failed to submit resolution:", err);
-            alert(err.response?.data?.message || 'Failed to submit resolution. Please try again.');
+            alert(err.response?.data?.message || 'Failed to submit resolution');
         } finally {
             setSubmitting(prev => ({ ...prev, [id]: false }));
         }
     };
 
-    // Toggle stack trace visibility
-    const toggleStackTrace = (id: string) => {
-        setExpandedStackTraces(prev => {
-            const newSet = new Set(prev);
-            if (newSet.has(id)) {
-                newSet.delete(id);
-            } else {
-                newSet.add(id);
-            }
-            return newSet;
-        });
-    };
-
-    // Get CSS class based on log level
-    const getLevelClass = (level: LogLevel): string => {
+    // Get severity styling
+    const getSeverityColor = (level: LogLevel) => {
         switch (level) {
-            case LogLevel.TRACE: return "text-gray-600"; // Trace
-            case LogLevel.DEBUG: return "text-blue-600"; // Debug
-            case LogLevel.INFORMATION: return "text-green-600"; //Information
-            case LogLevel.WARNING: return "text-yellow-600"; // Warning
-            case LogLevel.ERROR: return "text-red-600"; // Error
-            case LogLevel.CRITICAL: return "text-purple-600"; // Critical
-            default: return "text-gray-600";
+            case LogLevel.CRITICAL: return 'bg-gradient-to-r from-red-500 to-red-600';
+            case LogLevel.ERROR: return 'bg-gradient-to-r from-orange-500 to-red-500';
+            case LogLevel.WARNING: return 'bg-gradient-to-r from-yellow-400 to-orange-400';
+            case LogLevel.INFORMATION: return 'bg-gradient-to-r from-green-400 to-green-500';
+            case LogLevel.DEBUG: return 'bg-gradient-to-r from-blue-400 to-blue-500';
+            case LogLevel.TRACE: return 'bg-gradient-to-r from-gray-400 to-gray-500';
+            default: return 'bg-gradient-to-r from-gray-300 to-gray-400';
         }
     };
 
-    // Get background class based on log level and resolution status
-    const getNodeBgClass = (level: LogLevel, requiresResolution: boolean, resolutionStatus: ResolutionStatus, isCorrelationGroup: boolean = false): string => {
-        if (isCorrelationGroup) return "bg-indigo-50 border border-indigo-200";
-        if (resolutionStatus === ResolutionStatus.RECONCILED) return "bg-green-50 border border-green-200";
-        if (requiresResolution) return "bg-red-50 border border-red-200";
-        if (level >= LogLevel.ERROR) return "bg-red-50 border border-red-200"; // Error or Critical
-        if (level === LogLevel.WARNING) return "bg-yellow-50 border border-yellow-200"; // Warning
-        return "hover:bg-gray-100";
-    };
-
-    // Get icon based on log level and resolution status
-    const getLevelIcon = (level: LogLevel, requiresResolution: boolean, resolutionStatus: ResolutionStatus, isCorrelationGroup: boolean = false) => {
-        if (isCorrelationGroup) {
-            return (
-                <svg className="h-5 w-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-            );
+    const getSeverityIcon = (level: LogLevel) => {
+        switch (level) {
+            case LogLevel.CRITICAL: return <FireIcon className="w-5 h-5 text-red-500" />;
+            case LogLevel.ERROR: return <XCircleIcon className="w-5 h-5 text-orange-500" />;
+            case LogLevel.WARNING: return <ExclamationTriangleIcon className="w-5 h-5 text-yellow-500" />;
+            case LogLevel.INFORMATION: return <InformationCircleIcon className="w-5 h-5 text-green-500" />;
+            case LogLevel.DEBUG: return <BugAntIcon className="w-5 h-5 text-blue-500" />;
+            case LogLevel.TRACE: return <CodeBracketIcon className="w-5 h-5 text-gray-500" />;
+            default: return <InformationCircleIcon className="w-5 h-5 text-gray-400" />;
         }
-
-        if (resolutionStatus === ResolutionStatus.RECONCILED) return <CheckCircleIcon className="h-5 w-5 text-green-500" />;
-        if (resolutionStatus === ResolutionStatus.ACKNOWLEDGED) return <CheckCircleIcon className="h-5 w-5 text-orange-500" />;
-        if (requiresResolution || level >= LogLevel.ERROR) return <XCircleIcon className="h-5 w-5 text-red-500" />;
-        if (level === LogLevel.WARNING) return <ExclamationCircleIcon className="h-5 w-5 text-yellow-500" />;
-        if (level === LogLevel.INFORMATION) return <InformationCircleIcon className="h-5 w-5 text-green-500" />;
-        if (level === LogLevel.DEBUG) return <InformationCircleIcon className="h-5 w-5 text-blue-500" />;
-        return <InformationCircleIcon className="h-5 w-5 text-gray-400" />;
     };
 
-    // Get level name from enum
     const getLevelName = (level: LogLevel): string => {
         switch (level) {
             case LogLevel.TRACE: return 'Trace';
@@ -244,609 +267,671 @@ const AdminLogsPanel: React.FC = () => {
         }
     };
 
-    // Toggle expanded state for a node
-    const toggleNodeExpanded = (id: string) => {
-        setExpandedNodes(prev => {
-            const newSet = new Set(prev);
-            if (newSet.has(id)) {
-                newSet.delete(id);
-            } else {
-                newSet.add(id);
-            }
-            return newSet;
-        });
+    // Format relative time
+    const formatRelativeTime = (date: string) => {
+        const now = new Date();
+        const then = new Date(date);
+        const seconds = Math.floor((now.getTime() - then.getTime()) / 1000);
+
+        if (seconds < 60) return `${seconds}s ago`;
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+        if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+        return `${Math.floor(seconds / 86400)}d ago`;
     };
 
-    // Expand or collapse all nodes
-    const expandCollapseAll = (expand: boolean) => {
-        if (expand) {
-            // Create a set of all node IDs
-            const allNodeIds = new Set<string>();
-
-            // Helper function to collect all IDs recursively
-            const collectNodeIds = (nodes: ITraceLogNode[]) => {
-                nodes.forEach(node => {
-                    allNodeIds.add(node.log.id);
-                    if (node.children.length > 0) {
-                        collectNodeIds(node.children);
-                    }
-                });
-            };
-
-            collectNodeIds(groupedTreeData);
-            setExpandedNodes(allNodeIds);
-        } else {
-            // Collapse all by clearing the set
-            setExpandedNodes(new Set());
-        }
-
-        // Close dropdown after action
-        setDropdownOpen(false);
-    };
-
-    // Check if a node is a correlation group node
-    const isCorrelationGroup = (node: ITraceLogNode): boolean => {
-        return node.log.id.startsWith('correlation-');
-    };
-
-    // Check if log has stack trace information
-    const hasStackTrace = (log: ITraceLog): boolean => {
-        return !!(log.stackTrace || log.exceptionType || log.callerMemberName);
-    };
-
-    // Filter nodes based on search term and level filter
-    const filterNodes = useCallback((nodes: ITraceLogNode[]): ITraceLogNode[] => {
-        if (!searchTerm && filterLevel === null) return nodes;
-
-        return nodes.filter(node => {
-            // Special handling for correlation group nodes
-            if (isCorrelationGroup(node)) {
-                // Filter the children
-                const filteredChildren = filterNodes(node.children);
-
-                // Keep the group if any children match
-                if (filteredChildren.length > 0) {
-                    return {
-                        ...node,
-                        children: filteredChildren
-                    };
-                }
-                return false;
-            }
-
-            // Check if current node matches filters
-            const matchesSearch = searchTerm
-                ? node.log.message.toLowerCase().includes(searchTerm.toLowerCase())
-                : true;
-
-            const matchesLevel = filterLevel !== null
-                ? node.log.level === filterLevel
-                : true;
-
-            // Check if any children match filters
-            const filteredChildren = filterNodes(node.children);
-
-            // Include node if it matches filters or has children that match
-            return (matchesSearch && matchesLevel) || filteredChildren.length > 0;
-        }).map(node => ({
-            ...node,
-            children: filterNodes(node.children)
-        }));
-    }, [searchTerm, filterLevel]);
-
-    // Memoize filtered tree data to avoid recalculating on every render
-    const filteredTreeData = useMemo(() => filterNodes(groupedTreeData), [filterNodes, groupedTreeData]);
-
-    // Handle click outside to close dropdown
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            const dropdown = document.getElementById('expand-dropdown');
-            if (dropdown && !dropdown.contains(event.target as Node)) {
-                setDropdownOpen(false);
-            }
-        };
-
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => {
-            document.removeEventListener('mousedown', handleClickOutside);
-        };
-    }, []);
-
-    // Format file path for display
-    const formatFilePath = (filePath: string | null | undefined): string => {
-        if (!filePath) return '';
-        // Extract just the filename and parent directory for better readability
-        const parts = filePath.split(/[\\/]/);
-        if (parts.length > 2) {
-            return `.../${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
-        }
-        return filePath;
-    };
-
-    // Render stack trace information
-    const renderStackTraceInfo = (log: ITraceLog) => {
-        if (!hasStackTrace(log)) return null;
-
-        const isExpanded = expandedStackTraces.has(log.id);
-
-        return (
-            <div className="mt-3 border-t pt-3">
-                <button
-                    onClick={() => toggleStackTrace(log.id)}
-                    className="flex items-center text-sm font-medium text-gray-700 hover:text-gray-900 mb-2"
-                >
-                    <CodeBracketIcon className="h-4 w-4 mr-2" />
-                    <span>Stack Trace Information</span>
-                    <ChevronRightIcon
-                        className={`h-4 w-4 ml-1 transform transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-                    />
-                </button>
-
-                {isExpanded && (
-                    <div className="bg-gray-800 text-gray-100 rounded-md p-3 space-y-3 text-sm font-mono">
-                        {/* Exception Type */}
-                        {log.exceptionType && (
-                            <div>
-                                <span className="text-red-400 font-semibold">Exception Type:</span>
-                                <div className="text-red-300 ml-2">{log.exceptionType}</div>
-                            </div>
-                        )}
-
-                        {/* Inner Exception */}
-                        {log.innerException && (
-                            <div>
-                                <span className="text-orange-400 font-semibold">Inner Exception:</span>
-                                <div className="text-orange-300 ml-2 break-words">{log.innerException}</div>
-                            </div>
-                        )}
-
-                        {/* Caller Information */}
-                        {(log.callerMemberName || log.callerFilePath || log.callerLineNumber) && (
-                            <div>
-                                <span className="text-blue-400 font-semibold">Source Location:</span>
-                                <div className="ml-2 space-y-1">
-                                    {log.callerMemberName && (
-                                        <div>
-                                            <span className="text-gray-400">Method:</span>
-                                            <span className="text-blue-300 ml-2">{log.callerMemberName}</span>
-                                        </div>
-                                    )}
-                                    {log.callerFilePath && (
-                                        <div>
-                                            <span className="text-gray-400">File:</span>
-                                            <span className="text-blue-300 ml-2" title={log.callerFilePath}>
-                                                {formatFilePath(log.callerFilePath)}
-                                            </span>
-                                            {log.callerLineNumber && (
-                                                <span className="text-yellow-300">:{log.callerLineNumber}</span>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Stack Trace */}
-                        {log.stackTrace && (
-                            <div>
-                                <span className="text-yellow-400 font-semibold">Stack Trace:</span>
-                                <div className="mt-1 max-h-60 overflow-y-auto">
-                                    <pre className="text-xs text-gray-200 whitespace-pre-wrap break-words">
-                                        {log.stackTrace}
-                                    </pre>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
+    // Statistics Card Component
+    const StatCard = ({ title, value, icon, color, trend, subtitle }: any) => (
+        <motion.div
+            whileHover={{ scale: 1.02 }}
+            className={`bg-white rounded-xl shadow-sm hover:shadow-md transition-all p-5 border border-gray-100`}
+        >
+            <div className="flex items-center justify-between">
+                <div>
+                    <p className="text-sm text-gray-500 font-medium">{title}</p>
+                    <p className={`text-2xl font-bold mt-1 text-${color}-600`}>{value}</p>
+                    {subtitle && <p className="text-xs text-gray-400 mt-1">{subtitle}</p>}
+                    {trend && (
+                        <div className="flex items-center mt-2">
+                            {trend > 0 ? (
+                                <ArrowTrendingUpIcon className="w-4 h-4 text-red-500 mr-1" />
+                            ) : (
+                                <ArrowTrendingDownIcon className="w-4 h-4 text-green-500 mr-1" />
+                            )}
+                            <span className={`text-xs ${trend > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                                {Math.abs(trend)}%
+                            </span>
+                        </div>
+                    )}
+                </div>
+                <div className={`p-3 rounded-lg bg-${color}-50`}>
+                    {icon}
+                </div>
             </div>
-        );
-    };
+        </motion.div>
+    );
 
-    // Recursive function to render the tree nodes
-    const renderNode = (node: ITraceLogNode, depth = 0) => {
+    // Enhanced Log Card Component
+    const LogCard = ({ node, depth = 0 }: { node: ITraceLogNode; depth?: number }) => {
         const { log, children } = node;
-        const isNodeExpanded = expandedNodes.has(log.id);
-        const isSubmitting = submitting[log.id] || false;
-        const resolutionStatusEnum = log.resolutionStatus ?? ResolutionStatus.UNRESOLVED;
-        const isGroup = isCorrelationGroup(node);
+        const isExpanded = expandedNodes.has(log.id);
+        const isSelected = selectedLog === log.id;
+        const isCorrelationGroup = log.id.startsWith('correlation-');
+        const hasStackTrace = log.stackTrace || log.exceptionType;
 
         return (
-            <div key={log.id} className={`${depth > 0 ? 'ml-4' : 'ml-0'} mt-2`}>
-                <Disclosure defaultOpen={isNodeExpanded}>
-                    {({ open }) => (
-                        <>
-                            <Disclosure.Button
-                                className={`flex items-center w-full p-2 rounded-md text-left ${getNodeBgClass(log.level, log.requiresResolution, resolutionStatusEnum, isGroup)}`}
-                                onClick={() => toggleNodeExpanded(log.id)}
-                            >
-                                <ChevronRightIcon
-                                    className={`h-5 w-5 transform transition-transform ${open ? 'rotate-90' : ''}`} />
-                                <span className="ml-2">{getLevelIcon(log.level, log.requiresResolution, resolutionStatusEnum, isGroup)}</span>
-                                <span className={`ml-2 font-medium ${isGroup ? 'text-indigo-700' : getLevelClass(log.level)}`}>
-                                    {log.message}
-                                </span>
+            <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className={`relative ${depth > 0 ? 'ml-8' : ''} mb-4`}
+            >
+                {/* Connection line for child logs */}
+                {depth > 0 && (
+                    <div className="absolute left-[-20px] top-6 w-4 h-0.5 bg-gray-300" />
+                )}
 
-                                {/* Stack trace indicator for Error/Critical logs */}
-                                {!isGroup && hasStackTrace(log) && (
-                                    <CodeBracketIcon className="h-4 w-4 ml-2 text-gray-500" title="Contains stack trace information" />
-                                )}
+                <div
+                    className={`group relative bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 border overflow-hidden ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-100'
+                        } ${log.level >= LogLevel.ERROR ? 'border-l-4 border-l-red-500' : ''}`}
+                    onClick={() => setSelectedLog(log.id)}
+                >
+                    {/* Severity indicator bar */}
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 ${getSeverityColor(log.level)}`} />
 
-                                {isGroup && (
-                                    <span className="ml-2 text-xs bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">
-                                        {children.length} related logs
-                                    </span>
-                                )}
+                    {/* Main content */}
+                    <div className="p-5">
+                        {/* Header */}
+                        <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center space-x-3">
+                                {/* Icon with background */}
+                                <div className={`p-2 rounded-lg ${isCorrelationGroup ? 'bg-indigo-50' :
+                                        log.level >= LogLevel.ERROR ? 'bg-red-50' :
+                                            log.level === LogLevel.WARNING ? 'bg-yellow-50' :
+                                                'bg-gray-50'
+                                    }`}>
+                                    {isCorrelationGroup ? (
+                                        <LinkIcon className="w-5 h-5 text-indigo-500" />
+                                    ) : (
+                                        getSeverityIcon(log.level)
+                                    )}
+                                </div>
 
-                                {!isGroup && log.requiresResolution && resolutionStatusEnum !== ResolutionStatus.RECONCILED && (
-                                    <span className="ml-2 text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full">
-                                        Needs Resolution
-                                    </span>
-                                )}
-                                {!isGroup && resolutionStatusEnum === ResolutionStatus.RECONCILED && (
-                                    <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
+                                {/* Title and metadata */}
+                                <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="font-semibold text-gray-900">
+                                            {log.operation || 'System Event'}
+                                        </h3>
+                                        {hasStackTrace && (
+                                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                                                Stack Trace
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-4 mt-1">
+                                        <p className="text-sm text-gray-500">
+                                            {formatRelativeTime(log.createdAt)}
+                                        </p>
+                                        {log.correlationId && !isCorrelationGroup && (
+                                            <code className="text-xs text-gray-400 font-mono">
+                                                {log.correlationId.substring(0, 8)}...
+                                            </code>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Status badges */}
+                            <div className="flex items-center gap-2">
+                                {log.resolutionStatus === ResolutionStatus.RECONCILED && (
+                                    <span className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                                        <CheckCircleSolidIcon className="w-3 h-3" />
                                         Resolved
                                     </span>
                                 )}
-                                {!isGroup && resolutionStatusEnum === ResolutionStatus.ACKNOWLEDGED && (
-                                    <span className="ml-2 text-xs bg-orange-100 text-orange-800 px-2 py-0.5 rounded-full">
-                                        Acknowledged
+                                {log.requiresResolution && log.resolutionStatus !== ResolutionStatus.RECONCILED && (
+                                    <span className="flex items-center gap-1 text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full animate-pulse">
+                                        <ExclamationTriangleSolidIcon className="w-3 h-3" />
+                                        Needs Resolution
                                     </span>
                                 )}
-                            </Disclosure.Button>
+                                {isCorrelationGroup && (
+                                    <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full">
+                                        {children.length} events
+                                    </span>
+                                )}
+                            </div>
+                        </div>
 
-                            <Transition
-                                show={open}
-                                enter="transition duration-100 ease-out"
-                                enterFrom="transform scale-95 opacity-0"
-                                enterTo="transform scale-100 opacity-100"
-                                leave="transition duration-75 ease-out"
-                                leaveFrom="transform scale-100 opacity-100"
-                                leaveTo="transform scale-95 opacity-0"
-                            >
-                                <Disclosure.Panel className="pl-8 py-3">
-                                    {/* Special rendering for correlation groups */}
-                                    {isGroup ? (
-                                        <div className="space-y-4">
-                                            <div className="space-y-2">
-                                                {children.map(child => renderNode(child, 1))}
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <>
-                                            {/* Standard log details */}
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                        {/* Message */}
+                        <div className="mt-3">
+                            <p className="text-gray-700 leading-relaxed">{log.message}</p>
+                        </div>
+
+                        {/* Expandable details */}
+                        <Disclosure>
+                            {({ open }) => (
+                                <>
+                                    <Disclosure.Button className="flex items-center justify-center w-full mt-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors">
+                                        {open ? 'Hide' : 'Show'} Details
+                                        <ChevronRightIcon className={`w-4 h-4 ml-1 transform transition-transform ${open ? 'rotate-90' : ''}`} />
+                                    </Disclosure.Button>
+
+                                    <Transition
+                                        enter="transition duration-100 ease-out"
+                                        enterFrom="transform scale-95 opacity-0"
+                                        enterTo="transform scale-100 opacity-100"
+                                        leave="transition duration-75 ease-out"
+                                        leaveFrom="transform scale-100 opacity-100"
+                                        leaveTo="transform scale-95 opacity-0"
+                                    >
+                                        <Disclosure.Panel className="mt-4 pt-4 border-t border-gray-100">
+                                            {/* Metadata grid */}
+                                            <div className="grid grid-cols-2 gap-4 mb-4">
                                                 <div>
-                                                    <p className="text-sm text-gray-500">Log ID:</p>
-                                                    <p className="text-sm font-mono">{log.id}</p>
+                                                    <p className="text-xs text-gray-500 uppercase tracking-wider">Log ID</p>
+                                                    <p className="text-sm font-mono text-gray-700 mt-1">{log.id}</p>
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm text-gray-500">Timestamp:</p>
-                                                    <p className="text-sm">{new Date(log.createdAt).toLocaleString()}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-sm text-gray-500">Operation:</p>
-                                                    <p className="text-sm">{log.operation || 'Unknown'}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-sm text-gray-500">Level:</p>
-                                                    <p className={`text-sm ${getLevelClass(log.level)}`}>
+                                                    <p className="text-xs text-gray-500 uppercase tracking-wider">Level</p>
+                                                    <p className="text-sm font-medium text-gray-700 mt-1">
                                                         {getLevelName(log.level)}
+                                                    </p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs text-gray-500 uppercase tracking-wider">Timestamp</p>
+                                                    <p className="text-sm text-gray-700 mt-1">
+                                                        {new Date(log.createdAt).toLocaleString()}
                                                     </p>
                                                 </div>
                                                 {log.correlationId && (
                                                     <div>
-                                                        <p className="text-sm text-gray-500">Correlation ID:</p>
-                                                        <p className="text-sm font-mono">{log.correlationId}</p>
+                                                        <p className="text-xs text-gray-500 uppercase tracking-wider">Correlation ID</p>
+                                                        <p className="text-sm font-mono text-gray-700 mt-1">{log.correlationId}</p>
                                                     </div>
                                                 )}
                                             </div>
 
-                                            {/* Enhanced Additional Data section with LogContextDisplay */}
+                                            {/* Context data */}
                                             {log.context && (
-                                                <div className="mb-3">
-                                                    <p className="text-sm text-gray-500 mb-2">Additional Data:</p>
-                                                    <LogContextDisplay context={log.context} />
-                                                </div>
-                                            )}
-
-                                            {/* Stack Trace Information */}
-                                            {renderStackTraceInfo(log)}
-
-                                            {/* Resolution form */}
-                                            {(log.requiresResolution || log.level >= LogLevel.WARNING) && resolutionStatusEnum !== ResolutionStatus.RECONCILED && (
-                                                <div className="mt-3 p-3 bg-gray-50 rounded-md border border-gray-200">
-                                                    <p className="text-sm font-medium text-gray-700 mb-2">Resolution:</p>
-                                                    <textarea
-                                                        rows={3}
-                                                        placeholder="Explain how you resolved this issue..."
-                                                        className="w-full p-2 border rounded-md focus:ring-blue-500 focus:border-blue-500"
-                                                        value={resolutions[log.id] || ''}
-                                                        onChange={e => handleResolveChange(log.id, e.target.value)}
-                                                        disabled={isSubmitting}
-                                                    />
-                                                    <div className="mt-2 flex justify-end">
-                                                        <button
-                                                            onClick={() => submitResolution(log.id)}
-                                                            disabled={isSubmitting || !resolutions[log.id]?.trim()}
-                                                            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
-                                                        >
-                                                            {isSubmitting ? (
-                                                                <>
-                                                                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                                                    </svg>
-                                                                    Submitting...
-                                                                </>
-                                                            ) : "Submit Resolution"}
-                                                        </button>
+                                                <div className="mb-4">
+                                                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Additional Context</p>
+                                                    <div className="bg-gray-50 rounded-lg p-3">
+                                                        <Suspense fallback={<div className="animate-pulse h-20 bg-gray-200 rounded" />}>
+                                                            <LogContextDisplay context={log.context} />
+                                                        </Suspense>
                                                     </div>
                                                 </div>
                                             )}
 
+                                            {/* Stack trace */}
+                                            {hasStackTrace && (
+                                                <div className="mb-4">
+                                                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Stack Trace</p>
+                                                    <div className="bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto">
+                                                        <pre className="text-xs font-mono">{log.stackTrace}</pre>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Resolution form */}
+                                            {log.requiresResolution && log.resolutionStatus !== ResolutionStatus.RECONCILED && (
+                                                <div className="bg-blue-50 rounded-lg p-4">
+                                                    <p className="text-sm font-medium text-gray-700 mb-2">Add Resolution</p>
+                                                    <textarea
+                                                        rows={3}
+                                                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                                                        placeholder="Describe how this issue was resolved..."
+                                                        value={resolutions[log.id] || ''}
+                                                        onChange={e => setResolutions(prev => ({ ...prev, [log.id]: e.target.value }))}
+                                                        disabled={submitting[log.id]}
+                                                    />
+                                                    <button
+                                                        onClick={() => submitResolution(log.id)}
+                                                        disabled={submitting[log.id] || !resolutions[log.id]?.trim()}
+                                                        className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                                                    >
+                                                        {submitting[log.id] ? (
+                                                            <>
+                                                                <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                                                                Submitting...
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <CheckCircleIcon className="w-4 h-4" />
+                                                                Submit Resolution
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                </div>
+                                            )}
+
                                             {/* Show resolution if resolved */}
-                                            {resolutionStatusEnum === ResolutionStatus.RECONCILED && log.resolutionComment && (
-                                                <div className="mt-3 p-3 bg-green-50 rounded-md border border-green-200">
-                                                    <p className="text-sm font-medium text-gray-700 mb-2">Resolution:</p>
-                                                    <p className="text-sm text-gray-800">{log.resolutionComment}</p>
+                                            {log.resolutionStatus === ResolutionStatus.RECONCILED && log.resolutionComment && (
+                                                <div className="bg-green-50 rounded-lg p-4">
+                                                    <p className="text-sm font-medium text-gray-700 mb-2">Resolution</p>
+                                                    <p className="text-sm text-gray-600">{log.resolutionComment}</p>
                                                     <p className="text-xs text-gray-500 mt-2">
-                                                        Resolved by: {log.resolvedBy || 'Unknown'} at {log.resolvedAt ? new Date(log.resolvedAt).toLocaleString() : 'Unknown'}
+                                                        Resolved by {log.resolvedBy || 'Unknown'} • {log.resolvedAt ? formatRelativeTime(log.resolvedAt) : 'Unknown'}
                                                     </p>
                                                 </div>
                                             )}
+                                        </Disclosure.Panel>
+                                    </Transition>
+                                </>
+                            )}
+                        </Disclosure>
 
-                                            {/* Child nodes */}
-                                            {children.length > 0 && (
-                                                <div className="mt-4 border-l-2 border-gray-200 pl-4">
-                                                    <p className="text-sm text-gray-500 mb-2">Related Logs ({children.length}):</p>
-                                                    {children.map(child => renderNode(child, depth + 1))}
-                                                </div>
-                                            )}
-                                        </>
-                                    )}
-                                </Disclosure.Panel>
-                            </Transition>
-                        </>
-                    )}
-                </Disclosure>
-            </div>
-        );
-    };
+                        {/* Child logs */}
+                        {children.length > 0 && !isCorrelationGroup && (
+                            <div className="mt-4 pl-4 border-l-2 border-gray-200">
+                                {children.map(child => (
+                                    <LogCard key={child.log.id} node={child} depth={depth + 1} />
+                                ))}
+                            </div>
+                        )}
 
-    // Loading state
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center h-64">
-                <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full"></div>
-                <p className="ml-3 text-gray-600">Loading logs...</p>
-            </div>
-        );
-    }
-
-    return (
-        <div className="p-6 bg-white rounded-lg shadow-lg max-w-6xl mx-auto mb-10">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-                <div>
-                    <h2 className="text-2xl font-bold text-gray-800">System Log Explorer</h2>
-                    {lastRefreshTime && (
-                        <p className="text-sm text-gray-500">
-                            Last updated: {lastRefreshTime.toLocaleTimeString()}
-                        </p>
-                    )}
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                    <div className="flex items-center mr-4">
-                        <input
-                            type="checkbox"
-                            id="auto-refresh"
-                            checked={autoRefresh}
-                            onChange={(e) => setAutoRefresh(e.target.checked)}
-                            className="mr-2 h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                        />
-                        <label htmlFor="auto-refresh" className="text-sm text-gray-700">
-                            Auto-refresh (30s)
-                        </label>
-                    </div>
-
-                    <div className="flex items-center mr-4">
-                        <input
-                            type="checkbox"
-                            id="group-by-correlation"
-                            checked={groupByCorrelation}
-                            onChange={(e) => setGroupByCorrelation(e.target.checked)}
-                            className="mr-2 h-4 w-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
-                        />
-                        <label htmlFor="group-by-correlation" className="text-sm text-gray-700">
-                            Group by Correlation ID
-                        </label>
-                    </div>
-
-                    <button
-                        onClick={fetchTree}
-                        className="flex items-center px-4 py-2 bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 transition-colors"
-                    >
-                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                        Refresh
-                    </button>
-
-                    <div className="relative" id="expand-dropdown">
-                        <button
-                            className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors"
-                            onClick={() => setDropdownOpen(!dropdownOpen)}
-                        >
-                            <span className="mr-1">Expand</span>
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-                            </svg>
-                        </button>
-                        {dropdownOpen && (
-                            <div className="absolute mt-1 bg-white shadow-lg rounded-md border border-gray-200 py-1 z-10 right-0 w-40">
-                                <button
-                                    onClick={() => expandCollapseAll(true)}
-                                    className="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm"
-                                >
-                                    Expand All
-                                </button>
-                                <button
-                                    onClick={() => expandCollapseAll(false)}
-                                    className="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm"
-                                >
-                                    Collapse All
-                                </button>
+                        {/* Correlation group children */}
+                        {isCorrelationGroup && children.length > 0 && (
+                            <div className="mt-4 space-y-3">
+                                {children.map(child => (
+                                    <LogCard key={child.log.id} node={child} depth={1} />
+                                ))}
                             </div>
                         )}
                     </div>
                 </div>
-            </div>
+            </motion.div>
+        );
+    };
 
-            {/* Filter controls */}
-            <div className="flex flex-col md:flex-row gap-4 mb-6">
-                <div className="flex-1">
-                    <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-1">
-                        Search Logs
-                    </label>
-                    <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                            </svg>
-                        </div>
-                        <input
-                            type="text"
-                            id="search"
-                            className="pl-10 focus:ring-blue-500 focus:border-blue-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
-                            placeholder="Search by message content..."
-                            value={searchTerm}
-                            onChange={e => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-                </div>
-
-                <div className="md:w-64">
-                    <label htmlFor="level-filter" className="block text-sm font-medium text-gray-700 mb-1">
-                        Filter by Level
-                    </label>
-                    <select
-                        id="level-filter"
-                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                        value={filterLevel === null ? '' : filterLevel}
-                        onChange={e => setFilterLevel(e.target.value === '' ? null : Number(e.target.value))}
-                    >
-                        <option value="">All Levels</option>
-                        <option value={LogLevel.TRACE}>Trace</option>
-                        <option value={LogLevel.DEBUG}>Debug</option>
-                        <option value={LogLevel.INFORMATION}>Information</option>
-                        <option value={LogLevel.WARNING}>Warning</option>
-                        <option value={LogLevel.ERROR}>Error</option>
-                        <option value={LogLevel.CRITICAL}>Critical</option>
-                    </select>
-                </div>
-            </div>
-
-            {/* Error message */}
-            {error && (
-                <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6">
-                    <div className="flex">
-                        <div className="flex-shrink-0">
-                            <XCircleIcon className="h-5 w-5 text-red-500" />
-                        </div>
-                        <div className="ml-3">
-                            <p className="text-sm text-red-700">{error}</p>
+    // Loading skeleton
+    const LoadingSkeleton = () => (
+        <div className="space-y-4">
+            {[1, 2, 3].map(i => (
+                <div key={i} className="bg-white rounded-xl p-5 animate-pulse">
+                    <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-gray-200 rounded-lg" />
+                        <div className="flex-1 space-y-2">
+                            <div className="h-4 bg-gray-200 rounded w-1/4" />
+                            <div className="h-3 bg-gray-200 rounded w-1/6" />
                         </div>
                     </div>
+                    <div className="mt-4 h-20 bg-gray-100 rounded" />
                 </div>
-            )}
+            ))}
+        </div>
+    );
 
-            {/* Log entries */}
-            {filteredTreeData.length === 0 ? (
-                <div className="text-center py-12 bg-gray-50 rounded-lg">
-                    <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <h3 className="mt-2 text-sm font-medium text-gray-900">No logs found</h3>
-                    <p className="mt-1 text-sm text-gray-500">
-                        {searchTerm || filterLevel !== null ?
-                            "No logs match your current filters." :
-                            "There are no logs in the system."}
-                    </p>
-                    {(searchTerm || filterLevel !== null) && (
-                        <div className="mt-6">
+    // Main render
+    return (
+        <div className="min-h-screen bg-gray-50">
+            {/* Header */}
+            <div className="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
+                <div className="max-w-7xl mx-auto px-6 py-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                            <div className="p-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg">
+                                <ChartBarIcon className="w-6 h-6 text-white" />
+                            </div>
+                            <div>
+                                <h1 className="text-2xl font-bold text-gray-900">System Logs</h1>
+                                <p className="text-sm text-gray-500">
+                                    {lastRefreshTime && `Last updated ${formatRelativeTime(lastRefreshTime.toISOString())}`}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Header Actions */}
+                        <div className="flex items-center gap-3">
+                            {/* View Mode Toggle */}
+                            <div className="flex bg-gray-100 rounded-lg p-1">
+                                {['cards', 'timeline', 'compact'].map((mode) => (
+                                    <button
+                                        key={mode}
+                                        onClick={() => setViewMode(mode as any)}
+                                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${viewMode === mode
+                                                ? 'bg-white text-gray-900 shadow-sm'
+                                                : 'text-gray-600 hover:text-gray-900'
+                                            }`}
+                                    >
+                                        {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Auto-refresh toggle */}
                             <button
-                                type="button"
-                                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                onClick={() => setAutoRefresh(!autoRefresh)}
+                                className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${autoRefresh
+                                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                    }`}
+                            >
+                                {autoRefresh ? (
+                                    <>
+                                        <BoltIcon className="w-4 h-4 inline mr-1" />
+                                        Auto-refresh ON
+                                    </>
+                                ) : (
+                                    'Auto-refresh OFF'
+                                )}
+                            </button>
+
+                            {/* Manual refresh */}
+                            <button
+                                onClick={() => fetchTree()}
+                                className="p-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
+                            >
+                                <ArrowPathIcon className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+                            </button>
+
+                            {/* Purge button */}
+                            <button
+                                onClick={() => setShowPurgeModal(true)}
+                                className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors font-medium text-sm flex items-center gap-2"
+                            >
+                                <TrashIcon className="w-4 h-4" />
+                                Purge Logs
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Statistics Cards */}
+            <div className="max-w-7xl mx-auto px-6 py-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4 mb-6">
+                    <StatCard
+                        title="Critical"
+                        value={stats.critical}
+                        icon={<FireIcon className="w-6 h-6 text-red-500" />}
+                        color="red"
+                        trend={stats.critical > 0 ? 15 : 0}
+                    />
+                    <StatCard
+                        title="Errors"
+                        value={stats.error}
+                        icon={<XCircleIcon className="w-6 h-6 text-orange-500" />}
+                        color="orange"
+                        trend={-5}
+                    />
+                    <StatCard
+                        title="Warnings"
+                        value={stats.warning}
+                        icon={<ExclamationTriangleIcon className="w-6 h-6 text-yellow-500" />}
+                        color="yellow"
+                        trend={3}
+                    />
+                    <StatCard
+                        title="Info"
+                        value={stats.info}
+                        icon={<InformationCircleIcon className="w-6 h-6 text-blue-500" />}
+                        color="blue"
+                    />
+                    <StatCard
+                        title="Resolved"
+                        value={stats.resolved}
+                        icon={<CheckCircleIcon className="w-6 h-6 text-green-500" />}
+                        color="green"
+                        subtitle="Issues resolved"
+                    />
+                    <StatCard
+                        title="Pending"
+                        value={stats.pending}
+                        icon={<ClockIcon className="w-6 h-6 text-purple-500" />}
+                        color="purple"
+                        subtitle="Need attention"
+                    />
+                    <StatCard
+                        title="Avg Resolution"
+                        value={stats.avgResolutionTime}
+                        icon={<SparklesIcon className="w-6 h-6 text-indigo-500" />}
+                        color="indigo"
+                        subtitle="Response time"
+                    />
+                </div>
+
+                {/* Filters Bar */}
+                <div className="bg-white rounded-xl shadow-sm p-4 mb-6">
+                    <div className="flex flex-col lg:flex-row gap-4">
+                        {/* Search */}
+                        <div className="flex-1">
+                            <div className="relative">
+                                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                                <input
+                                    type="text"
+                                    placeholder="Search logs..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Level Filter */}
+                        <select
+                            value={filterLevel}
+                            onChange={(e) => setFilterLevel(Number(e.target.value))}
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                            <option value={0}>All Levels</option>
+                            <option value={LogLevel.TRACE}>Trace</option>
+                            <option value={LogLevel.DEBUG}>Debug</option>
+                            <option value={LogLevel.INFORMATION}>Information</option>
+                            <option value={LogLevel.WARNING}>Warning</option>
+                            <option value={LogLevel.ERROR}>Error</option>
+                            <option value={LogLevel.CRITICAL}>Critical</option>
+                        </select>
+
+                        {/* Page Size */}
+                        <select
+                            value={pageSize}
+                            onChange={(e) => setPageSize(Number(e.target.value))}
+                            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                            <option value={10}>10 per page</option>
+                            <option value={20}>20 per page</option>
+                            <option value={50}>50 per page</option>
+                            <option value={100}>100 per page</option>
+                        </select>
+
+                        {/* Group by Correlation */}
+                        <button
+                            onClick={() => setGroupByCorrelation(!groupByCorrelation)}
+                            className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors flex items-center gap-2 ${groupByCorrelation
+                                    ? 'bg-indigo-100 text-indigo-700'
+                                    : 'bg-gray-100 text-gray-700'
+                                }`}
+                        >
+                            <LinkIcon className="w-4 h-4" />
+                            Group by Correlation
+                        </button>
+                    </div>
+                </div>
+
+                {/* Main Content */}
+                {loading ? (
+                    <LoadingSkeleton />
+                ) : error ? (
+                    <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
+                        <XCircleIcon className="w-12 h-12 text-red-500 mx-auto mb-3" />
+                        <p className="text-red-700 font-medium">{error}</p>
+                        <button
+                            onClick={() => fetchTree()}
+                            className="mt-4 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200"
+                        >
+                            Try Again
+                        </button>
+                    </div>
+                ) : groupedTreeData.length === 0 ? (
+                    <div className="bg-white rounded-xl shadow-sm p-12 text-center">
+                        <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+                            <InformationCircleIcon className="w-8 h-8 text-gray-400" />
+                        </div>
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">No logs found</h3>
+                        <p className="text-gray-500">
+                            {searchTerm || filterLevel !== 0
+                                ? "No logs match your current filters."
+                                : "There are no logs to display."}
+                        </p>
+                        {(searchTerm || filterLevel !== 0) && (
+                            <button
                                 onClick={() => {
                                     setSearchTerm("");
-                                    setFilterLevel(null);
+                                    setFilterLevel(0);
                                 }}
+                                className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                             >
                                 Clear Filters
                             </button>
+                        )}
+                    </div>
+                ) : (
+                    <AnimatePresence mode="wait">
+                        <motion.div
+                            key={viewMode}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="space-y-4"
+                        >
+                            {groupedTreeData.map(node => (
+                                <LogCard key={node.log.id} node={node} />
+                            ))}
+                        </motion.div>
+                    </AnimatePresence>
+                )}
+
+                {/* Pagination */}
+                {totalPages > 1 && (
+                    <div className="bg-white rounded-xl shadow-sm p-4 mt-6">
+                        <div className="flex items-center justify-between">
+                            <p className="text-sm text-gray-500">
+                                Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalCount)} of {totalCount} logs
+                            </p>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setCurrentPage(1)}
+                                    disabled={!hasPreviousPage}
+                                    className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <ChevronDoubleLeftIcon className="w-5 h-5" />
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(currentPage - 1)}
+                                    disabled={!hasPreviousPage}
+                                    className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <ChevronLeftIcon className="w-5 h-5" />
+                                </button>
+
+                                <div className="flex items-center gap-1">
+                                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                                        const page = currentPage - 2 + i;
+                                        if (page < 1 || page > totalPages) return null;
+                                        return (
+                                            <button
+                                                key={page}
+                                                onClick={() => setCurrentPage(page)}
+                                                className={`px-3 py-1 rounded-lg font-medium text-sm ${page === currentPage
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'hover:bg-gray-100'
+                                                    }`}
+                                            >
+                                                {page}
+                                            </button>
+                                        );
+                                    }).filter(Boolean)}
+                                </div>
+
+                                <button
+                                    onClick={() => setCurrentPage(currentPage + 1)}
+                                    disabled={!hasNextPage}
+                                    className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <ChevronRightIcon className="w-5 h-5" />
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(totalPages)}
+                                    disabled={!hasNextPage}
+                                    className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <ChevronDoubleRightIcon className="w-5 h-5" />
+                                </button>
+                            </div>
                         </div>
-                    )}
-                </div>
-            ) : (
-                <div className="bg-gray-50 rounded-lg p-4 overflow-hidden">
-                    <div className="space-y-2">
-                        {filteredTreeData.map(node => renderNode(node))}
                     </div>
-                </div>
-            )}
-
-            {/* Stats summary */}
-            {treeData.length > 0 && (
-                <div className="mt-4 text-sm text-gray-500">
-                    {groupByCorrelation ? (
-                        <>Showing {filteredTreeData.length} groups from {treeData.length} logs</>
-                    ) : (
-                        <>Showing {filteredTreeData.length} of {treeData.length} logs</>
-                    )}
-                </div>
-            )}
-
-            {/* Legend */}
-            <div className="mt-6 border-t pt-4">
-                <h3 className="text-sm font-medium text-gray-700 mb-2">Log Level Legend:</h3>
-                <div className="grid grid-cols-2 md:grid-cols-8 gap-4">
-                    <div className="flex items-center">
-                        <svg className="h-5 w-5 text-indigo-500 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                        <span className="text-sm">Correlation Group</span>
-                    </div>
-                    <div className="flex items-center">
-                        <InformationCircleIcon className="h-5 w-5 text-gray-400 mr-2" />
-                        <span className="text-sm">Trace</span>
-                    </div>
-                    <div className="flex items-center">
-                        <InformationCircleIcon className="h-5 w-5 text-blue-500 mr-2" />
-                        <span className="text-sm">Debug</span>
-                    </div>
-                    <div className="flex items-center">
-                        <InformationCircleIcon className="h-5 w-5 text-green-500 mr-2" />
-                        <span className="text-sm">Information</span>
-                    </div>
-                    <div className="flex items-center">
-                        <ExclamationCircleIcon className="h-5 w-5 text-yellow-500 mr-2" />
-                        <span className="text-sm">Warning</span>
-                    </div>
-                    <div className="flex items-center">
-                        <XCircleIcon className="h-5 w-5 text-red-500 mr-2" />
-                        <span className="text-sm">Error</span>
-                    </div>
-                    <div className="flex items-center">
-                        <CheckCircleIcon className="h-5 w-5 text-green-500 mr-2" />
-                        <span className="text-sm">Resolved</span>
-                    </div>
-                    <div className="flex items-center">
-                        <CodeBracketIcon className="h-5 w-5 text-gray-600 mr-2" />
-                        <span className="text-sm">Stack Trace</span>
-                    </div>
-                </div>
+                )}
             </div>
+
+            {/* Purge Modal */}
+            {showPurgeModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <motion.div
+                        initial={{ scale: 0.95, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4"
+                    >
+                        <div className="flex items-center justify-center w-12 h-12 bg-red-100 rounded-full mx-auto mb-4">
+                            <ExclamationTriangleIcon className="w-6 h-6 text-red-600" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-center mb-4">Purge Logs</h3>
+                        <p className="text-gray-600 text-center mb-6">
+                            This will permanently delete logs. This action cannot be undone.
+                        </p>
+                        <select
+                            value={purgeLevel}
+                            onChange={(e) => setPurgeLevel(Number(e.target.value))}
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-6"
+                            disabled={purging}
+                        >
+                            <option value={LogLevel.TRACE}>All logs (Trace and above)</option>
+                            <option value={LogLevel.DEBUG}>Debug and below</option>
+                            <option value={LogLevel.INFORMATION}>Information and below</option>
+                            <option value={LogLevel.WARNING}>Warning and below</option>
+                            <option value={LogLevel.ERROR}>Error and below</option>
+                            <option value={LogLevel.CRITICAL}>Critical only</option>
+                        </select>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setShowPurgeModal(false)}
+                                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+                                disabled={purging}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    setPurging(true);
+                                    try {
+                                        const result = await purgeLogs(purgeLevel);
+                                        if (result.isSuccess) {
+                                            await fetchTree();
+                                            setShowPurgeModal(false);
+                                        }
+                                    } catch (err) {
+                                        console.error(err);
+                                    } finally {
+                                        setPurging(false);
+                                    }
+                                }}
+                                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                                disabled={purging}
+                            >
+                                {purging ? (
+                                    <>
+                                        <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                                        Purging...
+                                    </>
+                                ) : (
+                                    'Purge Logs'
+                                )}
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
         </div>
     );
 };

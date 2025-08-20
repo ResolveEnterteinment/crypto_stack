@@ -1,10 +1,11 @@
 ﻿using Application.Contracts.Requests.Auth;
-using Application.Contracts.Responses;
 using Application.Contracts.Responses.Auth;
 using Application.Interfaces;
+using Domain.Constants;
 using Domain.DTOs;
 using Domain.Models.Authentication;
 using Domain.Models.User;
+using Infrastructure.Services.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -24,6 +25,7 @@ namespace Infrastructure.Services
         private readonly RoleManager<ApplicationRole> _roleManager;
         private readonly ILogger<AuthenticationService> _logger;
         private readonly IEmailService _emailService;
+        private readonly IHttpContextService _httpContextService;
 
         public AuthenticationService(
             RoleManager<ApplicationRole> roleManager,
@@ -31,7 +33,8 @@ namespace Infrastructure.Services
             UserManager<ApplicationUser> userManager,
             IOptionsSnapshot<JwtSettings> jwtSettings,
             IUserService userService,
-            IEmailService emailService)
+            IEmailService emailService,
+            IHttpContextService httpContextService)
         {
             _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
             _jwtSettings = jwtSettings.Value ?? throw new ArgumentNullException(nameof(jwtSettings));
@@ -39,9 +42,10 @@ namespace Infrastructure.Services
             _roleManager = roleManager ?? throw new ArgumentNullException(nameof(roleManager));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _emailService = emailService ?? throw new ArgumentNullException(nameof(emailService));
+            _httpContextService = httpContextService ?? throw new ArgumentNullException(nameof(httpContextService));
         }
 
-        public async Task<LoginResponse> LoginAsync(LoginRequest request)
+        public async Task<ResultWrapper<LoginResponse>> LoginAsync(LoginRequest request)
         {
             try
             {
@@ -58,25 +62,21 @@ namespace Infrastructure.Services
                 if (user is null)
                 {
                     _logger.LogWarning("Login attempt with invalid email");
-                    return new LoginResponse { EmailConfirmed = true, Message = "Invalid credentials", Success = false };
+                    return ResultWrapper<LoginResponse>.Failure(Domain.Constants.FailureReason.ValidationError, "Invalid credentials", errorCode: "INVALID_CREDENTIALS");
                 }
 
                 if (!user.EmailConfirmed)
                 {
                     _logger.LogInformation("Login attempt for unconfirmed email: {EmailHash}", ComputeSHA256Hash(request.Email));
-                    return new LoginResponse { EmailConfirmed = false, Message = "Email is not confirmed", Success = false };
+                    return ResultWrapper<LoginResponse>.Failure(FailureReason.ValidationError, "Email is not confirmed", errorCode: "EMAIL_NOT_CONFIRMED");
                 }
 
                 // Check if user is locked out
                 if (await _userManager.IsLockedOutAsync(user))
                 {
                     _logger.LogWarning("Login attempt for locked out user: {EmailHash}", ComputeSHA256Hash(request.Email));
-                    return new LoginResponse
-                    {
-                        EmailConfirmed = true,
-                        Message = "Account is temporarily locked. Please try again later or reset your password.",
-                        Success = false
-                    };
+
+                    return ResultWrapper<LoginResponse>.Failure(FailureReason.ValidationError, "Account is temporarily locked. Please try again later or reset your password.", errorCode: "ACCOUNT_LOCKED");
                 }
 
                 bool isPasswordCorrect = await _userManager.CheckPasswordAsync(user, request.Password);
@@ -87,7 +87,7 @@ namespace Infrastructure.Services
                     await _userManager.AccessFailedAsync(user);
                     _logger.LogWarning("Invalid password provided for user: {EmailHash}", ComputeSHA256Hash(request.Email));
 
-                    return new LoginResponse { EmailConfirmed = true, Message = "Invalid credentials", Success = false };
+                    return ResultWrapper<LoginResponse>.Failure(FailureReason.ValidationError, "Invalid credentials", errorCode: "INVALID_CREDENTIALS");
                 }
 
                 // Reset failed login attempts on successful login
@@ -113,16 +113,14 @@ namespace Infrastructure.Services
 
                 _logger.LogInformation("User successfully logged in: {UserId}", user.Id);
 
-                return new LoginResponse
+                return ResultWrapper<LoginResponse>.Success(new LoginResponse
                 {
                     Username = user.Fullname,
                     AccessToken = new JwtSecurityTokenHandler().WriteToken(accessToken),
                     RefreshToken = refreshToken,
-                    Message = "Login Successful",
                     UserId = user.Id.ToString(),
-                    Success = true,
                     EmailConfirmed = true,
-                };
+                }, "Login Successful");
             }
             catch (Exception ex)
             {
@@ -137,11 +135,11 @@ namespace Infrastructure.Services
                     _ => "An error occurred while processing your request. Please try again later."
                 };
 
-                return new LoginResponse { EmailConfirmed = true, Success = false, Message = message };
+                return ResultWrapper<LoginResponse>.Failure(FailureReason.ValidationError, message, errorCode: "UNKNOWN_ERROR");
             }
         }
 
-        public async Task<RegisterResponse> RegisterAsync(RegisterRequest request)
+        public async Task<ResultWrapper> RegisterAsync(RegisterRequest request)
         {
             try
             {
@@ -160,7 +158,7 @@ namespace Infrastructure.Services
                 {
                     _logger.LogWarning("Registration attempt with existing email: {EmailHash}",
                         ComputeSHA256Hash(request.Email));
-                    return new RegisterResponse { Message = "Email already registered.", Success = false };
+                    return ResultWrapper.Failure(FailureReason.ValidationError, "Email already registered", errorCode: "EMAIL_ALREADY_REGISTERED");
                 }
 
                 // Validate password strength
@@ -172,7 +170,7 @@ namespace Infrastructure.Services
                     {
                         string errorMessage = string.Join(", ", result.Errors.Select(e => e.Description));
                         _logger.LogWarning("Password validation failed: {Errors}", errorMessage);
-                        return new RegisterResponse { Message = errorMessage, Success = false };
+                        return ResultWrapper.Failure(FailureReason.ValidationError, $"Password validation failed: {errorMessage}", errorCode: "PASSWORD_VALIDATION_FAILED");
                     }
                 }
 
@@ -193,11 +191,8 @@ namespace Infrastructure.Services
                 {
                     string errorMessage = string.Join(", ", createUserResult.Errors.Select(e => e.Description));
                     _logger.LogWarning("User creation failed: {Errors}", errorMessage);
-                    return new RegisterResponse
-                    {
-                        Message = $"Registration failed: {errorMessage}",
-                        Success = false
-                    };
+
+                    return ResultWrapper.Failure(FailureReason.ValidationError, $"User registration failed: {errorMessage}", errorCode: "USER_REGISTRATION_FAILED");
                 }
 
                 // Add user to USER role
@@ -238,26 +233,18 @@ namespace Infrastructure.Services
 
                 _logger.LogInformation("User registered successfully: {UserId}", user.Id);
 
-                return new RegisterResponse
-                {
-                    Success = true,
-                    Message = "Registration successful! Please check your email to verify your account."
-                };
+                return ResultWrapper.Success("Registration successful! Please check your email to verify your account.");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during user registration for email hash: {EmailHash}",
                     ComputeSHA256Hash(request.Email));
 
-                return new RegisterResponse
-                {
-                    Success = false,
-                    Message = "Registration failed due to a system error. Please try again later."
-                };
+                return ResultWrapper.Failure(FailureReason.ValidationError, "An error occurred while processing your registration. Please try again later.", errorCode: "REGISTRATION_ERROR");
             }
         }
 
-        public async Task<BaseResponse> AddRoleToUser(AddRoleRequest request)
+        public async Task<ResultWrapper> AddRoleToUser(AddRoleRequest request)
         {
             try
             {
@@ -274,7 +261,7 @@ namespace Infrastructure.Services
                 {
                     _logger.LogWarning("Attempted to add role {Role} to non-existent user {UserId}",
                         request.Role, request.UserId);
-                    return new BaseResponse { Message = "User not found.", Success = false };
+                    return ResultWrapper.Failure(FailureReason.NotFound, "User not found.", errorCode: "USER_NOT_FOUND");
                 }
 
                 // Check if role exists
@@ -284,14 +271,14 @@ namespace Infrastructure.Services
                 {
                     _logger.LogWarning("Attempted to add non-existent role {Role} to user {UserId}",
                         request.Role, request.UserId);
-                    return new BaseResponse { Message = "Role not found.", Success = false };
+                    return ResultWrapper.Failure(FailureReason.NotFound, "Role not found.", errorCode: "ROLE_NOT_FOUND");
                 }
 
                 // Check if user already has the role
                 if (await _userManager.IsInRoleAsync(user, role.Name))
                 {
                     _logger.LogInformation("User {UserId} already has role {Role}", request.UserId, request.Role);
-                    return new BaseResponse { Success = true, Message = "User already has this role." };
+                    return ResultWrapper.Success("User already has this role.");
                 }
 
                 var result = await _userManager.AddToRoleAsync(user, role.Name!);
@@ -301,23 +288,29 @@ namespace Infrastructure.Services
                     string errorMessage = string.Join(", ", result.Errors.Select(e => e.Description));
                     _logger.LogError("Failed to add role {Role} to user {UserId}: {Errors}",
                         request.Role, request.UserId, errorMessage);
-                    throw new InvalidOperationException($"Failed to add user '{user.UserName}' to role '{request.Role}': {errorMessage}");
+                    return ResultWrapper.Failure(FailureReason.ValidationError, $"Failed to add user '{user.UserName}' to role '{request.Role}': {errorMessage}", errorCode: "ROLE_ASSIGNMENT_FAILED");
                 }
 
                 _logger.LogInformation("Successfully added role {Role} to user {UserId}",
                     request.Role, request.UserId);
-                return new BaseResponse { Success = true, Message = $"Role '{request.Role}' added successfully." };
+                return ResultWrapper.Success($"Role '{request.Role}' added successfully.");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error adding role {Role} to user {UserId}",
                     request.Role, request.UserId);
 
-                return new BaseResponse(success: false, message: ex.Message);
+                string message = ex switch
+                {
+                    TimeoutException => "Authentication service unavailable. Please try again later.",
+                    _ => "An error occurred while processing your request. Please try again later."
+                };
+
+                return ResultWrapper.Failure(FailureReason.Unknown, message, errorCode: "UNKNOWN_ERROR");
             }
         }
 
-        public async Task<BaseResponse> RemoveRoleFromUser(AddRoleRequest request)
+        public async Task<ResultWrapper> RemoveRoleFromUser(AddRoleRequest request)
         {
             try
             {
@@ -334,7 +327,7 @@ namespace Infrastructure.Services
                 {
                     _logger.LogWarning("Attempted to remove role {Role} from non-existent user {UserId}",
                         request.Role, request.UserId);
-                    return new BaseResponse { Message = "User not found.", Success = false };
+                    return ResultWrapper.Failure(FailureReason.NotFound, "User not found.", errorCode: "USER_NOT_FOUND");
                 }
 
                 // Check if role exists
@@ -344,14 +337,14 @@ namespace Infrastructure.Services
                 {
                     _logger.LogWarning("Attempted to remove non-existent role {Role} from user {UserId}",
                         request.Role, request.UserId);
-                    return new BaseResponse { Message = "Role not found.", Success = false };
+                    return ResultWrapper.Failure(FailureReason.NotFound, "Role not found.", errorCode: "ROLE_NOT_FOUND");
                 }
 
                 // Check if user has the role before removing
                 if (!await _userManager.IsInRoleAsync(user, role.Name))
                 {
                     _logger.LogInformation("User {UserId} does not have role {Role}", request.UserId, request.Role);
-                    return new BaseResponse { Success = true, Message = "User does not have this role." };
+                    return ResultWrapper.Success("User does not have this role.");
                 }
 
                 var result = await _userManager.RemoveFromRoleAsync(user, role.Name!);
@@ -361,23 +354,29 @@ namespace Infrastructure.Services
                     string errorMessage = string.Join(", ", result.Errors.Select(e => e.Description));
                     _logger.LogError("Failed to remove role {Role} from user {UserId}: {Errors}",
                         request.Role, request.UserId, errorMessage);
-                    throw new InvalidOperationException($"Failed to remove role '{request.Role}' from user '{user.UserName}': {errorMessage}");
+                    return ResultWrapper.Failure(FailureReason.ValidationError, $"Failed to remove role '{request.Role}' from user '{user.UserName}': {errorMessage}", errorCode: "ROLE_REMOVAL_FAILED");
                 }
 
                 _logger.LogInformation("Successfully removed role {Role} from user {UserId}",
                     request.Role, request.UserId);
-                return new BaseResponse { Success = true, Message = $"Role '{request.Role}' removed successfully." };
+                return ResultWrapper.Success($"Role '{request.Role}' removed successfully.");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error removing role {Role} from user {UserId}",
                     request.Role, request.UserId);
 
-                return new BaseResponse(success: false, message: ex.Message);
+                string message = ex switch
+                {
+                    TimeoutException => "Authentication service unavailable. Please try again later.",
+                    _ => "An error occurred while processing your request. Please try again later."
+                };
+
+                return ResultWrapper.Failure(FailureReason.Unknown, message, errorCode: "UNKNOWN_ERROR");
             }
         }
 
-        public async Task<BaseResponse> ConfirmEmail(string userId, string token)
+        public async Task<ResultWrapper> ConfirmEmail(string userId, string token)
         {
             try
             {
@@ -391,22 +390,14 @@ namespace Infrastructure.Services
                 if (user == null)
                 {
                     _logger.LogWarning("Email confirmation attempt for non-existent user {UserId}", userId);
-                    return new BaseResponse
-                    {
-                        Success = false,
-                        Message = "Invalid confirmation link. User not found."
-                    };
+                    return ResultWrapper.Failure(FailureReason.NotFound, "Invalid confirmation link.", errorCode: "INVALID_TOKEN");
                 }
 
                 // Validate token
                 if (string.IsNullOrWhiteSpace(token))
                 {
                     _logger.LogWarning("Empty email confirmation token for user {UserId}", userId);
-                    return new BaseResponse
-                    {
-                        Success = false,
-                        Message = "Invalid confirmation token."
-                    };
+                    return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid confirmation token.", errorCode: "INVALID_TOKEN");
                 }
 
                 var result = await _userManager.ConfirmEmailAsync(user, token);
@@ -415,33 +406,27 @@ namespace Infrastructure.Services
                     string errorMessage = string.Join(", ", result.Errors.Select(e => e.Description));
                     _logger.LogWarning("Email confirmation failed for user {UserId}: {Errors}",
                         userId, errorMessage);
-                    
-                    return new BaseResponse
-                    {
-                        Success = false,
-                        Message = $"Error confirming email: {errorMessage}"
-                    };
+
+                    return ResultWrapper.Failure(FailureReason.ValidationError, $"Error confirming email: {errorMessage}", errorCode: "EMAIL_CONFIRMATION_FAILED");
                 }
 
                 _logger.LogInformation("Email confirmed successfully for user {UserId}", userId);
-                return new BaseResponse
-                {
-                    Success = true,
-                    Message = "Your email has been confirmed successfully. You can now log in."
-                };
+                return ResultWrapper.Success("Your email has been confirmed successfully. You can now log in.");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error confirming email for user {UserId}", userId);
-                return new BaseResponse
+                string message = ex switch
                 {
-                    Success = false,
-                    Message = $"Email confirmation failed: {ex.Message}"
+                    TimeoutException => "Authentication service unavailable. Please try again later.",
+                    _ => "An error occurred while processing your request. Please try again later."
                 };
+
+                return ResultWrapper.Failure(FailureReason.Unknown, message, errorCode: "UNKNOWN_ERROR");
             }
         }
 
-        public async Task<BaseResponse> RefreshToken(string accessToken, string refreshToken)
+        public async Task<ResultWrapper<LoginResponse>> RefreshToken(string accessToken, string refreshToken)
         {
             try
             {
@@ -449,7 +434,7 @@ namespace Infrastructure.Services
                 if (principal == null)
                 {
                     _logger.LogWarning("Invalid access token during refresh attempt");
-                    return new BaseResponse { Success = false, Message = "Invalid access token" };
+                    return ResultWrapper<LoginResponse>.Failure(FailureReason.ValidationError, "Invalid access token", errorCode: "INVALID_ACCESS_TOKEN");
                 }
 
                 string userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -458,7 +443,7 @@ namespace Infrastructure.Services
                 if (user == null || user.RefreshToken != refreshToken || user.RefreshTokenExpiryTime <= DateTime.UtcNow)
                 {
                     _logger.LogWarning("Invalid refresh token for user {UserId}", userId);
-                    return new BaseResponse { Success = false, Message = "Invalid or expired refresh token" };
+                    return ResultWrapper<LoginResponse>.Failure(FailureReason.ValidationError, "Invalid or expired refresh token", errorCode: "INVALID_REFRESH_TOKEN");
                 }
 
                 var roles = await _userManager.GetRolesAsync(user);
@@ -472,25 +457,29 @@ namespace Infrastructure.Services
 
                 _logger.LogInformation("Token refreshed successfully for user {UserId}", userId);
 
-                return new LoginResponse
+                return ResultWrapper<LoginResponse>.Success(new LoginResponse
                 {
-                    Success = true,
-                    Message = "Token refreshed successfully",
                     AccessToken = new JwtSecurityTokenHandler().WriteToken(newAccessToken),
                     RefreshToken = newRefreshToken,
                     UserId = user.Id.ToString(),
                     Username = user.Fullname,
                     EmailConfirmed = user.EmailConfirmed
-                };
+                }, "Token refreshed successfully");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during token refresh");
-                return new BaseResponse { Success = false, Message = "Error refreshing token" };
+                string message = ex switch
+                {
+                    TimeoutException => "Authentication service unavailable. Please try again later.",
+                    _ => "An error occurred while processing your request. Please try again later."
+                };
+
+                return ResultWrapper<LoginResponse>.Failure(FailureReason.Unknown, message, errorCode: "UNKNOWN_ERROR");
             }
         }
 
-        public async Task<BaseResponse> ResendConfirmationEmailAsync(string email)
+        public async Task<ResultWrapper> ResendConfirmationEmailAsync(string email)
         {
             try
             {
@@ -508,27 +497,19 @@ namespace Infrastructure.Services
                 if (user == null)
                 {
                     // For security reasons, don't reveal if the email exists or not
-                    _logger.LogWarning("Confirmation email resend attempt for non-existent email: {EmailHash}", 
+                    _logger.LogWarning("Confirmation email resend attempt for non-existent email: {EmailHash}",
                         ComputeSHA256Hash(email));
-                    
-                    return new BaseResponse
-                    {
-                        Success = true,
-                        Message = "If your email exists in our system and is not yet confirmed, a confirmation link has been sent."
-                    };
+
+                    return ResultWrapper.Success("If your email exists in our system and is not yet confirmed, a confirmation link has been sent.");
                 }
 
                 // Check if email is already confirmed
                 if (user.EmailConfirmed)
                 {
-                    _logger.LogInformation("Confirmation email resend attempt for already confirmed email: {EmailHash}", 
+                    _logger.LogInformation("Confirmation email resend attempt for already confirmed email: {EmailHash}",
                         ComputeSHA256Hash(email));
-                    
-                    return new BaseResponse
-                    {
-                        Success = true,
-                        Message = "Your email is already confirmed. You can log in with your credentials."
-                    };
+
+                    return ResultWrapper.Success("Your email is already confirmed. You can log in with your credentials.");
                 }
 
                 // Generate a new confirmation token
@@ -539,26 +520,24 @@ namespace Infrastructure.Services
 
                 _logger.LogInformation("Confirmation email resent successfully for user: {UserId}", user.Id);
 
-                return new BaseResponse
-                {
-                    Success = true,
-                    Message = "A new confirmation email has been sent. Please check your inbox."
-                };
+                return ResultWrapper.Success("A new confirmation email has been sent. Please check your inbox.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error during confirmation email resend for email hash: {EmailHash}", 
+                _logger.LogError(ex, "Error during confirmation email resend for email hash: {EmailHash}",
                     ComputeSHA256Hash(email));
 
-                return new BaseResponse
+                string message = ex switch
                 {
-                    Success = false,
-                    Message = "Failed to resend confirmation email. Please try again later."
+                    TimeoutException => "Authentication service unavailable. Please try again later.",
+                    _ => "An error occurred while processing your request. Please try again later."
                 };
+
+                return ResultWrapper.Failure(FailureReason.Unknown, message, errorCode: "UNKNOWN_ERROR");
             }
         }
 
-        public async Task<BaseResponse> ForgotPasswordAsync(ForgotPasswordRequest request)
+        public async Task<ResultWrapper> ForgotPasswordAsync(ForgotPasswordRequest request)
         {
             try
             {
@@ -578,12 +557,8 @@ namespace Infrastructure.Services
                     // For security reasons, don't reveal if the email exists or not
                     _logger.LogWarning("Password reset requested for non-existent email: {EmailHash}",
                         ComputeSHA256Hash(request.Email));
-                    
-                    return new BaseResponse
-                    {
-                        Success = true,
-                        Message = "If your email exists in our system, you will receive a password reset link shortly."
-                    };
+
+                    return ResultWrapper.Success("If your email exists in our system, you will receive a password reset link shortly.");
                 }
 
                 // Check if the email is confirmed
@@ -591,12 +566,8 @@ namespace Infrastructure.Services
                 {
                     _logger.LogInformation("Password reset requested for unconfirmed email: {EmailHash}",
                         ComputeSHA256Hash(request.Email));
-                    
-                    return new BaseResponse
-                    {
-                        Success = false,
-                        Message = "Your email is not confirmed. Please check your inbox for the confirmation link or request a new one."
-                    };
+
+                    return ResultWrapper.Failure(FailureReason.ValidationError, "Your email is not confirmed. Please check your inbox for the confirmation link or request a new one.", errorCode: "EMAIL_NOT_CONFIRMED");
                 }
 
                 // Generate password reset token
@@ -607,26 +578,24 @@ namespace Infrastructure.Services
 
                 _logger.LogInformation("Password reset email sent successfully for user: {UserId}", user.Id);
 
-                return new BaseResponse
-                {
-                    Success = true,
-                    Message = "Password reset instructions have been sent to your email."
-                };
+                return ResultWrapper.Success("Password reset instructions have been sent to your email.");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during password reset request for email hash: {EmailHash}",
                     ComputeSHA256Hash(request.Email));
 
-                return new BaseResponse
+                string message = ex switch
                 {
-                    Success = false,
-                    Message = "Failed to process password reset request. Please try again later."
+                    TimeoutException => "Authentication service unavailable. Please try again later.",
+                    _ => "An error occurred while processing your request. Please try again later."
                 };
+
+                return ResultWrapper.Failure(FailureReason.Unknown, message, errorCode: "UNKNOWN_ERROR");
             }
         }
 
-        public async Task<BaseResponse> ResetPasswordAsync(ResetPasswordRequest request)
+        public async Task<ResultWrapper> ResetPasswordAsync(ResetPasswordRequest request)
         {
             try
             {
@@ -645,12 +614,8 @@ namespace Infrastructure.Services
                 {
                     _logger.LogWarning("Password reset attempted for non-existent email: {EmailHash}",
                         ComputeSHA256Hash(request.Email));
-                    
-                    return new BaseResponse
-                    {
-                        Success = false,
-                        Message = "Invalid request. Please request a new password reset link."
-                    };
+
+                    return ResultWrapper.Failure(FailureReason.NotFound, "Invalid request. Please request a new password reset link.", errorCode: "PASSWORD_RESET_FAILED");
                 }
 
                 // Reset the password
@@ -661,12 +626,8 @@ namespace Infrastructure.Services
                     string errorMessage = string.Join(", ", result.Errors.Select(e => e.Description));
                     _logger.LogWarning("Password reset failed for user {UserId}: {Errors}",
                         user.Id, errorMessage);
-                    
-                    return new BaseResponse
-                    {
-                        Success = false,
-                        Message = $"Password reset failed: {errorMessage}"
-                    };
+
+                    return ResultWrapper.Failure(FailureReason.ValidationError, $"Password reset failed: {errorMessage}", errorCode: "PASSWORD_RESET_FAILED");
                 }
 
                 // Reset failed login attempts on successful password reset
@@ -674,22 +635,20 @@ namespace Infrastructure.Services
 
                 _logger.LogInformation("Password reset successfully for user {UserId}", user.Id);
 
-                return new BaseResponse
-                {
-                    Success = true,
-                    Message = "Your password has been reset successfully. You can now log in with your new password."
-                };
+                return ResultWrapper.Success("Your password has been reset successfully. You can now log in with your new password.");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during password reset for email hash: {EmailHash}",
                     ComputeSHA256Hash(request.Email));
 
-                return new BaseResponse
+                string message = ex switch
                 {
-                    Success = false,
-                    Message = "Failed to reset password. Please try again later."
+                    TimeoutException => "Authentication service unavailable. Please try again later.",
+                    _ => "An error occurred while processing your request. Please try again later."
                 };
+
+                return ResultWrapper.Failure(FailureReason.Unknown, message, errorCode: "UNKNOWN_ERROR");
             }
         }
 
@@ -805,9 +764,7 @@ namespace Infrastructure.Services
 
         private string GetUserIPAddress()
         {
-            // In a real implementation, this would get the IP from HttpContext
-            // For now, return a placeholder
-            return "IP_NOT_IMPLEMENTED";
+            return _httpContextService.GetClientIpAddress() ?? "Unknown IP";
         }
 
         #endregion

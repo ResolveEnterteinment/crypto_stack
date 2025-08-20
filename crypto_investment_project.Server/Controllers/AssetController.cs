@@ -2,6 +2,7 @@ using Application.Contracts.Requests.Asset;
 using Application.Extensions;
 using Application.Interfaces;
 using Application.Interfaces.Asset;
+using Domain.Constants;
 using Domain.DTOs;
 using Domain.Exceptions;
 using FluentValidation;
@@ -23,7 +24,6 @@ namespace crypto_investment_project.Server.Controllers
         private readonly IValidator<AssetUpdateRequest> _updateValidator;
         private readonly ILogger<AssetController> _logger;
         private readonly IIdempotencyService _idempotencyService;
-        private readonly IUserService _userService;
 
         public AssetController(
             IAssetService assetService,
@@ -37,12 +37,11 @@ namespace crypto_investment_project.Server.Controllers
             _createValidator = createValidator ?? throw new ArgumentNullException(nameof(createValidator));
             _updateValidator = updateValidator ?? throw new ArgumentNullException(nameof(updateValidator));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
-            _userService = userService ?? throw new ArgumentNullException(nameof(userService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <summary>
-        /// Retrieves all assets supported assets on the platform
+        /// Retrieves all supported assets on the platform
         /// </summary>
         /// <param name="user">User GUID</param>
         /// <returns>Collection of subscriptions belonging to the user</returns>
@@ -52,7 +51,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="403">If the user is not authorized to view these subscriptions</response>
         /// <response code="404">If the user is not found</response>
         [HttpGet]
-        [Route("supported")]
+        [Route("get/supported")]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -69,7 +68,7 @@ namespace crypto_investment_project.Server.Controllers
                 try
                 {
                     // ETag support for caching
-                    var etagKey = $"user_assets";
+                    var etagKey = $"supported_assets";
                     var etag = Request.Headers.IfNoneMatch.FirstOrDefault();
                     var (hasEtag, storedEtag) = await _idempotencyService.GetResultAsync<string>(etagKey);
 
@@ -78,27 +77,35 @@ namespace crypto_investment_project.Server.Controllers
                         return StatusCode(StatusCodes.Status304NotModified);
                     }
 
-                    // Get user subscriptions
+                    // Get supported assets
                     var assetsResult = await _assetService.GetSupportedAssetsAsync();
 
                     if (!assetsResult.IsSuccess)
                     {
-                        throw new DatabaseException(assetsResult.ErrorMessage);
+                        return ResultWrapper.Failure(assetsResult.Reason, 
+                            "Failed to retrieve supported assets", 
+                            "ASSET_RETRIEVAL_FAILED")
+                            .ToActionResult(this);
                     }
 
                     // Generate ETag from data and store it
                     var newEtag = $"\"{Guid.NewGuid():N}\""; // Simple approach; production would use content hash
+
                     await _idempotencyService.StoreResultAsync(etagKey, newEtag);
+
                     Response.Headers.ETag = newEtag;
 
                     _logger.LogInformation("Successfully retrieved {Count} assets.",
                         assetsResult.Data?.Count() ?? 0);
 
-                    return Ok(assetsResult.Data);
+                    return ResultWrapper.Success(assetsResult.Data, "Successfully retrieved supported assets.")
+                        .ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
-                    return ResultWrapper.FromException(ex).ToActionResult(this);
+                    _logger.LogError(ex, "Error retrieving supported assets");
+                    return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
                 }
             }
         }
@@ -116,7 +123,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="409">If an idempotent request was already processed</response>
         /// <response code="422">If the request validation fails</response>
         [HttpPost]
-        [Route("new")]
+        [Route("admin/new")]
         [Authorize(Roles = "ADMIN")]
         [EnableRateLimiting("heavyOperations")]
         [ProducesResponseType(StatusCodes.Status201Created)]
@@ -143,7 +150,11 @@ namespace crypto_investment_project.Server.Controllers
                     if (string.IsNullOrEmpty(idempotencyKey))
                     {
                         _logger.LogWarning("Missing idempotency key in asset create request");
-                        return BadRequest(new { message = "X-Idempotency-Key header is required for asset creation" });
+
+                        return ResultWrapper.Failure(FailureReason.ValidationError, 
+                            "X-Idempotency-Key header is required for asset creation", 
+                            "INVALID_REQUEST")
+                            .ToActionResult(this);
                     }
 
                     // Check for existing operation with this idempotency key
@@ -152,8 +163,11 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogInformation("Idempotent request detected: {IdempotencyKey}, asset ID: {AssetId}",
                             idempotencyKey, existingResult);
-                        return StatusCode(StatusCodes.Status409Conflict,
-                            new { message = "Asset create request already processed", assetId = existingResult });
+
+                        return ResultWrapper.Failure(FailureReason.ConcurrencyConflict, 
+                            "Asset create request already processed", 
+                            "ASSET_CREATION_CONFLICT")
+                            .ToActionResult(this);
                     }
 
                     // Validate request
@@ -170,7 +184,11 @@ namespace crypto_investment_project.Server.Controllers
                         _logger.LogWarning("Validation failed for subscription creation: {ValidationErrors}",
                             string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage)));
 
-                        return UnprocessableEntity(new { message = "Validation failed", errors });
+                        return ResultWrapper.Failure(FailureReason.ValidationError, 
+                            "Validation failed", 
+                            "INVALID_REQUEST",
+                            errors)
+                            .ToActionResult(this);
                     }
 
                     // Process the request
@@ -178,7 +196,10 @@ namespace crypto_investment_project.Server.Controllers
 
                     if (!assetCreateResult.IsSuccess)
                     {
-                        throw new DomainException(assetCreateResult.ErrorMessage, "ASSET_CREATION_FAILED");
+                        return ResultWrapper.Failure(assetCreateResult.Reason,
+                            $"Failed to create asset: {assetCreateResult.ErrorMessage}",
+                            "ASSET_CREATION_FAILED")
+                            .ToActionResult(this);
                     }
 
                     // Store the result for idempotency
@@ -187,18 +208,17 @@ namespace crypto_investment_project.Server.Controllers
                     _logger.LogInformation("Successfully created asset {AssetId}",
                         assetCreateResult.Data);
 
-                    // Return 201 Created with the location header
-                    return CreatedAtAction(
-                        nameof(_assetService.GetByTickerAsync),
-                        new { ticker = assetCreateRequest.Ticker, version = HttpContext.GetRequestedApiVersion()?.ToString() ?? "1.0" },
-                        new { id = assetCreateResult.Data, message = "Asset created successfully" }
-                    );
+                    return ResultWrapper.Success(
+                        $"Asset {assetCreateResult.Data} created successfully.")
+                        .ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
                     // Let global exception handler middleware handle this
                     _logger.LogError(ex, "Error creating asset {Name}({Ticker})", assetCreateRequest?.Name, assetCreateRequest?.Ticker);
-                    return ResultWrapper.FromException(ex).ToActionResult(this);
+
+                    return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
                 }
             }
         }
@@ -219,9 +239,8 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="422">If the request validation fails</response>
         [HttpPut]
         [Route("update/{id}")]
-        [Authorize]
+        [Authorize(Roles = "ADMIN")]
         [EnableRateLimiting("heavyOperations")]
-        //[ValidateAntiForgeryToken]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -244,36 +263,44 @@ namespace crypto_investment_project.Server.Controllers
             {
                 try
                 {
-                    // Validate subscription ID
+                    // Validate asset ID
                     if (!Guid.TryParse(id, out var assetId))
                     {
                         _logger.LogWarning("Invalid asset ID format: {AssetId}", id);
-                        return BadRequest(new { message = "A valid asset ID is required" });
+                        return ResultWrapper.Failure(FailureReason.ValidationError, 
+                            "Invalid asset ID format", 
+                            "INVALID_REQUEST").ToActionResult(this);
                     }
 
                     // Check idempotency key
                     if (string.IsNullOrEmpty(idempotencyKey))
                     {
                         _logger.LogWarning("Missing idempotency key in asset update request");
-                        return BadRequest(new { message = "X-Idempotency-Key header is required for asset updates" });
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "X-Idempotency-Key header is required for asset updates",
+                            "INVALID_REQUEST").ToActionResult(this);
                     }
 
                     // Check for existing operation with this idempotency key
                     var (resultExists, existingResult) = await _idempotencyService.GetResultAsync<long>(idempotencyKey);
+                    
                     if (resultExists)
                     {
                         _logger.LogInformation("Idempotent request detected: {IdempotencyKey}, asset ID: {AssetId}",
                             idempotencyKey, id);
-                        return StatusCode(StatusCodes.Status409Conflict,
-                            new { message = "Request already processed" });
+
+                        return ResultWrapper.Failure(FailureReason.ConcurrencyConflict, 
+                            "Asset update request already processed", 
+                            "ASSET_UPDATE_CONFLICT").ToActionResult(this);
                     }
 
                     // Get the subscription to check ownership
-                    var subscription = await _assetService.GetByIdAsync(assetId);
-                    if (subscription == null)
+                    var assetResult = await _assetService.GetByIdAsync(assetId);
+                    if (assetResult == null || !assetResult.IsSuccess || assetResult.Data == null)
                     {
                         _logger.LogWarning("Asset not found: {AssetId}", id);
-                        return NotFound(new { message = "Asset not found" });
+
+                        return ResultWrapper.NotFound("Asset", id).ToActionResult(this);
                     }
 
                     // Validate request
@@ -290,7 +317,11 @@ namespace crypto_investment_project.Server.Controllers
                         _logger.LogWarning("Validation failed for asset update: {ValidationErrors}",
                             string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage)));
 
-                        return UnprocessableEntity(new { message = "Validation failed", errors });
+                        return ResultWrapper.Failure(FailureReason.ValidationError, 
+                            "Validation failed",
+                            "INVALID_REQUEST",
+                            errors)
+                            .ToActionResult(this);
                     }
 
                     // Process the request
@@ -298,7 +329,10 @@ namespace crypto_investment_project.Server.Controllers
 
                     if (updateResult == null || !updateResult.IsSuccess)
                     {
-                        throw new DomainException($"Failed to update asset id {assetId}", "ASSET_UPDATE_FAILED");
+                        return ResultWrapper.Failure(updateResult.Reason,
+                            $"Failed to update asset ID {assetId}",
+                            "ASSET_UPDATE_FAILED")
+                            .ToActionResult(this);
                     }
 
                     // Store the result for idempotency
@@ -306,17 +340,18 @@ namespace crypto_investment_project.Server.Controllers
 
                     _logger.LogInformation("Successfully updated subscription {SubscriptionId}", assetId);
 
-                    return Ok(new
-                    {
-                        message = $"Asset {assetId} updated successfully",
-                        modifiedCount = 1
-                    });
+                    return ResultWrapper.Success(
+                        $"Asset {assetId} updated successfully. Modified count: {updateResult.Data.ModifiedCount}")
+                        .ToActionResult(this);
+
                 }
                 catch (Exception ex)
                 {
                     // Let global exception handler middleware handle this
                     _logger.LogError(ex, "Error updating subscription {SubscriptionId}", id);
-                    throw;
+
+                    return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
                 }
             }
         }

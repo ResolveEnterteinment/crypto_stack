@@ -1,15 +1,13 @@
 using Application.Extensions;
 using Application.Interfaces;
-using Application.Interfaces.Base;
 using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
+using Domain.Constants;
 using Domain.Constants.Payment;
 using Domain.DTOs;
-using Domain.DTOs.Error;
 using Domain.DTOs.Payment;
-using Domain.Exceptions;
-using Domain.Interfaces;
+using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -20,6 +18,7 @@ namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     [Produces("application/json")]
     public class PaymentController : ControllerBase
     {
@@ -27,21 +26,23 @@ namespace crypto_investment_project.Server.Controllers
         private readonly IPaymentService _paymentService;
         private readonly IIdempotencyService _idempotencyService;
         private readonly IConfiguration _configuration;
-        private readonly ILoggingService Logger;
+        private readonly ILoggingService _logger;
+        private readonly IValidator<CheckoutSessionRequest> _checkoutSessionValidator;
 
         public PaymentController(
             ISubscriptionService subscriptionService,
             IPaymentService paymentService,
             IIdempotencyService idempotencyService,
-            IEventService eventService,
             IConfiguration configuration,
-            ILoggingService logger)
+            ILoggingService logger,
+            IValidator<CheckoutSessionRequest> checkoutSessionValidator)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-            Logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _checkoutSessionValidator = checkoutSessionValidator ?? throw new ArgumentNullException(nameof(checkoutSessionValidator));
         }
 
         /// <summary>
@@ -49,90 +50,101 @@ namespace crypto_investment_project.Server.Controllers
         /// </summary>
         /// <param name="request">Checkout session request</param>
         /// <returns>Checkout session URL</returns>
+        /// <response code="200">Returns the checkout session details</response>
+        /// <response code="400">If the request is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="429">If too many requests are made</response>
+        /// <response code="500">If an internal error occurs</response>
         [HttpPost("create-checkout-session")]
-        [Authorize]
         [EnableRateLimiting("standard")]
+        [ProducesResponseType(typeof(CheckoutSessionResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> CreateCheckoutSession([FromBody] CheckoutSessionRequest request)
         {
-            var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-
-            using (Logger.BeginScope(new Dictionary<string, object>
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                ["CorrelationId"] = correlationId,
                 ["Operation"] = "CreateCheckoutSession",
-                ["UserId"] = request!.UserId,
-                ["SubscriptionId"] = request!.SubscriptionId
+                ["SubscriptionId"] = request?.SubscriptionId,
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
             }))
             {
                 try
                 {
-                    // Log the full request for debugging
-                    await Logger.LogTraceAsync($"Payment request received: {request}",
-                        "CreateCheckoutSession");
+                    await _logger.LogTraceAsync($"Payment request received: {request}");
 
-                    #region Validate
-                    // Validate request
-                    if (request is null)
+                    // Validate request using FluentValidation
+                    if (request == null)
                     {
-                        return BadRequest(new { message = "Request body is required", code = "INVALID_REQUEST" });
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Request body is required",
+                            "INVALID_REQUEST")
+                            .ToActionResult(this);
                     }
 
-                    // Log all validation checks
-                    if (string.IsNullOrEmpty(request.SubscriptionId))
+                    var validationResult = await _checkoutSessionValidator.ValidateAsync(request);
+                    if (!validationResult.IsValid)
                     {
-                        return BadRequest(new { message = "SubscriptionId is required", code = "MISSING_SUBSCRIPTION_ID" });
+                        var errors = validationResult.Errors
+                            .GroupBy(e => e.PropertyName)
+                            .ToDictionary(
+                                g => g.Key,
+                                g => g.Select(e => e.ErrorMessage).ToArray()
+                            );
+
+                        return ResultWrapper.ValidationError(errors)
+                            .ToActionResult(this);
                     }
 
-                    if (!Guid.TryParse(request.SubscriptionId, out var subscriptionId))
-                    {
-                        return BadRequest(new { message = "Invalid subscription ID format", code = "INVALID_SUBSCRIPTION_ID" });
-                    }
-
-                    if (string.IsNullOrEmpty(request.UserId))
-                    {
-                        return BadRequest(new { message = "UserId is required", code = "MISSING_USER_ID" });
-                    }
-
-                    if (request.Amount <= 0)
-                    {
-                        return BadRequest(new { message = "Amount must be greater than zero", code = "INVALID_AMOUNT" });
-                    }
+                    var subscriptionId = Guid.Parse(request.SubscriptionId);
 
                     // Check if subscription exists and belongs to the user
                     var subscriptionResult = await _subscriptionService.GetByIdAsync(subscriptionId);
-                    if (subscriptionResult == null || !subscriptionResult.IsSuccess)
+                    if (subscriptionResult == null || !subscriptionResult.IsSuccess || subscriptionResult.Data == null)
                     {
-                        await Logger.LogTraceAsync($"Subscription not found: {subscriptionId}", "CreateCheckoutSession");
+                        await _logger.LogTraceAsync($"Subscription not found: {subscriptionId}");
 
-                        return BadRequest(new { message = "Subscription not found", code = "SUBSCRIPTION_NOT_FOUND" });
+                        return ResultWrapper.NotFound("Subscription", subscriptionId.ToString())
+                            .ToActionResult(this);
                     }
+
                     var subscription = subscriptionResult.Data;
 
                     if (subscription.UserId.ToString() != request.UserId)
                     {
-                        Logger.LogError($"Subscription not found: {subscriptionId}");
-                        return Unauthorized(new { message = "Subscription does not belong to the user", code = "UNAUTHORIZED_ACCESS" });
+                        _logger.LogWarning("Unauthorized access attempt to subscription {SubscriptionId} by user {UserId}",
+                            subscriptionId, request.UserId);
+
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
                     }
-                    #endregion
 
                     // Check for idempotency
                     string idempotencyKey = request.IdempotencyKey ?? Guid.NewGuid().ToString();
-                    if (await _idempotencyService.HasKeyAsync(idempotencyKey))
+
+                    var (hasExisting, existingResult) = await _idempotencyService.GetResultAsync<CheckoutSessionResponse>(idempotencyKey);
+
+                    if (hasExisting)
                     {
-                        return Ok(new { status = "Already processed" });
+                        await _logger.LogTraceAsync($"Returning cached checkout session for idempotency key {idempotencyKey}");
+
+                        return ResultWrapper.Success(existingResult, "Checkout session already processed")
+                            .ToActionResult(this);
                     }
 
-                    // Set default return and cancel URLs if not provided
+                    // Set default URLs if not provided
                     var appBaseUrl = _configuration["PaymentService:BaseUrl"] ?? "https://localhost:7144";
-                    string returnUrl = request.ReturnUrl;
-                    string cancelUrl = request.CancelUrl;
+                    string returnUrl = request.ReturnUrl ?? $"{appBaseUrl}/payment/success";
+                    string cancelUrl = request.CancelUrl ?? $"{appBaseUrl}/payment/cancel";
 
                     // Create Stripe checkout session
                     var sessionResult = await _paymentService.CreateCheckoutSessionAsync(new CreateCheckoutSessionDto
                     {
                         SubscriptionId = subscriptionId.ToString(),
                         UserId = request.UserId,
-                        UserEmail = User.Identity.Name,
+                        UserEmail = User.Identity?.Name,
                         Amount = request.Amount,
                         Currency = request.Currency ?? "USD",
                         IsRecurring = request.IsRecurring,
@@ -141,13 +153,18 @@ namespace crypto_investment_project.Server.Controllers
                         CancelUrl = cancelUrl,
                         Metadata = new Dictionary<string, string>
                         {
-                            ["correlation_id"] = correlationId
+                            ["correlation_id"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                            ["user_id"] = request.UserId,
+                            ["subscription_id"] = subscriptionId.ToString()
                         }
                     });
 
-                    if (sessionResult is null || !sessionResult.IsSuccess || sessionResult.Data is null)
+                    if (!sessionResult.IsSuccess || sessionResult.Data == null)
                     {
-                        throw new PaymentApiException($"Failed to retrieve payment from checkout session:  {sessionResult?.Data?.Provider ?? "Session result returned null."}", "Stripe");
+                        return ResultWrapper.Failure(sessionResult.Reason,
+                            sessionResult.ErrorMessage ?? "Failed to create checkout session",
+                            "CHECKOUT_SESSION_FAILED")
+                            .ToActionResult(this);
                     }
 
                     var checkoutSession = sessionResult.Data;
@@ -155,28 +172,27 @@ namespace crypto_investment_project.Server.Controllers
                     // Create response
                     var response = new CheckoutSessionResponse
                     {
-                        Success = true,
-                        Message = "Checkout session created successfully",
                         CheckoutUrl = checkoutSession.Url,
                         ClientSecret = checkoutSession.ClientSecret,
+                        SessionId = checkoutSession.Id
                     };
 
                     // Store response for idempotency
                     await _idempotencyService.StoreResultAsync(idempotencyKey, response, TimeSpan.FromHours(1));
 
-                    return Ok(response);
+                    await _logger.LogTraceAsync($"Checkout session created successfully for subscription {subscriptionId}");
+
+                    return ResultWrapper.Success(response, "Checkout session created successfully")
+                        .ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
-                    await Logger.LogTraceAsync($"Error creating checkout session: {ex.Message}", requiresResolution: true);
+                    await _logger.LogTraceAsync($"Error creating checkout session: {ex.Message}",
+                        requiresResolution: true,
+                        level: Domain.Constants.Logging.LogLevel.Error);
 
-                    return StatusCode(StatusCodes.Status500InternalServerError, new
-                    {
-                        message = "An error occurred while processing your request",
-                        error = ex.Message,
-                        code = "SERVER_ERROR",
-                        traceId = correlationId
-                    });
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
                 }
             }
         }
@@ -186,113 +202,174 @@ namespace crypto_investment_project.Server.Controllers
         /// </summary>
         /// <param name="paymentId">Payment ID</param>
         /// <returns>Cancellation result</returns>
+        /// <response code="200">Returns the cancellation result</response>
+        /// <response code="400">If the request is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="403">If the user is not authorized to cancel this payment</response>
+        /// <response code="404">If the payment is not found</response>
+        /// <response code="500">If an internal error occurs</response>
         [HttpPost("cancel/{paymentId}")]
-        [Authorize]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(typeof(PaymentCancelResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> CancelPayment(string paymentId)
         {
-            var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-
-            using var scope = Logger.BeginScope(new Dictionary<string, object>
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                ["PaymentId"] = paymentId
-            });
+                ["Operation"] = "CancelPayment",
+                ["PaymentId"] = paymentId,
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(paymentId))
+                    {
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Payment ID is required",
+                            "VALIDATION_ERROR")
+                            .ToActionResult(this);
+                    }
 
+                    // Get the payment to check if it belongs to the current user
+                    var paymentResult = await _paymentService.GetPaymentDetailsAsync(paymentId);
+
+                    if (!paymentResult.IsSuccess || paymentResult.Data == null)
+                    {
+                        _logger.LogWarning("Payment not found: {PaymentId}", paymentId);
+
+                        return ResultWrapper.NotFound("Payment", paymentId)
+                            .ToActionResult(this);
+                    }
+
+                    var payment = paymentResult.Data;
+
+                    // Ensure the payment belongs to the current user
+                    string? currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier) ??
+                                         User.FindFirst("sub")?.Value ??
+                                         User.FindFirst("uid")?.Value;
+
+                    if (string.IsNullOrEmpty(currentUserId))
+                    {
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
+
+                    if (payment.UserId != currentUserId)
+                    {
+                        _logger.LogWarning("Unauthorized cancellation attempt for payment {PaymentId} by user {UserId}",
+                            paymentId, currentUserId);
+
+                        return ResultWrapper.Unauthorized("You are not authorized to cancel this payment")
+                            .ToActionResult(this);
+                    }
+
+                    // Only allow cancellation of pending payments
+                    if (payment.Status != PaymentStatus.Pending)
+                    {
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Only pending payments can be cancelled",
+                            "INVALID_PAYMENT_STATUS")
+                            .ToActionResult(this);
+                    }
+
+                    // Cancel the payment
+                    var result = await _paymentService.CancelPaymentAsync(paymentId);
+                    if (!result.IsSuccess)
+                    {
+                        return ResultWrapper.Failure(result.Reason,
+                            result.ErrorMessage ?? "Failed to cancel payment",
+                            "CANCELLATION_FAILED")
+                            .ToActionResult(this);
+                    }
+
+                    await _logger.LogTraceAsync($"Payment cancelled successfully: {paymentId}");
+
+                    var response = new PaymentCancelResponse
+                    {
+                        PaymentId = paymentId,
+                        Status = PaymentStatus.Cancelled,
+                        CancelledAt = DateTime.UtcNow
+                    };
+
+                    return ResultWrapper.Success(response, "Payment cancelled successfully")
+                        .ToActionResult(this);
+                }
+                catch (Exception ex)
+                {
+                    await _logger.LogTraceAsync($"Error cancelling payment {paymentId}: {ex.Message}",
+                        requiresResolution: true,
+                        level: Domain.Constants.Logging.LogLevel.Error);
+
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Manually retry a failed payment
+        /// </summary>
+        /// <param name="paymentId">ID of the failed payment to retry</param>
+        /// <returns>Success or error result</returns>
+        [HttpPost("retry/{paymentId}")]
+        [Authorize]
+        public async Task<IActionResult> RetryPayment(string paymentId)
+        {
             try
             {
-                if (string.IsNullOrEmpty(paymentId))
+                if (string.IsNullOrWhiteSpace(paymentId) || !Guid.TryParse(paymentId, out var parsedPaymentId))
                 {
-                    throw new ArgumentException("Payment ID is required", "PAYMENT_ID");
+                    return ResultWrapper.ValidationError(new()
+                    {
+                        ["paymentId"] = ["Invalid payment ID format"]
+                    }).ToActionResult(this);
                 }
 
-                // Get the payment to check if it belongs to the current user
-                var paymentResult = await _paymentService.GetPaymentDetailsAsync(paymentId);
-                if (paymentResult == null ||!paymentResult.IsSuccess)
+                // Verify that the payment belongs to the user
+                var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(currentUserId) || !Guid.TryParse(currentUserId, out var userId) || userId == Guid.Empty)
                 {
-                    Logger.LogError("Failed to cancel payment {PaymentId}: Payment not found", paymentId);
-                    throw new ResourceNotFoundException(paymentId.GetType().Name, paymentId);
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
                 }
+
+                var paymentResult = await _paymentService.GetByIdAsync(parsedPaymentId);
+
+                if (paymentResult == null || !paymentResult.IsSuccess || paymentResult.Data == null)
+                    return ResultWrapper.NotFound("Payment", paymentId)
+                        .ToActionResult(this);
+
                 var payment = paymentResult.Data;
 
-                // Ensure the payment belongs to the current user
-                string currentUserId = User.FindFirst("sub")?.Value ?? User.FindFirst("uid")?.Value;
-                if (payment.UserId != currentUserId)
+                if (payment.UserId != userId)
                 {
-                    throw new UnauthorizedAccessException();
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
                 }
 
-                // Only allow cancellation of pending payments
-                if (payment.Status != PaymentStatus.Pending)
+                var retryResult = await _paymentService.RetryPaymentAsync(parsedPaymentId);
+                if (!retryResult.IsSuccess)
                 {
-                    throw new InvalidOperationException("Only pending payments can be cancelled");
+                    return ResultWrapper.Failure(retryResult.Reason,
+                        retryResult.ErrorMessage,
+                        "RETRY_PAYMENT_ERROR")
+                        .ToActionResult(this);
                 }
 
-                // Cancel the payment
-                var result = await _paymentService.CancelPaymentAsync(paymentId);
-                if (!result.IsSuccess)
-                {
-                    throw new PaymentApiException(result.ErrorMessage, "Stripe", paymentId);
-                }
-
-                return Ok(result.IsSuccess);
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new ErrorResponse
-                {
-                    Message = ex.Message,
-                    Code = $"INVALID_{ex.ParamName}",
-                    TraceId = correlationId
-                });
-            }
-            catch (ResourceNotFoundException ex)
-            {
-                return BadRequest(new ErrorResponse
-                {
-                    Message = ex.Message,
-                    Code = $"{ex.ResourceId}_NOT_FOUND",
-                    TraceId = correlationId
-                });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new ErrorResponse
-                {
-                    Message = ex.Message,
-                    Code = $"INVALID_PAYMENT_STATUS",
-                    TraceId = correlationId
-                });
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return Forbid();
-            }
-
-            catch (PaymentApiException ex)
-            {
-                await Logger.LogTraceAsync($"Error cancelling payment: {ex.Message}", "CancelPayment", requiresResolution: true);
-
-                return BadRequest(new ErrorResponse
-                {
-                    Message = ex.Message,
-                    Code = $"CANCELLATION_FAILED",
-                    TraceId = correlationId
-                });
+                return ResultWrapper.Success("Payment retry initiated successfully")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
-                await Logger.LogTraceAsync($"Error cancelling payment: {ex.Message}", "CancelPayment", requiresResolution: true);
+                _logger.LogError($"Error retrying payment {paymentId}: {ex.Message}");
 
-                return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
-                {
-                    Message = "An error occurred while cancelling the payment",
-                    Code = "SERVER_ERROR",
-                    TraceId = correlationId
-                });
+                return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
             }
         }
 
@@ -301,47 +378,91 @@ namespace crypto_investment_project.Server.Controllers
         /// </summary>
         /// <param name="subscriptionId">The subscription ID</param>
         /// <returns>List of payments for the subscription</returns>
+        /// <response code="200">Returns the payment history</response>
+        /// <response code="400">If the subscription ID is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="403">If the user is not authorized to view this subscription's payments</response>
+        /// <response code="404">If the subscription is not found</response>
+        /// <response code="500">If an internal error occurs</response>
         [HttpGet("subscription/{subscriptionId}")]
-        [Authorize]
+        [ProducesResponseType(typeof(IEnumerable<PaymentDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> GetSubscriptionPayments(string subscriptionId)
         {
-            try
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                if (!Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
-                {
-                    return BadRequest("Invalid subscription ID format");
-                }
-
-                // Get the current user ID from claims
-                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (string.IsNullOrEmpty(userId))
-                {
-                    return Unauthorized("User ID not found in claims");
-                }
-
-                // Verify that the subscription belongs to the user
-                var subscription = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
-                if (!subscription.IsSuccess || subscription.Data == null)
-                {
-                    return NotFound($"Subscription {subscriptionId} not found");
-                }
-
-                if (subscription.Data.UserId.ToString() != userId && !User.IsInRole("ADMIN"))
-                {
-                    return Forbid("You don't have permission to view this subscription's payments");
-                }
-
-                // Get payments for the subscription
-                // We need to add this method to the PaymentService
-                var filter = MongoDB.Driver.Builders<Domain.Models.Payment.PaymentData>.Filter.Eq(p => p.SubscriptionId, parsedSubscriptionId);
-                var paymentsResult = await _paymentService.GetManyAsync(filter);
-
-                return !paymentsResult.IsSuccess ? StatusCode(500, paymentsResult.ErrorMessage) : (IActionResult)Ok(new { data = paymentsResult.Data });
-            }
-            catch (Exception ex)
+                ["Operation"] = "GetSubscriptionPayments",
+                ["SubscriptionId"] = subscriptionId,
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
             {
-                Logger.LogError($"Error getting payments for subscription {subscriptionId}: {ex.Message}");
-                return StatusCode(500, "An error occurred while processing your request");
+                try
+                {
+                    if (!Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
+                    {
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Invalid subscription ID format",
+                            "INVALID_SUBSCRIPTION_ID")
+                            .ToActionResult(this);
+                    }
+
+                    // Get the current user ID from claims
+                    var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        return ResultWrapper.Failure(FailureReason.Unauthorized,
+                            "User ID not found in claims",
+                            "UNAUTHORIZED")
+                            .ToActionResult(this);
+                    }
+
+                    // Verify that the subscription belongs to the user
+                    var subscription = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
+                    if (!subscription.IsSuccess || subscription.Data == null)
+                    {
+                        return ResultWrapper.NotFound("Subscription", subscriptionId)
+                            .ToActionResult(this);
+                    }
+
+                    if (subscription.Data.UserId.ToString() != userId && !User.IsInRole("ADMIN"))
+                    {
+                        _logger.LogWarning("Unauthorized access attempt to subscription {SubscriptionId} payments by user {UserId}",
+                            subscriptionId, userId);
+                        return ResultWrapper.Failure(FailureReason.Unauthorized,
+                            "You don't have permission to view this subscription's payments",
+                            "UNAUTHORIZED_ACCESS")
+                            .ToActionResult(this);
+                    }
+
+                    // Get payments for the subscription
+                    var paymentsResult = await _paymentService.GetPaymentsForSubscriptionAsync(parsedSubscriptionId);
+                    if (!paymentsResult.IsSuccess)
+                    {
+                        return ResultWrapper.Failure(FailureReason.Unknown,
+                            paymentsResult.ErrorMessage ?? "Failed to retrieve payments",
+                            "FETCH_PAYMENTS_FAILED")
+                            .ToActionResult(this);
+                    }
+
+                    var payments = paymentsResult.Data?.Select(p => new PaymentDto(p)) ?? Enumerable.Empty<PaymentDto>();
+
+                    await _logger.LogTraceAsync($"Retrieved {payments.Count()} payments for subscription {subscriptionId}");
+
+                    return ResultWrapper.Success(payments, "Payments retrieved successfully")
+                        .ToActionResult(this);
+                }
+                catch (Exception ex)
+                {
+                    await _logger.LogTraceAsync($"Error getting payments for subscription {subscriptionId}: {ex.Message}",
+                        requiresResolution: true,
+                        level: Domain.Constants.Logging.LogLevel.Error);
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
             }
         }
 
@@ -350,44 +471,87 @@ namespace crypto_investment_project.Server.Controllers
         /// </summary>
         /// <param name="subscriptionId">The subscription ID</param>
         /// <returns>Details of the latest payment for the subscription</returns>
+        /// <response code="200">Returns the latest payment details</response>
+        /// <response code="400">If the subscription ID is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="403">If the user is not authorized to view this subscription's payments</response>
+        /// <response code="404">If the subscription or payment is not found</response>
+        /// <response code="500">If an internal error occurs</response>
         [HttpGet("status/subscription/{subscriptionId}")]
-        [Authorize]
+        [ProducesResponseType(typeof(PaymentDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> GetSubscriptionPaymentStatus(string subscriptionId)
         {
-            try
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
-                if (!Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
-                {
-                    return BadRequest("Invalid subscription ID format");
-                }
-
-                // Get the current user ID from claims
-                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (string.IsNullOrEmpty(userId))
-                {
-                    return Unauthorized("User ID not found in claims");
-                }
-
-                // Verify that the subscription belongs to the user
-                var subscription = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
-                if (!subscription.IsSuccess || subscription.Data == null)
-                {
-                    return NotFound($"Subscription {subscriptionId} not found");
-                }
-
-                if (subscription.Data.UserId.ToString() != userId)
-                {
-                    return Forbid("You don't have permission to view this subscription's payments");
-                }
-
-                var paymentResult = await _paymentService.GetLatestPaymentAsync(parsedSubscriptionId);
-
-                return !paymentResult.IsSuccess ? StatusCode(500, paymentResult.ErrorMessage) : (IActionResult)Ok(new { data = new PaymentDto(paymentResult.Data) });
-            }
-            catch (Exception ex)
+                ["Operation"] = "GetSubscriptionPaymentStatus",
+                ["SubscriptionId"] = subscriptionId,
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
             {
-                Logger.LogError($"Error getting payments for subscription {subscriptionId}: {ex.Message}");
-                return StatusCode(500, "An error occurred while processing your request");
+                try
+                {
+                    if (!Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
+                    {
+                        return ResultWrapper.ValidationError(new(){
+                            ["subscriptionId"] = [ "Invalid subscription ID format"]
+                        })
+                            .ToActionResult(this);
+                    }
+
+                    // Get the current user ID from claims
+                    var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
+
+                    // Verify that the subscription belongs to the user
+                    var subscription = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
+                    if (!subscription.IsSuccess || subscription.Data == null)
+                    {
+                        return ResultWrapper.NotFound("Subscription", subscriptionId)
+                            .ToActionResult(this);
+                    }
+
+                    if (subscription.Data.UserId.ToString() != userId && !User.IsInRole("ADMIN"))
+                    {
+                        _logger.LogWarning("Unauthorized access attempt to subscription {SubscriptionId} payment status by user {UserId}",
+                            subscriptionId, userId);
+
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
+
+                    var paymentResult = await _paymentService.GetLatestPaymentAsync(parsedSubscriptionId);
+
+                    if (!paymentResult.IsSuccess || paymentResult.Data == null)
+                    {
+                        return ResultWrapper.NotFound("Payment", $"latest for subscription {subscriptionId}")
+                            .ToActionResult(this);
+                    }
+
+                    var paymentDto = new PaymentDto(paymentResult.Data);
+
+                    await _logger.LogTraceAsync($"Retrieved latest payment status for subscription {subscriptionId}");
+
+                    return ResultWrapper.Success(paymentDto, "Latest payment status retrieved successfully")
+                        .ToActionResult(this);
+                }
+                catch (Exception ex)
+                {
+                    await _logger.LogTraceAsync($"Error getting payment status for subscription {subscriptionId}: {ex.Message}",
+                        requiresResolution: true,
+                        level: Domain.Constants.Logging.LogLevel.Error);
+
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
             }
         }
 
@@ -396,153 +560,149 @@ namespace crypto_investment_project.Server.Controllers
         /// </summary>
         /// <param name="subscriptionId">The subscription ID</param>
         /// <returns>Result of the update operation</returns>
+        /// <response code="200">Returns the number of updated payment records</response>
+        /// <response code="400">If the subscription ID is invalid</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="403">If the user is not authorized to access this subscription</response>
+        /// <response code="404">If the subscription is not found</response>
+        /// <response code="500">If an internal error occurs</response>
         [HttpGet("fetch-update/subscription/{subscriptionId}")]
-        [Authorize]
         [EnableRateLimiting("standard")]
-        [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> FetchUpdatePayments(string subscriptionId)
         {
-            var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-
-            using var scope = Logger.BeginScope(new Dictionary<string, object>
+            using (_logger.BeginScope(new Dictionary<string, object>
             {
+                ["Operation"] = "FetchUpdatePayments",
                 ["SubscriptionId"] = subscriptionId,
-                ["CorrelationId"] = correlationId,
-                ["Operation"] = "FetchUpdatePayments"
-            });
-
-            try
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
             {
-                if (!Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
+                try
                 {
-                    return BadRequest(new ErrorResponse
+                    if (!Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
                     {
-                        Message = "Invalid subscription ID format",
-                        Code = "INVALID_SUBSCRIPTION_ID",
-                        TraceId = correlationId
-                    });
-                }
-
-                // Get the current user ID from claims
-                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (string.IsNullOrEmpty(userId))
-                {
-                    return Unauthorized(new ErrorResponse
-                    {
-                        Message = "User ID not found in claims",
-                        Code = "UNAUTHORIZED_ACCESS",
-                        TraceId = correlationId
-                    });
-                }
-
-                // Verify that the subscription belongs to the user
-                var subscription = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
-                if (!subscription.IsSuccess || subscription.Data == null)
-                {
-                    return NotFound(new ErrorResponse
-                    {
-                        Message = $"Subscription {subscriptionId} not found",
-                        Code = "SUBSCRIPTION_NOT_FOUND",
-                        TraceId = correlationId
-                    });
-                }
-
-                if (subscription.Data.UserId.ToString() != userId && !User.IsInRole("ADMIN"))
-                {
-                    return Forbid();
-                }
-
-                var subscriptionData = subscription.Data;
-                string stripeSubscriptionId = subscriptionData.ProviderSubscriptionId;
-
-                // If no Stripe subscription ID is found, try to find it using metadata
-                if (string.IsNullOrEmpty(stripeSubscriptionId))
-                {
-                    await Logger.LogTraceAsync($"No Stripe subscription ID found for subscription {subscriptionId}, searching Stripe by metadata", "FetchUpdatePayments");
-
-                    try
-                    {
-                        // Search for Stripe subscriptions with our domain subscription ID in metadata
-                        var searchResult = await _paymentService.SearchStripeSubscriptionByMetadataAsync("subscriptionId", subscriptionId);
-
-                        if (searchResult.IsSuccess && !string.IsNullOrEmpty(searchResult.Data))
+                        return ResultWrapper.ValidationError(new()
                         {
-                            stripeSubscriptionId = searchResult.Data;
-                            await Logger.LogTraceAsync($"Found Stripe subscription {stripeSubscriptionId} for domain subscription {subscriptionId}", "FetchUpdatePayments");
+                            ["subscriptionId"] = ["Invalid subscription ID format"]
+                        }).ToActionResult(this);
+                    }
 
-                            // Update the domain subscription record with the found Stripe subscription ID
-                            var updateFields = new Dictionary<string, object>
-                            {
-                                ["ProviderSubscriptionId"] = stripeSubscriptionId
-                            };
+                    // Get the current user ID from claims
+                    var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
 
-                            var updateResult = await _subscriptionService.UpdateAsync(parsedSubscriptionId, updateFields);
-                            if (updateResult.IsSuccess)
+                    // Verify that the subscription belongs to the user
+                    var subscriptionResult = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
+
+                    if (subscriptionResult == null || !subscriptionResult.IsSuccess || subscriptionResult.Data == null)
+                    {
+                        return ResultWrapper.NotFound("Subscription", subscriptionId)
+                            .ToActionResult(this);
+                    }
+
+                    var subscription = subscriptionResult.Data;
+
+                    if (subscription.UserId.ToString() != userId && !User.IsInRole("ADMIN"))
+                    {
+                        _logger.LogWarning("Unauthorized access attempt to subscription {SubscriptionId} fetch-update by user {UserId}",
+                            subscriptionId, userId);
+
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
+
+                    string stripeSubscriptionId = subscription.ProviderSubscriptionId;
+
+                    // If no Stripe subscription ID is found, try to find it using metadata
+                    if (string.IsNullOrEmpty(stripeSubscriptionId))
+                    {
+                        await _logger.LogTraceAsync($"No Stripe subscription ID found for subscription {subscriptionId}, searching Stripe by metadata");
+
+                        try
+                        {
+                            // Search for Stripe subscriptions with our domain subscription ID in metadata
+                            var searchResult = await _paymentService.SearchStripeSubscriptionByMetadataAsync("subscriptionId", subscriptionId);
+
+                            if (searchResult.IsSuccess && !string.IsNullOrEmpty(searchResult.Data))
                             {
-                                await Logger.LogTraceAsync($"Updated domain subscription {subscriptionId} with Stripe subscription ID {stripeSubscriptionId}", "FetchUpdatePayments");
+                                stripeSubscriptionId = searchResult.Data;
+                                await _logger.LogTraceAsync($"Found Stripe subscription {stripeSubscriptionId} for domain subscription {subscriptionId}");
+
+                                // Update the domain subscription record with the found Stripe subscription ID
+                                var updateFields = new Dictionary<string, object>
+                                {
+                                    ["ProviderSubscriptionId"] = stripeSubscriptionId
+                                };
+
+                                var updateResult = await _subscriptionService.UpdateAsync(parsedSubscriptionId, updateFields);
+
+                                if (updateResult.IsSuccess)
+                                {
+                                    await _logger.LogTraceAsync($"Updated domain subscription {subscriptionId} with Stripe subscription ID {stripeSubscriptionId}");
+                                }
+                                else
+                                {
+                                    _logger.LogWarning("Failed to update domain subscription {SubscriptionId} with Stripe subscription ID {StripeSubscriptionId}: {Error}",
+                                        subscriptionId, stripeSubscriptionId, updateResult.ErrorMessage);
+                                }
                             }
                             else
                             {
-                                Logger.LogWarning("Failed to update domain subscription {SubscriptionId} with Stripe subscription ID {StripeSubscriptionId}: {Error}",
-                                    subscriptionId, stripeSubscriptionId, updateResult.ErrorMessage);
+                                await _logger.LogTraceAsync($"No Stripe subscription found with metadata subscriptionId={subscriptionId}: {searchResult.ErrorMessage}");
                             }
                         }
-                        else
+                        catch (Exception ex)
                         {
-                            await Logger.LogTraceAsync($"No Stripe subscription found with metadata subscriptionId={subscriptionId}: {searchResult.ErrorMessage}", "FetchUpdatePayments");
+                            _logger.LogWarning("Error searching for Stripe subscription by metadata for subscription {SubscriptionId}: {Error}",
+                                subscriptionId, ex.Message);
+                            // Continue with the original logic - this is a fallback attempt
                         }
                     }
-                    catch (Exception ex)
+
+                    // If we still don't have a Stripe subscription ID, return an informative error
+                    if (string.IsNullOrEmpty(stripeSubscriptionId))
                     {
-                        Logger.LogWarning("Error searching for Stripe subscription by metadata for subscription {SubscriptionId}: {Error}",
-                            subscriptionId, ex.Message);
-                        // Continue with the original logic - this is a fallback attempt
+                        return ResultWrapper.NotFound("Subscription")
+                            .ToActionResult(this);
                     }
-                }
 
-                // If we still don't have a Stripe subscription ID, return an informative error
-                if (string.IsNullOrEmpty(stripeSubscriptionId))
-                {
-                    return BadRequest(new ErrorResponse
+                    await _logger.LogTraceAsync($"Fetching payment updates for subscription {subscriptionId} (Stripe: {stripeSubscriptionId})");
+
+                    // Call the payment service to fetch and process missing payments
+                    var fetchResult = await _paymentService.FetchPaymentsBySubscriptionAsync(stripeSubscriptionId);
+
+                    if (!fetchResult.IsSuccess)
                     {
-                        Message = "No Stripe subscription found for this subscription. This may indicate the subscription was not properly created with Stripe, or the subscription ID metadata is missing.",
-                        Code = "STRIPE_SUBSCRIPTION_NOT_FOUND",
-                        TraceId = correlationId
-                    });
+                        return ResultWrapper.Failure(fetchResult.Reason,
+                            fetchResult.ErrorMessage ?? "Failed to fetch payment updates",
+                            "FETCH_PAYMENTS_FAILED")
+                            .ToActionResult(this);
+                    }
+
+                    await _logger.LogTraceAsync($"Successfully processed {fetchResult.Data} missing payment records for subscription {subscriptionId}");
+
+                    return ResultWrapper.Success(fetchResult.Data, "Payment records updated successfully")
+                        .ToActionResult(this);
                 }
-
-                await Logger.LogTraceAsync($"Fetching payment updates for subscription {subscriptionId} (Stripe: {stripeSubscriptionId})", "FetchUpdatePayments");
-
-                // Call the payment service to fetch and process missing payments
-                var fetchResult = await _paymentService.FetchPaymentsBySubscriptionAsync(stripeSubscriptionId);
-
-                if (!fetchResult.IsSuccess)
+                catch (Exception ex)
                 {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = fetchResult.ErrorMessage ?? "Failed to fetch payment updates",
-                        Code = "FETCH_PAYMENTS_FAILED",
-                        TraceId = correlationId
-                    });
+                    await _logger.LogTraceAsync($"Error fetching payment updates for subscription {subscriptionId}: {ex.Message}",
+                        requiresResolution: true,
+                        level: Domain.Constants.Logging.LogLevel.Error);
+
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
                 }
-
-                await Logger.LogTraceAsync($"Successfully processed {fetchResult.Data} missing payment records", "FetchUpdatePayments");
-
-                return ResultWrapper<int>.Success(fetchResult.Data, "Payment records updated successfully").ToActionResult(this);
-            }
-            catch (Exception ex)
-            {
-                await Logger.LogTraceAsync($"Error fetching payment updates: {ex.Message}", "FetchUpdatePayments", requiresResolution: true);
-
-                return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponse
-                {
-                    Message = "An error occurred while updating payment records",
-                    Code = "SERVER_ERROR",
-                    TraceId = correlationId
-                });
             }
         }
     }

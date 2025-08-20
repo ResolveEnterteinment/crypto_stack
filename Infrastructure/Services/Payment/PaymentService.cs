@@ -1,8 +1,8 @@
 ﻿using Application.Contracts.Requests.Payment;
+using Application.Contracts.Responses.Payment;
 using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Payment;
-using Domain.Constants;
 using Domain.Constants.Logging;
 using Domain.Constants.Payment;
 using Domain.DTOs;
@@ -14,13 +14,11 @@ using Domain.Events;
 using Domain.Events.Payment;
 using Domain.Events.Subscription;
 using Domain.Exceptions;
+using Domain.Models.Email;
 using Domain.Models.Payment;
-using Domain.Models.User;
 using Infrastructure.Services.Base;
-using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
-using Stripe;
 using StripeLibrary;
 
 namespace Infrastructure.Services
@@ -32,6 +30,7 @@ namespace Infrastructure.Services
         private readonly StripeService _stripeService;
         private readonly IAssetService _assetService;
         private readonly IUserService _userService;
+        private readonly IEmailService _emailService;
         private readonly IIdempotencyService _idempotencyService;
 
         public IReadOnlyDictionary<string, IPaymentProvider> Providers => _providers;
@@ -43,11 +42,13 @@ namespace Infrastructure.Services
             IOptions<StripeSettings> stripeSettings,
             IAssetService assetService,
             IUserService userService,
+            IEmailService emailService,
             IIdempotencyService idempotencyService
         ) : base(serviceProvider)
         {
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _userService = userService ?? throw new ArgumentNullException(nameof(userService));
+            _emailService = emailService ?? throw new ArgumentNullException(nameof(emailService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
             _stripeService = new StripeService(stripeSettings);
             _providers.Add("Stripe", _stripeService as IPaymentProvider);
@@ -56,6 +57,12 @@ namespace Infrastructure.Services
                     ?? throw new InvalidOperationException("DefaultProvider not configured")];
         }
 
+        public async Task<CrudResult<PaymentData>> UpdateStatusAsync(Guid id, string status)
+        {
+            return await _repository.UpdateAsync(id,
+                new UpdateDefinitionBuilder<PaymentData>()
+                .Set(p => p.Status, status));
+        }
         public async Task<ResultWrapper<PaymentData>> ProcessInvoicePaidEvent(InvoiceRequest invoice)
         {
             var key = $"invoice-paid-{invoice.Id}";
@@ -526,17 +533,28 @@ namespace Infrastructure.Services
 
                     // Step 3: Validate payment state and retry eligibility
                     if (payment.Status != PaymentStatus.Failed)
-                        throw new InvalidOperationException($"Cannot retry payment in status {payment.Status}. Only failed payments can be retried.");
+                        throw new PaymentApiException(
+                            $"Cannot retry payment in status {payment.Status}. Only failed payments can be retried.", 
+                            payment.Provider, 
+                            payment.Id.ToString());
 
                     if (payment.AttemptCount >= 3) // Max retry attempts
-                        throw new InvalidOperationException($"Payment {paymentId} has exceeded maximum retry attempts ({payment.AttemptCount}/3)");
+                        throw new PaymentApiException($"Payment has exceeded maximum retry attempts ({payment.AttemptCount}/3)",
+                            payment.Provider,
+                            payment.Id.ToString());
 
                     if (payment.NextRetryAt > DateTime.UtcNow)
-                        throw new InvalidOperationException($"Payment {paymentId} is not eligible for retry until {payment.NextRetryAt:yyyy-MM-dd HH:mm:ss} UTC");
+                        throw new PaymentApiException($"Payment is not eligible for retry until {payment.NextRetryAt:yyyy-MM-dd HH:mm:ss} UTC",
+                            payment.Provider,
+                            payment.Id.ToString());
 
                     // Step 4: Validate required data for retry
                     if (string.IsNullOrEmpty(payment.ProviderSubscriptionId))
-                        throw new InvalidOperationException($"Payment {paymentId} missing provider subscription ID required for retry");
+                        throw new ValidationException("Invalid argument", 
+                            new Dictionary<string, string[]>
+                            {
+                                ["ProviderSubscriptionId"] = ["Provider subscription ID required"]
+                            });
 
                     // Step 5: Get payment provider
                     var provider = GetProvider(payment.Provider);
@@ -696,7 +714,7 @@ namespace Infrastructure.Services
                 .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper<string>> CreateUpdatePaymentMethodSessionAsync(string userId, string subscriptionId)
+        public async Task<ResultWrapper<SessionDto>> CreateUpdatePaymentMethodSessionAsync(string userId, string subscriptionId)
         {
             // Step 1: Input validation first (before resilience wrapper)
             if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out _))
@@ -747,7 +765,7 @@ namespace Infrastructure.Services
                         throw new PaymentApiException("Failed to create update payment method session", "Stripe");
                     }
 
-                    return sessionResult.Data.Url;
+                    return sessionResult.Data;
                 })
                 .WithHttpResilience() // HTTP resilience for external Stripe API calls
                 .WithPerformanceMonitoring(
@@ -824,7 +842,7 @@ namespace Infrastructure.Services
                 .WithPerformanceMonitoring(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3))
                 .ExecuteAsync();
         }
-        public async Task<ResultWrapper<int>> FetchPaymentsBySubscriptionAsync(string stripeSubscriptionId)
+        public async Task<ResultWrapper<FetchUpdatePaymentResponse>> FetchPaymentsBySubscriptionAsync(string stripeSubscriptionId)
         {
             // Step 1: Input validation first (before resilience wrapper)
             if (string.IsNullOrEmpty(stripeSubscriptionId))
@@ -851,7 +869,11 @@ namespace Infrastructure.Services
                     if (stripeInvoices == null || !stripeInvoices.Any())
                     {
                         _loggingService.LogInformation("No paid invoices found in Stripe for subscription {StripeSubscriptionId}", stripeSubscriptionId);
-                        return 0;
+                        return new FetchUpdatePaymentResponse
+                        {
+                            TotalCount = 0,
+                            ProcessedCount = 0,
+                        };
                     }
 
                     // Step 2: Get existing payment records from our database for this subscription
@@ -875,7 +897,11 @@ namespace Infrastructure.Services
                     if (!missingInvoices.Any())
                     {
                         _loggingService.LogInformation("No missing payment records found for subscription {StripeSubscriptionId}", stripeSubscriptionId);
-                        return 0;
+                        return new FetchUpdatePaymentResponse
+                        {
+                            TotalCount = 0,
+                            ProcessedCount = 0,
+                        };
                     }
 
                     _loggingService.LogInformation("Found {MissingInvoiceCount} missing payment records to process", missingInvoices.Count);
@@ -940,7 +966,14 @@ namespace Infrastructure.Services
                     _loggingService.LogInformation("Processed {ProcessedCount} out of {TotalMissingCount} missing payment records",
                         processedCount, missingInvoices.Count);
 
-                    return processedCount;
+                    var response = new FetchUpdatePaymentResponse
+                    {
+                        TotalCount = missingInvoices.Count,
+                        ProcessedCount = processedCount,
+                    };
+
+
+                    return response;
                 })
                 .WithComprehensiveResilience(
                     maxRetries: 3,                      // Moderate retries for payment synchronization
@@ -954,12 +987,12 @@ namespace Infrastructure.Services
                 .WithContext("OperationType", "PaymentSynchronization")
                 .WithContext("PaymentProvider", "Stripe")
                 .WithContext("SubscriptionId", stripeSubscriptionId)
-                .OnSuccess(async (processedCount) =>
+                .OnSuccess(async (syncResult) =>
                 {
-                    if (processedCount > 0)
+                    if (syncResult.ProcessedCount > 0)
                     {
                         _loggingService.LogInformation("Successfully synchronized {ProcessedCount} missing payment records for subscription {StripeSubscriptionId}",
-                            processedCount, stripeSubscriptionId);
+                            syncResult.ProcessedCount, stripeSubscriptionId);
                     }
                     else
                     {
@@ -1190,6 +1223,11 @@ namespace Infrastructure.Services
                 .ExecuteAsync();
         }
 
+        public async Task Handle(ExchangeOrderCompletedEvent notification)
+        {
+
+        }
+
         #region Helpers
 
         /// <summary>
@@ -1382,21 +1420,107 @@ namespace Infrastructure.Services
             }
         }
 
-        private async Task SendPaymentFailedNotification(PaymentIntentRequest r)
+        private async Task SendPaymentFailedNotification(PaymentIntentRequest paymentIntentRequest)
         {
             try
             {
+                // Get user details for personalized messaging
+                var userResult = await _userService.GetByIdAsync(Guid.Parse(paymentIntentRequest.UserId));
+                var userEmail = userResult.Data?.Email ?? "user@example.com";
+
+                // Enhanced notification with actionable information
                 await _notificationService.CreateAndSendNotificationAsync(new NotificationData
                 {
-                    UserId = r.UserId,
-                    Message = $"Processing of {(r.Amount / 100m)} {r.Currency.ToUpper()} payment failed.",
+                    UserId = paymentIntentRequest.UserId,
+                    Message = $"Your payment of {(paymentIntentRequest.Amount / 100m):C} {paymentIntentRequest.Currency.ToUpper()} failed. " +
+                             $"Reason: {paymentIntentRequest.LastPaymentError ?? "Payment declined"}. " +
+                             $"Please update your payment method or contact support.",
                     IsRead = false
                 });
+
+                // Send email notification with retry options
+                await SendPaymentFailedEmail(paymentIntentRequest, userEmail);
+
+                _loggingService.LogInformation("Payment failure notification sent for user {UserId}, payment {PaymentId}",
+                    paymentIntentRequest.UserId, paymentIntentRequest.PaymentId);
             }
             catch (Exception ex)
             {
-                _loggingService.LogWarning("Notification failed: {ErrorMessage}", ex.Message);
+                _loggingService.LogError("Failed to send payment failure notification: {ErrorMessage}", ex.Message);
             }
+        }
+
+        private async Task SendPaymentFailedEmail(PaymentIntentRequest paymentIntentRequest, string userEmail)
+        {
+            var data = new
+            {
+                Amount = (paymentIntentRequest.Amount / 100m).ToString("C"),
+                Currency = paymentIntentRequest.Currency.ToUpper(),
+                FailureReason = paymentIntentRequest.LastPaymentError ?? "Payment was declined by your bank",
+                UpdatePaymentMethodUrl = $"{_appSettings.BaseUrl}/dashboard/subscription/{paymentIntentRequest.SubscriptionId}/payment-method",
+                RetryPaymentUrl = $"{_appSettings.BaseUrl}/dashboard/subscription/{paymentIntentRequest.SubscriptionId}/retry-payment",
+                SupportUrl = $"{_appSettings.BaseUrl}/support"
+            };
+
+            var emailTemplate = new EmailMessage
+            {
+                To = [userEmail],
+                Subject = "Payment Failed - Action Required",
+                Body = GeneratePaymentFailedEmailHtml(data),
+                IsHtml = true,
+                
+            };
+
+            // Send via your email service
+            await _emailService.SendEmailAsync(emailTemplate);
+        }
+
+        private string GeneratePaymentFailedEmailHtml(dynamic data)
+        {
+            return $@"
+            <html>
+            <body style='font-family: Arial, sans-serif; color: #333;'>
+                <div style='max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e1e1e1; border-radius: 5px;'>
+                    <div style='text-align: center; margin-bottom: 20px;'>
+                        <h2 style='color: #f44336;'>Payment Failed - Action Required</h2>
+                    </div>
+                    <div style='padding: 20px;'>
+                        <p>Hello,</p>
+                        <p>We were unable to process your payment of <strong>{data.Amount} {data.Currency}</strong>.</p>
+                        
+                        <div style='background-color: #fff3e0; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ff9800;'>
+                            <p style='margin: 0; font-weight: bold; color: #e65100;'>Reason for failure:</p>
+                            <p style='margin: 5px 0 0 0;'>{data.FailureReason}</p>
+                        </div>
+
+                        <p>To continue your subscription and avoid service interruption, please take one of the following actions:</p>
+
+                        <div style='margin: 30px 0;'>
+                            <p style='text-align: center; margin-bottom: 15px;'>
+                                <a href='{data.RetryPaymentUrl}' style='display: inline-block; padding: 12px 24px; background-color: #2196F3; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;'>Retry Payment</a>
+                                <a href='{data.UpdatePaymentMethodUrl}' style='display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-right: 10px;'>Update Payment Method</a>
+                            </p>
+                        </div>
+
+                        <p><strong>What you can do:</strong></p>
+                        <ul>
+                            <li>Check that your payment method has sufficient funds</li>
+                            <li>Verify that your payment information is up to date</li>
+                            <li>Contact your bank if the issue persists</li>
+                            <li>Try using a different payment method</li>
+                        </ul>
+
+                        <p>If you continue to experience issues, please don't hesitate to <a href='{data.SupportUrl}' style='color: #4CAF50; text-decoration: none;'>contact our support team</a> for assistance.</p>
+                        
+                        <p>Thank you,<br>Crypto Investment Platform Team</p>
+                    </div>
+                    <div style='margin-top: 20px; border-top: 1px solid #e1e1e1; padding-top: 20px; font-size: 12px; color: #777; text-align: center;'>
+                        <p>This is an automated message, please do not reply to this email.</p>
+                        <p>If you did not attempt this payment, please contact our support team immediately.</p>
+                    </div>
+                </div>
+            </body>
+            </html>";
         }
 
         private string MapStripeStatusToLocal(string s)

@@ -260,9 +260,9 @@ const SubscriptionCreationPageContent: React.FC = () => {
                     cancelUrl: window.location.origin + `/payment/checkout/cancel?subscription_id=${subscriptionId}`
                 };
 
-                const checkoutUrl = await initiatePayment(paymentRequest);
+                const data = await initiatePayment(paymentRequest);
 
-                if (!checkoutUrl) {
+                if (!data.checkoutUrl) {
                     throw new Error('Payment initialization returned empty checkout URL');
                 }
 
@@ -275,7 +275,7 @@ const SubscriptionCreationPageContent: React.FC = () => {
                 }));
 
                 // Redirect to checkout
-                window.location.href = checkoutUrl;
+                window.location.href = data.checkoutUrl;
             } catch (paymentError: any) {
                 console.error('Payment initialization error:', paymentError);
                 // Format user-friendly error message

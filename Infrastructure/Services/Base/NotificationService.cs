@@ -84,7 +84,7 @@ namespace Infrastructure.Services.Base
             return connectionId;
         }
 
-        public async Task<ResultWrapper<IEnumerable<NotificationData>>> GetUserNotificationsAsync(string userId)
+        public async Task<ResultWrapper<IEnumerable<NotificationData>>> GetUserNotificationsAsync(Guid userId)
             => await _resilienceService.CreateBuilder<IEnumerable<NotificationData>>(
                 new Scope
                 {
@@ -99,7 +99,7 @@ namespace Infrastructure.Services.Base
                 async () =>
                 {
                     var filter = Builders<NotificationData>.Filter.And(
-                        Builders<NotificationData>.Filter.Eq(n => n.UserId, userId),
+                        Builders<NotificationData>.Filter.Eq(n => n.UserId, userId.ToString()),
                         Builders<NotificationData>.Filter.Eq(n => n.IsRead, false)
                     );
 
@@ -167,7 +167,7 @@ namespace Infrastructure.Services.Base
                 .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper<bool>> MarkAsReadAsync(Guid notificationId)
+        public async Task<ResultWrapper> MarkAsReadAsync(Guid notificationId)
         {
             return await _resilienceService.CreateBuilder(
                 new Scope
@@ -189,13 +189,12 @@ namespace Infrastructure.Services.Base
                         throw new DatabaseException($"Failed to update notification: Update result returned null.");
 
                     _loggingService.LogInformation("Marked notification {NotificationId} as read", notificationId);
-                    return true;
                 })
                 .WithMongoDbWriteResilience()
                 .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper<bool>> MarkAllAsReadAsync(Guid userId)
+        public async Task<ResultWrapper> MarkAllAsReadAsync(Guid userId)
         {
             return await _resilienceService.CreateBuilder(
                 new Scope
@@ -218,8 +217,7 @@ namespace Infrastructure.Services.Base
                     var result = await _repository.UpdateManyAsync(filter, new { IsRead = true }) ??
                         throw new DatabaseException($"Failed to update notifications: Update result returned null.");
 
-                    _loggingService.LogInformation("Marked notifications {NotificationId} as read", result.AffectedIds);
-                    return true;
+                    _loggingService.LogInformation("Marked {NotificaitonCount} notifications as read", result.AffectedIds.Count());
                 })
                 .WithMongoDbWriteResilience()
                 .ExecuteAsync();

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
-import { useAuth } from "../context/AuthContext";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import api from "../services/api";
-import { AxiosResponse } from "axios";
+import { CsrfResponse, LoginResponse } from "../services/authService";
 
 const AuthPage: React.FC = () => {
     const { user, login } = useAuth();
@@ -37,7 +37,8 @@ const AuthPage: React.FC = () => {
         // Fetch CSRF token
         const fetchCsrfToken = async () => {
             try {
-                const response = await api.get("/v1/csrf/refresh");
+                const response = await api.get <CsrfResponse>("/v1/csrf/refresh");
+                console.log("AuthPage::fetchCsrfToken => response: ", response);
                 setCsrfToken(response.data.token);
             } catch (err) {
                 console.error("Failed to fetch CSRF token:", err);
@@ -79,7 +80,7 @@ const AuthPage: React.FC = () => {
         setIsLoading(true);
 
         try {
-            const response: AxiosResponse<{ accessToken: string, emailConfirmed: boolean, userId: string, username: string, message: string, success: boolean }> = await api.post("/v1/auth/login",
+            const response = await api.post<LoginResponse>("/v1/auth/login",
                 { email, password },
                 {
                     headers: {
@@ -90,15 +91,15 @@ const AuthPage: React.FC = () => {
 
             console.log("AuthPage::handleLogin => response: ", response);
 
-            if (response.data.success) {
+            if (response.success) {
                 login(response.data);
                 navigate("/dashboard");
             } else {
                 // Check if the error is specifically about unconfirmed email
-                if (response.data.message === "Email is not confirmed") {
+                if (response.message === "Email is not confirmed") {
                     setUnconfirmedEmailLogin(true);
                 } else {
-                    setError(response.data.message || "Login failed. Please try again.");
+                    setError(response.message || "Login failed. Please try again.");
                 }
             }
         } catch (err: any) {
@@ -133,7 +134,7 @@ const AuthPage: React.FC = () => {
         setIsLoading(true);
 
         try {
-            const { data } = await api.post("/v1/auth/register",
+            const response = await api.post("/v1/auth/register",
                 { fullName, email, password },
                 {
                     headers: {
@@ -142,13 +143,13 @@ const AuthPage: React.FC = () => {
                 }
             );
 
-            if (data.success) {
+            if (response.success) {
                 // Show success view instead of alert
                 setRegistrationSuccess(true);
                 setError("");
                 setPassword("");
             } else {
-                setError(data.message || "Registration failed. Please try again.");
+                setError(response.message || "Registration failed. Please try again.");
             }
         } catch (err: any) {
             if (err.response?.data?.validationErrors) {
@@ -181,7 +182,7 @@ const AuthPage: React.FC = () => {
 
         try {
             // Make API call to resend confirmation email
-            const { data } = await api.post("/v1/auth/resend-confirmation",
+            const response = await api.post("/v1/auth/resend-confirmation",
                 { email },
                 {
                     headers: {
@@ -190,7 +191,7 @@ const AuthPage: React.FC = () => {
                 }
             );
 
-            if (data.success) {
+            if (response.success) {
                 setResendStatus({
                     success: true,
                     message: "Confirmation email sent successfully! Please check your inbox."
@@ -198,7 +199,7 @@ const AuthPage: React.FC = () => {
             } else {
                 setResendStatus({
                     success: false,
-                    message: data.message || "Failed to resend confirmation email."
+                    message: response.message || "Failed to resend confirmation email."
                 });
             }
         } catch (err: any) {

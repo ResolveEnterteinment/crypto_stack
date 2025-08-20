@@ -5,30 +5,6 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vite + React + TS</title>
-    <script>
-        // Create a global promise that will be resolved once OpenCV is ready
-        // Ensure this is defined before the OpenCV script is loaded
-        if (!window.opencvReadyPromise) {
-            window.opencvReadyPromise = new Promise((resolve) => {
-                window.resolveOpencvReady = resolve;
-            });
-        }
-
-        // This function will be called when OpenCV.js is ready
-        function onOpenCvReady() {
-            console.log('OpenCV.js script onload event fired.');
-            // Resolve the promise to notify listeners that OpenCV is ready
-            if (window.resolveOpencvReady) {
-                window.resolveOpencvReady();
-                console.log('OpenCV ready promise has been resolved.');
-            } else {
-                console.error('resolveOpencvReady was not defined when onOpenCvReady was called.');
-            }
-        }
-    </script>
-    <!-- Ensure OpenCV script is loaded before React's main.tsx -->
-    <!-- Removed 'async' to ensure synchronous loading relative to scripts below it -->
-    <script src="/opencv/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
 </head>
 <body>
     <div id="root"></div>

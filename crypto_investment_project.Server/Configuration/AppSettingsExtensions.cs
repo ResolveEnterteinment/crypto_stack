@@ -14,6 +14,9 @@ public static class AppSettingsExtensions
         // Register a global serializer to ensure GUIDs are stored using the Standard representation
         BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
 
+        // Configure general app settings first
+        services.Configure<AppSettings>(configuration.GetSection("App"));
+
         // Configure settings sections
         services.Configure<MongoDbSettings>(configuration.GetSection("MongoDB"));
         services.Configure<EmailSettings>(configuration.GetSection("EmailSettings"));

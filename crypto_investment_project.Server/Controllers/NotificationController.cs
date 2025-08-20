@@ -1,7 +1,11 @@
 using Application.Extensions;
 using Application.Interfaces.Logging;
+using Domain.Constants;
+using Domain.DTOs;
 using Domain.DTOs.Notification;
 using Domain.Exceptions;
+using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 
@@ -9,6 +13,7 @@ namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class NotificationController : ControllerBase
     {
         private readonly INotificationService _notificationService;
@@ -29,17 +34,19 @@ namespace crypto_investment_project.Server.Controllers
         /// <param name="page">Page number (optional)</param>
         /// <param name="pageSize">Page size (optional)</param>
         /// <returns>List of user notifications</returns>
-        [HttpGet("{userId}")]
+        [HttpGet("get/all")]
         public async Task<IActionResult> GetUserNotifications(
-            string userId,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
             using var Scope = _logger.BeginScope();
 
-            if (string.IsNullOrEmpty(userId))
+            var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (!Guid.TryParse(currentUserId, out var userId) || userId == Guid.Empty)
             {
-                return BadRequest("User ID is required");
+                return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
             }
 
             try
@@ -49,6 +56,7 @@ namespace crypto_investment_project.Server.Controllers
                     //page,
                     //pageSize
                     );
+
                 if (notificationsResult == null || !notificationsResult.IsSuccess)
                     throw new DatabaseException(notificationsResult.ErrorMessage);
 
@@ -56,7 +64,8 @@ namespace crypto_investment_project.Server.Controllers
                 {
                     Id = n.Id,
                     Message = n.Message,
-                    CreatedAt = n.CreatedAt
+                    CreatedAt = n.CreatedAt,
+                    IsRead = n.IsRead
                 });
 
                 _logger.LogInformation(
@@ -65,7 +74,8 @@ namespace crypto_investment_project.Server.Controllers
                     userId
                 );
 
-                return Ok(notifications);
+                return ResultWrapper.Success(notifications)
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
@@ -75,7 +85,8 @@ namespace crypto_investment_project.Server.Controllers
                     ex.Message
                 );
 
-                return StatusCode(500, new { message = "An error occurred while retrieving notifications" });
+                return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
             }
         }
 
@@ -94,7 +105,10 @@ namespace crypto_investment_project.Server.Controllers
             {
                 if (string.IsNullOrEmpty(notificationId) || !Guid.TryParse(notificationId, out var notificationGuid))
                 {
-                    return BadRequest("Valid notification ID is required");
+                    return ResultWrapper.Failure(FailureReason.ValidationError, 
+                        "Valid notification ID is required",
+                        "INVALID_REQUEST")
+                        .ToActionResult(this);
                 }
 
                 try
@@ -106,13 +120,16 @@ namespace crypto_investment_project.Server.Controllers
                         // Check for a "not found" scenario
                         if (result.ErrorMessage?.Contains("not found") == true)
                         {
-                            return NotFound(new { message = $"Notification {notificationId} not found" });
+                            return ResultWrapper.NotFound("Notification", notificationId)
+                                .ToActionResult(this);
                         }
 
-                        return BadRequest(new { message = result.ErrorMessage });
+
+                        if (result == null || !result.IsSuccess)
+                            throw new DatabaseException(result.ErrorMessage);
                     }
 
-                    return Ok(new { message = "Notification marked as read" });
+                    return ResultWrapper.Success("Notification successfully marked as read").ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
@@ -122,7 +139,8 @@ namespace crypto_investment_project.Server.Controllers
                         ex.Message
                     );
 
-                    return StatusCode(500, new { message = "An error occurred while marking the notification as read" });
+                    return ResultWrapper.InternalServerError()
+                         .ToActionResult(this);
                 }
             }
         }
@@ -131,7 +149,7 @@ namespace crypto_investment_project.Server.Controllers
         /// Marks all notifications as read
         /// </summary>
         /// <returns>Result of the operation</returns>
-        [HttpPost("read/all")]
+        [HttpPut("read/all")]
         public async Task<IActionResult> MarkAllAsRead()
         {
             using (_logger.BeginScope())
@@ -140,14 +158,15 @@ namespace crypto_investment_project.Server.Controllers
                 {
                     var userId = GetUserId() ?? Guid.Empty;
 
-                    if(userId == Guid.Empty)
-                        return BadRequest("Valid user ID is required");
+                    if (userId == Guid.Empty)
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
 
                     var result = await _notificationService.MarkAllAsReadAsync(userId);
 
-                    if (result == null)
+                    if (result == null || !result.IsSuccess)
                     {
-                        throw new Exception("Failed to update notifictions");
+                        throw new Exception($"Failed to update notifications: {result.ErrorMessage}");
                     }
 
                     return result.ToActionResult(this);
@@ -159,7 +178,8 @@ namespace crypto_investment_project.Server.Controllers
                         ex.Message
                     );
 
-                    return StatusCode(500, new { message = "An error occurred while marking the notification as read" });
+                    return ResultWrapper.InternalServerError()
+                         .ToActionResult(this);
                 }
             }
         }

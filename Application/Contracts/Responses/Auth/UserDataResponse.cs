@@ -8,7 +8,7 @@ namespace Application.Contracts.Responses.Auth
         /// <summary>
         /// The unique identifier of the user
         /// </summary>
-        public string UserId { get; set; } = string.Empty;
+        public string Id { get; set; } = string.Empty;
 
         /// <summary>
         /// The user's email address

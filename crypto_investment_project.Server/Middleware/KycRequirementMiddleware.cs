@@ -4,7 +4,6 @@ using Application.Interfaces.KYC;
 using Application.Interfaces.Withdrawal;
 using crypto_investment_project.Server.Middleware;
 using Domain.Constants.KYC;
-using Infrastructure.Services.KYC;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using System.Net;
@@ -23,29 +22,9 @@ namespace crypto_investment_project.Server.Middleware
 
         // Route-to-KYC level mapping
         private readonly Dictionary<string, KycRequirement> _routeRequirements = new()
-        {
-            // Trading endpoints
-            { "/api/exchange/trade", new KycRequirement { Level = KycLevel.Standard, RequireActiveSession = true } },
-            { "/api/exchange/order", new KycRequirement { Level = KycLevel.Standard, RequireActiveSession = true } },
-            { "/api/exchange/portfolio", new KycRequirement { Level = KycLevel.Standard, RequireActiveSession = false } },
-            
+        {            
             // Withdrawal endpoints
-            { "/api/withdrawal/request", new KycRequirement { Level = KycLevel.Standard, RequireActiveSession = false, CheckLimits = true } },
-            
-            // Balance and transaction endpoints
-            { "/api/balance", new KycRequirement { Level = KycLevel.Basic, RequireActiveSession = false } },
-            { "/api/transaction/export", new KycRequirement { Level = KycLevel.Standard, RequireActiveSession = false } },
-            
-            // Subscription endpoints
-            { "/api/subscription/premium", new KycRequirement { Level = KycLevel.Standard, RequireActiveSession = true } },
-            
-            // High-value operations
-            { "/api/exchange/large-order", new KycRequirement { Level = KycLevel.Advanced, RequireActiveSession = true } },
-            { "/api/withdrawal/large-amount", new KycRequirement { Level = KycLevel.Advanced, RequireActiveSession = true } },
-            
-            // Dashboard endpoints
-            { "/api/dashboard/analytics", new KycRequirement { Level = KycLevel.Basic, RequireActiveSession = false } },
-            { "/api/dashboard/reports", new KycRequirement { Level = KycLevel.Standard, RequireActiveSession = false } }
+            { "/api/withdrawal/request", new KycRequirement { Level = KycLevel.Basic, RequireActiveSession = false, CheckLimits = true } },
         };
 
         public KycRequirementMiddleware(
@@ -367,7 +346,6 @@ namespace crypto_investment_project.Server.Middleware
                 "/api/health",
                 "/api/status",
                 "/api/version",
-                "/api/balance",
             };
 
             return publicEndpoints.Any(endpoint => path.StartsWithSegments(endpoint));

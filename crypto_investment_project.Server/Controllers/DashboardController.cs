@@ -1,5 +1,6 @@
 using Application.Extensions;
 using Application.Interfaces;
+using CryptoExchange.Net.CommonObjects;
 using Domain.Constants;
 using Domain.DTOs;
 using Microsoft.AspNetCore.Authorization;
@@ -23,34 +24,42 @@ namespace crypto_investment_project.Server.Controllers
         }
 
         [HttpGet]
-        [Route("user/{user}")]
-        [Authorize(Roles = "USER")]
+        [Authorize]
         [EnableRateLimiting("standard")]
-        public async Task<IActionResult> GetUserDashboardData(string user)
+        public async Task<IActionResult> GetUserDashboardData()
         {
-            if (!Guid.TryParse(user, out var userId) || userId == Guid.Empty)
+            var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (!Guid.TryParse(currentUserId, out var userId) || userId == Guid.Empty)
             {
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid user id.").ToActionResult(this);
             }
-            // Authorization check - verify current user can create this subscription
-            var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            var isAdmin = User.IsInRole("ADMIN");
 
-            if (!isAdmin && user != currentUserId)
+            try
             {
-                _logger.LogWarning("Unauthorized attempt to get dashboard data for user {TargetUserId} by user {CurrentUserId}",
-                    user, currentUserId);
-                return Forbid();
-            }
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var dashboardResult = await _dashboardService.GetDashboardDataAsync(userId);
-            if (!dashboardResult.IsSuccess)
-            {
-                return dashboardResult.ToActionResult(this);
+                var dashboardResult = await _dashboardService.GetDashboardDataAsync(userId);
+
+                if (dashboardResult == null || !dashboardResult.IsSuccess || dashboardResult.Data == null)
+                {
+                    return ResultWrapper.NotFound("Dashboard")
+                        .ToActionResult(this);
+                }
+                
+                stopwatch.Stop();
+
+                _logger.LogInformation("Dashboard data fetched for {UserId} in {ElapsedMs}ms", userId, stopwatch.ElapsedMilliseconds);
+
+                return ResultWrapper.Success(dashboardResult.Data).ToActionResult(this);
             }
-            _logger.LogInformation("Dashboard data fetched for {UserId} in {ElapsedMs}ms", userId, stopwatch.ElapsedMilliseconds);
-            return Ok(dashboardResult.Data);
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving user ID {userId} dashboard");
+
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
+            }
         }
     }
 }

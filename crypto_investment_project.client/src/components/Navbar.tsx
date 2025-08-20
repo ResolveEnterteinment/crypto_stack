@@ -56,9 +56,9 @@ const Navbar: React.FC = () => {
 
     // Get user initials for avatar
     const getUserInitials = () => {
-        if (!user || !user.username) return "?";
+        if (!user || !user.fullName) return "?";
 
-        return user.username
+        return user.fullName 
             .split(" ")
             .map((name: string) => name.charAt(0))
             .join("")

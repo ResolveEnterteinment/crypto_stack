@@ -1,4 +1,5 @@
 ﻿using Application.Contracts.Requests.Payment;
+using Application.Contracts.Responses.Payment;
 using Application.Interfaces.Base;
 using Domain.DTOs;
 using Domain.DTOs.Payment;
@@ -10,6 +11,7 @@ namespace Application.Interfaces.Payment
     {
         public IReadOnlyDictionary<string, IPaymentProvider> Providers { get; }
 
+        Task<CrudResult<PaymentData>> UpdateStatusAsync(Guid id, string status);
         Task<ResultWrapper<PaymentData>> ProcessInvoicePaidEvent(InvoiceRequest invoice);
         /// <summary>
         /// Creates a checkout session with the payment provider
@@ -50,7 +52,7 @@ namespace Application.Interfaces.Payment
 
         Task<ResultWrapper> RetryPaymentAsync(Guid paymentId);
 
-        Task<ResultWrapper<string>> CreateUpdatePaymentMethodSessionAsync(string userId, string subscriptionId);
+        Task<ResultWrapper<SessionDto>> CreateUpdatePaymentMethodSessionAsync(string userId, string subscriptionId);
 
         Task<ResultWrapper> ProcessSetupIntentSucceededAsync(Guid subscriptionId);
 
@@ -62,7 +64,7 @@ namespace Application.Interfaces.Payment
         /// </summary>
         /// <param name="stripeSubscriptionId">The Stripe subscription ID</param>
         /// <returns>Number of missing payment records that were processed</returns>
-        Task<ResultWrapper<int>> FetchPaymentsBySubscriptionAsync(string stripeSubscriptionId);
+        Task<ResultWrapper<FetchUpdatePaymentResponse>> FetchPaymentsBySubscriptionAsync(string stripeSubscriptionId);
 
         /// <summary>
         /// Searches for Stripe subscriptions by metadata

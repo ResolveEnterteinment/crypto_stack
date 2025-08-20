@@ -198,9 +198,9 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                 cancelUrl: window.location.origin + `/payment/checkout/cancel?subscription_id=${subscription.id}`
             };
 
-            const checkoutUrl = await initiatePayment(paymentRequest);
+            const data = await initiatePayment(paymentRequest);
 
-            if (!checkoutUrl) {
+            if (!data.checkoutUrl) {
                 throw new Error('Payment initialization returned empty checkout URL');
             }
 
@@ -211,7 +211,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                 currency: subscription.currency
             }));
 
-            window.location.href = checkoutUrl;
+            window.location.href = data.checkoutUrl;
         } catch (paymentError: any) {
             console.error('Payment initialization error:', paymentError);
             const errorMessage = formatApiError(paymentError);
@@ -657,9 +657,9 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                 </Card>
             </motion.div>
 
-            {/* Payment Status Modal */}
+            {/* Payment Manager Modal */}
             <Modal
-                title="Payment Status"
+                title="Payment Manager"
                 open={showPaymentModal}
                 onCancel={handlePaymentModalClose}
                 footer={null}

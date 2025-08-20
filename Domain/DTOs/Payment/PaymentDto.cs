@@ -4,6 +4,7 @@ namespace Domain.DTOs.Payment
 {
     public class PaymentDto
     {
+        public Guid Id { get; set; }
         public Guid SubscriptionId { get; set; }
         public string Status { get; set; }
         public decimal TotalAmount { get; set; }
@@ -19,6 +20,7 @@ namespace Domain.DTOs.Payment
 
         public PaymentDto(PaymentData payment)
         {
+            Id = payment.Id;
             SubscriptionId = payment.SubscriptionId;
             Status = payment.Status;
             TotalAmount = payment.TotalAmount;

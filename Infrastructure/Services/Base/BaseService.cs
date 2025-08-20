@@ -11,6 +11,7 @@ using Domain.Exceptions;
 using Domain.Models;
 using Microsoft.AspNetCore.JsonPatch.Operations;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using System.Reflection;
 
@@ -18,6 +19,7 @@ namespace Infrastructure.Services.Base
 {
     public abstract class BaseService<T> : IBaseService<T> where T : BaseEntity
     {
+        protected readonly AppSettings _appSettings;
         protected readonly ICrudRepository<T> _repository;
         protected readonly IResilienceService<T> _resilienceService;
         protected readonly ICacheService<T> _cacheService;
@@ -43,6 +45,9 @@ namespace Infrastructure.Services.Base
             IServiceProvider serviceProvider,
             BaseServiceSettings<T>? options = null)
         {
+            // Resolve AppSettings internally from the service provider
+            var appSettingsOptions = serviceProvider.GetRequiredService<IOptions<AppSettings>>();
+            _appSettings = appSettingsOptions.Value;
             _repository = serviceProvider.GetRequiredService<ICrudRepository<T>>() ?? throw new ArgumentNullException(nameof(ICrudRepository<T>));
             _cacheService = serviceProvider.GetRequiredService<ICacheService<T>>() ?? throw new ArgumentNullException(nameof(ICacheService<T>));
             _indexService = serviceProvider.GetRequiredService<IMongoIndexService<T>>() ?? throw new ArgumentNullException(nameof(IMongoIndexService<T>));

@@ -1,5 +1,7 @@
 using Application.Contracts.Requests.KYC;
+using Application.Extensions;
 using Application.Interfaces.KYC;
+using Domain.DTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -24,21 +26,9 @@ namespace crypto_investment_project.Server.Controllers
         [HttpGet("pending")]
         public async Task<IActionResult> GetPendingVerifications([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
-            try
-            {
-                var result = await _kycService.GetPendingVerificationsAsync(page, pageSize);
-                if (!result.IsSuccess)
-                {
-                    return BadRequest(new { success = false, message = result.ErrorMessage });
-                }
+            var result = await _kycService.GetPendingVerificationsAsync(page, pageSize);
 
-                return Ok(new { success = true, data = result.Data });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving pending KYC verifications");
-                return StatusCode(500, new { success = false, message = "An error occurred retrieving pending verifications" });
-            }
+            return result.ToActionResult(this);
         }
 
         [HttpPost("update-status/{userId}")]
@@ -46,25 +36,19 @@ namespace crypto_investment_project.Server.Controllers
             Guid userId,
             [FromBody] StatusUpdateRequest request)
         {
-            try
-            {
-                var result = await _kycService.UpdateKycStatusAsync(
+            var result = await _kycService.UpdateKycStatusAsync(
                     userId,
                     request.Status,
                     request.Comment);
 
-                if (!result.IsSuccess)
-                {
-                    return BadRequest(new { success = false, message = result.ErrorMessage });
-                }
+            if(!result.IsSuccess || result.Data == null || !result.Data.IsSuccess)
+                return ResultWrapper.Failure(
+                    result.Reason,
+                    result.ErrorMessage ?? "Failed to update KYC status.")
+                    .ToActionResult(this);
 
-                return Ok(new { success = true, message = $"KYC status updated to {request.Status}" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Error updating KYC status for user {userId}");
-                return StatusCode(500, new { success = false, message = "An error occurred updating KYC status" });
-            }
+            return ResultWrapper.Success($"KYC status successfully updated to {request.Status}")
+                .ToActionResult(this);
         }
     }
 }

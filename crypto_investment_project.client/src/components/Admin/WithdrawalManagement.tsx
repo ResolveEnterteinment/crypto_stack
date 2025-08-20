@@ -13,7 +13,6 @@ import {
 } from '@ant-design/icons';
 import type { TablePaginationConfig, ColumnsType } from 'antd/es/table';
 import { Withdrawal, WithdrawalLimits } from '../../types/withdrawal';
-import api from '../../services/api';
 import * as balanceService from '../../services/balance';
 import withdrawalService from '../../services/withdrawalService';
 import { Balance } from '../../types/balanceTypes';
@@ -103,19 +102,13 @@ const WithdrawalManagement: React.FC = () => {
                 ...(searchText && { search: searchText })
             });
 
-            const response = await api.safeRequest('get', `/withdrawal/pending?${queryParams}`);
+            const paginatedResult = await withdrawalService.getPending();
 
-            if (!response?.success || !response.data) {
-                throw new Error(response?.message || 'Failed to fetch withdrawals');
-            }
-
-            const data: PaginatedResult<Withdrawal> = response.data;
-
-            if (Array.isArray(data.items)) {
-                setWithdrawals(data.items);
+            if (Array.isArray(paginatedResult.items)) {
+                setWithdrawals(paginatedResult.items);
                 setPagination(prev => ({
                     ...prev,
-                    total: data.totalCount,
+                    total: paginatedResult.totalCount,
                 }));
             } else {
                 throw new Error('Unexpected response structure from server');
@@ -171,7 +164,7 @@ const WithdrawalManagement: React.FC = () => {
             const [balance, pendingsTotal, limits] = await Promise.all([
                 balanceService.getUserBalance(withdrawal.userId, withdrawal.currency),
                 withdrawalService.getUserPendingTotals(withdrawal.userId, withdrawal.currency),
-                withdrawalService.getUserLevels(withdrawal.userId)
+                withdrawalService.getUserLimits(withdrawal.userId)
             ]);
 
             setCurrentBalance(balance);
@@ -214,11 +207,7 @@ const WithdrawalManagement: React.FC = () => {
                 transactionHash: values.transactionHash || null
             };
 
-            const response = await api.safeRequest('put', `/withdrawal/${currentWithdrawal.id}/update-status`, payload);
-
-            if (!response?.success) {
-                throw new Error(response?.message || 'Failed to update withdrawal status');
-            }
+            const updateResponse = await withdrawalService.updateStatus(currentWithdrawal.id, payload);
 
             message.success(`Withdrawal ${values.status.toLowerCase()} successfully`);
             setModalVisible(false);

@@ -1,17 +1,16 @@
 using Application.Contracts.Requests.Subscription;
+using Application.Contracts.Responses.Subscription;
 using Application.Extensions;
 using Application.Interfaces;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
 using Domain.DTOs;
-using Domain.Exceptions;
 using Domain.Models.Subscription;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using Stripe;
 using StripeLibrary;
 using System.Diagnostics;
 using System.Security.Claims;
@@ -60,7 +59,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="403">If the user is not authorized to view these subscriptions</response>
         /// <response code="404">If the user is not found</response>
         [HttpGet]
-        [Route("{subscription}")]
+        [Route("get/{subscription}")]
         [Authorize]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(StatusCodes.Status200OK)]
@@ -83,16 +82,21 @@ namespace crypto_investment_project.Server.Controllers
                     if (string.IsNullOrEmpty(subscription) || !Guid.TryParse(subscription, out Guid subscriptionId) || subscriptionId == Guid.Empty)
                     {
                         _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", subscription);
-                        return BadRequest(new { message = "A valid subscription ID is required." });
+                        return ResultWrapper.ValidationError(new()
+                        {
+                            ["subscription"] = ["A valid subscription ID is required."]
+                        }).ToActionResult(this);
                     }
 
                     // Verify subscription exists
-                    var subcriptionExists = await _subscriptionService.ExistsAsync(subscriptionId);
+                    var subscriptionExists = await _subscriptionService.ExistsAsync(subscriptionId);
 
-                    if (subcriptionExists == null || !subcriptionExists.IsSuccess || subcriptionExists.Data == false)
+                    if (subscriptionExists == null || !subscriptionExists.IsSuccess || subscriptionExists.Data == false)
                     {
                         _logger.LogWarning("Subscription not found: {SubscriptionId}", subscriptionId);
-                        return NotFound(new { message = "Subscription not found" });
+
+                        return ResultWrapper.NotFound("Subscription", subscriptionId.ToString())
+                            .ToActionResult(this);
                     }
 
                     // Authorization check - verify current user can access this data
@@ -103,13 +107,17 @@ namespace crypto_investment_project.Server.Controllers
 
                     if (subscriptionsResult == null || !subscriptionsResult.IsSuccess)
                     {
-                        throw new DatabaseException(subscriptionsResult?.ErrorMessage ?? "Subscription fetch result returned null");
+                        return ResultWrapper.Failure(
+                            subscriptionsResult.Reason,
+                            "Failed to retrieve subscription")
+                            .ToActionResult(this);
                     }
 
                     //Check subscription belongs to the user
                     if (subscriptionsResult.Data.UserId.ToString() != currentUserId)
                     {
-                        return Forbid("You don't have permission to view this subscription's payments");
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
                     }
 
                     // ETag support for caching
@@ -119,7 +127,9 @@ namespace crypto_investment_project.Server.Controllers
 
                     if (hasEtag && etag == storedEtag)
                     {
-                        return StatusCode(StatusCodes.Status304NotModified);
+                        return ResultWrapper.Failure(FailureReason.ConcurrencyConflict,
+                            "Request already processed", "DUPLICATE_REQUEST")
+                            .ToActionResult(this);
                     }
 
                     // Generate ETag from data and store it
@@ -131,9 +141,8 @@ namespace crypto_investment_project.Server.Controllers
                 }
                 catch (Exception ex)
                 {
-                    // Let global exception handler middleware handle this
                     _logger.LogError(ex, "Error retrieving subscription ID {SubscriptionId}", subscription);
-                    throw;
+                    return ResultWrapper.FromException(ex).ToActionResult(this);
                 }
             }
         }
@@ -141,7 +150,6 @@ namespace crypto_investment_project.Server.Controllers
         /// <summary>
         /// Retrieves all subscriptions for a specific user
         /// </summary>
-        /// <param name="user">User GUID</param>
         /// <returns>Collection of subscriptions belonging to the user</returns>
         /// <response code="200">Returns the user's subscriptions</response>
         /// <response code="400">If the user ID is invalid</response>
@@ -149,7 +157,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="403">If the user is not authorized to view these subscriptions</response>
         /// <response code="404">If the user is not found</response>
         [HttpGet]
-        [Route("user/{user}")]
+        [Route("get/all")]
         [Authorize]
         [EnableRateLimiting("standard")]
         [ProducesResponseType(StatusCodes.Status200OK)]
@@ -157,52 +165,35 @@ namespace crypto_investment_project.Server.Controllers
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(StatusCodes.Status403Forbidden)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> GetByUser(string user)
+        public async Task<IActionResult> GetByUser()
         {
+            var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (!Guid.TryParse(currentUserId, out var userId) || userId == Guid.Empty)
+            {
+                return ResultWrapper.Unauthorized()
+                    .ToActionResult(this);
+            }
+
             using (_logger.BeginScope(new Dictionary<string, object>
             {
-                ["UserId"] = user,
+                ["UserId"] = currentUserId,
                 ["Operation"] = "GetByUser",
                 ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
             }))
             {
                 try
                 {
-                    _logger.LogInformation("Received user ID: '{UserId}'", user);
-
-                    // Validate input
-                    if (string.IsNullOrEmpty(user) || !Guid.TryParse(user, out Guid userId) || userId == Guid.Empty)
-                    {
-                        _logger.LogWarning("Invalid user ID format: {UserId}", user);
-                        return BadRequest(new { message = "A valid user ID is required." });
-                    }
-
-                    // Verify user exists
-                    var userExists = await _userService.CheckUserExists(userId);
-                    if (!userExists)
-                    {
-                        _logger.LogWarning("User not found: {UserId}", user);
-                        return NotFound(new { message = "User not found" });
-                    }
-
-                    // Authorization check - verify current user can access this data
-                    var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-
-                    if (!User.IsInRole("ADMIN") && currentUserId != user)
-                    {
-                        _logger.LogWarning("Unauthorized access attempt to user {TargetUserId} subscriptions by user {CurrentUserId}",
-                            user, currentUserId);
-                        return Forbid();
-                    }
-
                     // ETag support for caching
-                    var etagKey = $"user_subscriptions:{user}";
+                    var etagKey = $"user_subscriptions:{userId}";
                     var etag = Request.Headers.IfNoneMatch.FirstOrDefault();
                     var (hasEtag, storedEtag) = await _idempotencyService.GetResultAsync<string>(etagKey);
 
                     if (hasEtag && etag == storedEtag)
                     {
-                        return StatusCode(StatusCodes.Status304NotModified);
+                        return ResultWrapper.Failure(FailureReason.ConcurrencyConflict,
+                            "Request already processed", "DUPLICATE_REQUEST")
+                            .ToActionResult(this);
                     }
 
                     // Get user subscriptions
@@ -210,7 +201,10 @@ namespace crypto_investment_project.Server.Controllers
 
                     if (!subscriptionsResult.IsSuccess)
                     {
-                        throw new DatabaseException(subscriptionsResult.ErrorMessage);
+                        return ResultWrapper.Failure(
+                            subscriptionsResult.Reason, 
+                            "Failed to get user subscriptions")
+                            .ToActionResult(this);
                     }
 
                     // Generate ETag from data and store it
@@ -225,9 +219,8 @@ namespace crypto_investment_project.Server.Controllers
                 }
                 catch (Exception ex)
                 {
-                    // Let global exception handler middleware handle this
-                    _logger.LogError(ex, "Error retrieving subscriptions for user {UserId}", user);
-                    throw;
+                    _logger.LogError(ex, "Error retrieving subscriptions for user {UserId}", userId);
+                    return ResultWrapper.FromException(ex).ToActionResult(this);
                 }
             }
         }
@@ -272,7 +265,11 @@ namespace crypto_investment_project.Server.Controllers
                     if (string.IsNullOrEmpty(idempotencyKey))
                     {
                         _logger.LogWarning("Missing idempotency key in subscription create request");
-                        return BadRequest(new { message = "X-Idempotency-Key header is required for subscription creation" });
+
+                        return ResultWrapper.ValidationError(new()
+                        {
+                            ["idempotencyKey"] = ["X-Idempotency-Key header is required for subscription creation"]
+                        }).ToActionResult(this);
                     }
 
                     // Check for existing operation with this idempotency key
@@ -281,8 +278,10 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogInformation("Idempotent request detected: {IdempotencyKey}, subscription ID: {SubscriptionId}",
                             idempotencyKey, existingResult);
-                        return StatusCode(StatusCodes.Status409Conflict,
-                            new { message = "Request already processed", subscriptionId = existingResult });
+
+                        return ResultWrapper.Failure(FailureReason.ConcurrencyConflict,
+                            "Request already processed", "DUPLICATE_REQUEST")
+                            .ToActionResult(this);
                     }
 
                     // Authorization check - verify current user can create this subscription
@@ -293,7 +292,8 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogWarning("Unauthorized attempt to create subscription for user {TargetUserId} by user {CurrentUserId}",
                             subscriptionRequest?.UserId, currentUserId);
-                        return Forbid();
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
                     }
 
                     // Validate request
@@ -310,7 +310,8 @@ namespace crypto_investment_project.Server.Controllers
                         _logger.LogWarning("Validation failed for subscription creation: {ValidationErrors}",
                             string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage)));
 
-                        return UnprocessableEntity(new { message = "Validation failed", errors });
+                        return ResultWrapper.ValidationError(errors, "Validation failed")
+                            .ToActionResult(this);
                     }
 
                     // Process the request
@@ -318,7 +319,9 @@ namespace crypto_investment_project.Server.Controllers
 
                     if (subscriptionCreateResult == null || !subscriptionCreateResult.IsSuccess)
                     {
-                        throw new DomainException(subscriptionCreateResult.ErrorMessage, "SUBSCRIPTION_CREATION_FAILED");
+                        return ResultWrapper.Failure(subscriptionCreateResult.Reason,
+                            "Failed to create subscription")
+                            .ToActionResult(this);
                     }
 
                     // Store the result for idempotency
@@ -327,20 +330,19 @@ namespace crypto_investment_project.Server.Controllers
                     _logger.LogInformation("Successfully created subscription {SubscriptionId} for user {UserId}",
                         subscriptionCreateResult.Data, subscriptionRequest.UserId);
 
-                    // Return 201 Created with the location header
-                    /*return CreatedAtAction(
-                        nameof(GetByUser),
-                        new { user = subscriptionRequest.UserId, version = HttpContext.GetRequestedApiVersion()?.ToString() ?? "1.0" },
-                        new { id = subscriptionCreateResult.Data, message = "Subscription created successfully" }
-                    );*/
-                    return ResultWrapper.Success(subscriptionCreateResult.Data.AffectedIds.First(), "Subscription created successfully")
+
+                    var response = new SubscriptionCreateResponse
+                    {
+                        Id = subscriptionCreateResult.Data.AffectedIds.First().ToString()
+                    };
+
+                    return ResultWrapper.Success(response, "Subscription created successfully")
                         .ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
-                    // Let global exception handler middleware handle this
                     _logger.LogError(ex, "Error creating subscription for user {UserId}", subscriptionRequest?.UserId);
-                    throw;
+                    return ResultWrapper.FromException(ex).ToActionResult(this);
                 }
             }
         }
@@ -389,14 +391,21 @@ namespace crypto_investment_project.Server.Controllers
                     if (!Guid.TryParse(id, out var subscriptionId))
                     {
                         _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", id);
-                        return BadRequest(new { message = "A valid subscription ID is required" });
+                        return ResultWrapper.ValidationError(new()
+                        {
+                            ["subscriptionId"] = ["A valid subscription ID is required"]
+                        }).ToActionResult(this);
                     }
 
                     // Check idempotency key
                     if (string.IsNullOrEmpty(idempotencyKey))
                     {
                         _logger.LogWarning("Missing idempotency key in subscription update request");
-                        return BadRequest(new { message = "X-Idempotency-Key header is required for subscription updates" });
+
+                        return ResultWrapper.ValidationError(new()
+                        {
+                            ["idempotencyKey"] = ["X-Idempotency-Key header is required for subscription updates"]
+                        }).ToActionResult(this);
                     }
 
                     // Check for existing operation with this idempotency key
@@ -405,8 +414,10 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogInformation("Idempotent request detected: {IdempotencyKey}, subscription ID: {SubscriptionId}",
                             idempotencyKey, id);
-                        return StatusCode(StatusCodes.Status409Conflict,
-                            new { message = "Request already processed" });
+
+                        return ResultWrapper.Failure(FailureReason.ConcurrencyConflict,
+                            "Request already processed", "DUPLICATE_REQUEST")
+                            .ToActionResult(this);
                     }
 
                     // Get the subscription to check ownership and current values
@@ -414,7 +425,8 @@ namespace crypto_investment_project.Server.Controllers
                     if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                     {
                         _logger.LogWarning("Subscription not found: {SubscriptionId}", id);
-                        return NotFound(new { message = "Subscription not found" });
+                        return ResultWrapper.NotFound("Subscription", id)
+                            .ToActionResult(this);
                     }
 
                     var subscription = subscriptionResult.Data;
@@ -427,7 +439,9 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogWarning("Unauthorized attempt to update subscription {SubscriptionId} by user {CurrentUserId}",
                             id, currentUserId);
-                        return Forbid();
+
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
                     }
 
                     // Validate request
@@ -444,18 +458,19 @@ namespace crypto_investment_project.Server.Controllers
                         _logger.LogWarning("Validation failed for subscription update: {ValidationErrors}",
                             string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage)));
 
-                        return UnprocessableEntity(new { message = "Validation failed", errors });
+                        return ResultWrapper.ValidationError(errors, "Validation failed")
+                            .ToActionResult(this);
                     }
 
                     // Determine what needs to be updated
                     bool requiresStripeUpdate = RequiresStripeUpdate(subscription, updateRequest);
                     bool requiresLocalUpdate = RequiresLocalUpdate(subscription, updateRequest);
 
-                    var updateResults = new
+                    var updateResults = new SubscriptionUpdateResponse
                     {
-                        localUpdated = false,
-                        stripeUpdated = false,
-                        modifiedCount = 0L
+                        LocalUpdated = false,
+                        PaymentProviderUpdated = false,
+                        ModifiedCount = 0
                     };
 
                     // Update Stripe subscription if needed (amount or endDate changes)
@@ -463,7 +478,8 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         var stripeService = _paymentService.Providers["Stripe"] as IStripeService;
                         if (stripeService == null)
-                            return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable, $"Stripe service not available for subscription {id} update")
+                            return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable,
+                                $"Payment provider service not available for subscription {id} update")
                                 .ToActionResult(this);
 
                         var stripeUpdateResult = await stripeService.UpdateSubscriptionAsync(
@@ -474,11 +490,14 @@ namespace crypto_investment_project.Server.Controllers
 
                         if (!stripeUpdateResult.IsSuccess)
                         {
-                            return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable, $"Failed to update Stripe subscription for {id}: {stripeUpdateResult.ErrorMessage}")
+                            _logger.LogCritical($"Failed to update Stripe subscription for {id}: {stripeUpdateResult.ErrorMessage}");
+
+                            return ResultWrapper.Failure(FailureReason.ThirdPartyServiceUnavailable,
+                                $"Failed to update subscription")
                                 .ToActionResult(this);
                         }
 
-                        updateResults = updateResults with { stripeUpdated = true };
+                        updateResults.PaymentProviderUpdated = true;
                         _logger.LogInformation("Successfully updated Stripe subscription for {SubscriptionId}", id);
                     }
 
@@ -489,35 +508,28 @@ namespace crypto_investment_project.Server.Controllers
 
                         if (!subscriptionUpdateResult.IsSuccess)
                         {
-                            throw new DomainException(subscriptionUpdateResult.ErrorMessage, "SUBSCRIPTION_UPDATE_FAILED");
+                            return ResultWrapper.Failure(subscriptionUpdateResult.Reason,
+                                subscriptionUpdateResult.ErrorMessage ?? "Failed to update subscription")
+                                .ToActionResult(this);
                         }
 
-                        updateResults = updateResults with
-                        {
-                            localUpdated = true,
-                            modifiedCount = subscriptionUpdateResult.Data.ModifiedCount
-                        };
+                        updateResults.LocalUpdated = true;
+                        updateResults.ModifiedCount = subscriptionUpdateResult.Data.ModifiedCount;
                     }
 
                     // Store the result for idempotency
-                    await _idempotencyService.StoreResultAsync(idempotencyKey, updateResults.modifiedCount);
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, updateResults.ModifiedCount);
 
                     _logger.LogInformation("Successfully processed subscription {SubscriptionId} update: Local={LocalUpdated}, Stripe={StripeUpdated}",
-                        id, updateResults.localUpdated, updateResults.stripeUpdated);
+                        id, updateResults.LocalUpdated, updateResults.PaymentProviderUpdated);
 
-                    return Ok(new
-                    {
-                        message = "Subscription updated successfully",
-                        modifiedCount = updateResults.modifiedCount,
-                        localUpdated = updateResults.localUpdated,
-                        stripeUpdated = updateResults.stripeUpdated
-                    });
+                    return ResultWrapper.Success(updateResults, "Subscription updated successfully")
+                        .ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
-                    // Let global exception handler middleware handle this
                     _logger.LogError(ex, "Error updating subscription {SubscriptionId}", id);
-                    throw;
+                    return ResultWrapper.FromException(ex).ToActionResult(this);
                 }
             }
         }
@@ -594,14 +606,20 @@ namespace crypto_investment_project.Server.Controllers
                     if (!Guid.TryParse(id, out var subscriptionId))
                     {
                         _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", id);
-                        return BadRequest(new { message = "A valid subscription ID is required" });
+                        return ResultWrapper.ValidationError(new()
+                        {
+                            ["subscriptionId"] = ["A valid subscription ID is required"]
+                        }).ToActionResult(this);
                     }
 
                     // Check idempotency key
                     if (string.IsNullOrEmpty(idempotencyKey))
                     {
                         _logger.LogWarning("Missing idempotency key in subscription cancellation request");
-                        return BadRequest(new { message = "X-Idempotency-Key header is required for subscription cancellation" });
+                        return ResultWrapper.ValidationError(new()
+                        {
+                            ["idempotencyKey"] = ["X-Idempotency-Key header is required for subscription updates"]
+                        }).ToActionResult(this);
                     }
 
                     // Check for existing operation with this idempotency key
@@ -609,8 +627,9 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogInformation("Idempotent request detected: {IdempotencyKey}, subscription ID: {SubscriptionId}",
                             idempotencyKey, id);
-                        return StatusCode(StatusCodes.Status409Conflict,
-                            new { message = "Request already processed" });
+                        return ResultWrapper.Failure(FailureReason.ConcurrencyConflict,
+                            "Request already processed", "DUPLICATE_REQUEST")
+                            .ToActionResult(this);
                     }
 
                     // Get the subscription to check ownership
@@ -618,7 +637,8 @@ namespace crypto_investment_project.Server.Controllers
                     if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                     {
                         _logger.LogWarning("Subscription not found: {SubscriptionId}", id);
-                        return NotFound(new { message = "Subscription not found" });
+                        return ResultWrapper.NotFound("Subscription", id)
+                            .ToActionResult(this);
                     }
 
                     var subscription = subscriptionResult.Data;
@@ -631,26 +651,38 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogWarning("Unauthorized attempt to cancel subscription {SubscriptionId} by user {CurrentUserId}",
                             id, currentUserId);
-                        return Forbid();
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
                     }
 
                     // Process the request
+                    ResultWrapper<CrudResult<SubscriptionData>> result;
 
                     if (subscription.Status == SubscriptionStatus.Active)
                     {
-                        var result = await _subscriptionService.CancelAsync(subscriptionId);
+                        result = await _subscriptionService.CancelAsync(subscriptionId);
                         if (result == null || !result.IsSuccess)
                         {
-                            throw new DatabaseException($"Failed to cancel domain subscription {id}");
+                            return ResultWrapper.Failure(result.Reason,
+                                $"Failed to cancel subscription {id}")
+                                .ToActionResult(this);
                         }
                     }
-                    else if(subscription.Status == SubscriptionStatus.Canceled || subscription.Status == SubscriptionStatus.Pending)
+                    else if (subscription.Status == SubscriptionStatus.Canceled || subscription.Status == SubscriptionStatus.Pending)
                     {
-                        var result = await _subscriptionService.DeleteAsync(subscriptionId);
+                        result = await _subscriptionService.DeleteAsync(subscriptionId);
                         if (result == null || !result.IsSuccess)
                         {
-                            throw new DatabaseException($"Failed to cancel domain subscription {id}");
+                            return ResultWrapper.Failure(result.Reason,
+                                $"Failed to delete subscription {id}")
+                                .ToActionResult(this);
                         }
+                    }
+                    else
+                    {
+                        return ResultWrapper.Failure(FailureReason.InvalidOperation,
+                            $"Cannot cancel subscription with status: {subscription.Status}")
+                            .ToActionResult(this);
                     }
 
                     // Store the result for idempotency
@@ -658,13 +690,14 @@ namespace crypto_investment_project.Server.Controllers
 
                     _logger.LogInformation("Successfully cancelled subscription {SubscriptionId}", id);
 
-                    return Ok(new { message = "Subscription has been cancelled" });
+                    return ResultWrapper.Success("Subscription has been cancelled successfully")
+                        .ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
-                    // Let global exception handler middleware handle this
                     _logger.LogError(ex, "Error cancelling subscription {SubscriptionId}", id);
-                    throw;
+                    return ResultWrapper.FromException(ex)
+                        .ToActionResult(this);
                 }
             }
         }
@@ -708,14 +741,20 @@ namespace crypto_investment_project.Server.Controllers
                     if (!Guid.TryParse(id, out var subscriptionId))
                     {
                         _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", id);
-                        return BadRequest(new { message = "A valid subscription ID is required" });
+                        return ResultWrapper.ValidationError(new()
+                        {
+                            ["subscriptionId"] = ["A valid subscription ID is required"]
+                        }).ToActionResult(this);
                     }
 
                     // Check idempotency key
                     if (string.IsNullOrEmpty(idempotencyKey))
                     {
                         _logger.LogWarning("Missing idempotency key in subscription pause request");
-                        return BadRequest(new { message = "X-Idempotency-Key header is required for subscription pause" });
+                        return ResultWrapper.ValidationError(new()
+                        {
+                            ["idempotencyKey"] = ["X-Idempotency-Key header is required for subscription updates"]
+                        }).ToActionResult(this);
                     }
 
                     // Check for existing operation with this idempotency key
@@ -723,8 +762,9 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogInformation("Idempotent request detected: {IdempotencyKey}, subscription ID: {SubscriptionId}",
                             idempotencyKey, id);
-                        return StatusCode(StatusCodes.Status409Conflict,
-                            new { message = "Request already processed" });
+                        return ResultWrapper.Failure(FailureReason.ConcurrencyConflict,
+                            "Request already processed", "DUPLICATE_REQUEST")
+                            .ToActionResult(this);
                     }
 
                     // Get the subscription to check ownership
@@ -732,14 +772,18 @@ namespace crypto_investment_project.Server.Controllers
                     if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                     {
                         _logger.LogWarning("Subscription not found: {SubscriptionId}", id);
-                        return NotFound(new { message = "Subscription not found" });
+                        return ResultWrapper.NotFound("Subscription", id)
+                            .ToActionResult(this);
                     }
 
                     var subscription = subscriptionResult.Data;
                     if (subscription.Status != SubscriptionStatus.Active)
                     {
                         _logger.LogWarning("Subscription {SubscriptionId} is not active: {Status}", id, subscription.Status);
-                        return BadRequest(new { message = "Only active subscriptions can be paused." });
+                        return ResultWrapper.Failure(
+                            FailureReason.InvalidOperation, 
+                            "Only active subscriptions can be paused.")
+                            .ToActionResult(this);
                     }
 
                     // Authorization check - verify current user owns this subscription or is admin
@@ -750,14 +794,17 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogWarning("Unauthorized attempt to pause subscription {SubscriptionId} by user {CurrentUserId}",
                             id, currentUserId);
-                        return Forbid();
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
                     }
 
                     // Process the request
                     var result = await _subscriptionService.PauseAsync(subscriptionId);
                     if (result == null || !result.IsSuccess)
                     {
-                        throw new DatabaseException($"Failed to pause subscription {id}");
+                        return ResultWrapper.Failure(result.Reason,
+                            $"Failed to pause subscription {id}")
+                            .ToActionResult(this);
                     }
 
                     // Store the result for idempotency
@@ -765,13 +812,13 @@ namespace crypto_investment_project.Server.Controllers
 
                     _logger.LogInformation("Successfully paused subscription {SubscriptionId}", id);
 
-                    return Ok(new { message = "Subscription has been paused" });
+                    return ResultWrapper.Success("Subscription has been paused")
+                        .ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
-                    // Let global exception handler middleware handle this
                     _logger.LogError(ex, "Error pausing subscription {SubscriptionId}", id);
-                    throw;
+                    return ResultWrapper.FromException(ex).ToActionResult(this);
                 }
             }
         }
@@ -815,14 +862,20 @@ namespace crypto_investment_project.Server.Controllers
                     if (!Guid.TryParse(id, out var subscriptionId))
                     {
                         _logger.LogWarning("Invalid subscription ID format: {SubscriptionId}", id);
-                        return BadRequest(new { message = "A valid subscription ID is required" });
+                        return ResultWrapper.ValidationError(new()
+                        {
+                            ["subscriptionId"] = ["A valid subscription ID is required"]
+                        }).ToActionResult(this);
                     }
 
                     // Check idempotency key
                     if (string.IsNullOrEmpty(idempotencyKey))
                     {
                         _logger.LogWarning("Missing idempotency key in subscription resume request");
-                        return BadRequest(new { message = "X-Idempotency-Key header is required for subscription resume" });
+                        return ResultWrapper.ValidationError(new()
+                        {
+                            ["idempotencyKey"] = ["X-Idempotency-Key header is required for subscription updates"]
+                        }).ToActionResult(this);
                     }
 
                     // Check for existing operation with this idempotency key
@@ -830,8 +883,9 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogInformation("Idempotent request detected: {IdempotencyKey}, subscription ID: {SubscriptionId}",
                             idempotencyKey, id);
-                        return StatusCode(StatusCodes.Status409Conflict,
-                            new { message = "Request already processed" });
+                        return ResultWrapper.Failure(FailureReason.ConcurrencyConflict,
+                            "Request already processed", "DUPLICATE_REQUEST")
+                            .ToActionResult(this);
                     }
 
                     // Get the subscription to check ownership
@@ -839,14 +893,18 @@ namespace crypto_investment_project.Server.Controllers
                     if (subscriptionResult == null || !subscriptionResult.IsSuccess)
                     {
                         _logger.LogWarning("Subscription not found: {SubscriptionId}", id);
-                        return NotFound(new { message = "Subscription not found" });
+                        return ResultWrapper.NotFound("Subscription", id)
+                            .ToActionResult(this);
                     }
 
                     var subscription = subscriptionResult.Data;
                     if (subscription.Status != SubscriptionStatus.Paused)
                     {
                         _logger.LogWarning("Subscription {SubscriptionId} is not paused: {Status}", id, subscription.Status);
-                        return BadRequest(new { message = "Only paused subscriptions can be resumed." });
+                        return ResultWrapper.Failure(
+                            FailureReason.InvalidOperation, 
+                            "Only paused subscriptions can be resumed.")
+                            .ToActionResult(this);
                     }
 
                     // Authorization check - verify current user owns this subscription or is admin
@@ -857,14 +915,17 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         _logger.LogWarning("Unauthorized attempt to resume subscription {SubscriptionId} by user {CurrentUserId}",
                             id, currentUserId);
-                        return Forbid();
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
                     }
 
                     // Process the request
                     var result = await _subscriptionService.ResumeAsync(subscriptionId);
                     if (result == null || !result.IsSuccess)
                     {
-                        throw new DatabaseException($"Failed to resume subscription {id}");
+                        return ResultWrapper.Failure(result.Reason,
+                            $"Failed to resume subscription {id}")
+                            .ToActionResult(this);
                     }
 
                     // Store the result for idempotency
@@ -872,13 +933,14 @@ namespace crypto_investment_project.Server.Controllers
 
                     _logger.LogInformation("Successfully resumed subscription {SubscriptionId}", id);
 
-                    return Ok(new { message = "Subscription has been resumed" });
+                    return ResultWrapper.Success("Subscription has been resumed successfully")
+                        .ToActionResult(this);
                 }
                 catch (Exception ex)
                 {
-                    // Let global exception handler middleware handle this
                     _logger.LogError(ex, "Error resuming subscription {SubscriptionId}", id);
-                    throw;
+                    return ResultWrapper.FromException(ex)
+                        .ToActionResult(this);
                 }
             }
         }

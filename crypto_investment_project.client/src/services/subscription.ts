@@ -4,7 +4,23 @@ import ICreateSubscriptionRequest from "../interfaces/ICreateSubscriptionRequest
 import IUpdateSubscriptionRequest from "../interfaces/IUpdateSubscriptionRequest";
 import { logApiError } from "../utils/apiErrorHandler";
 import { Subscription } from "../types/subscription";
-import Transaction from "../types/transaction";
+
+interface SubscriptionCreateResponse {
+    id: string;
+}
+
+// API endpoints
+const ENDPOINTS = {
+    GET_ONE: (subscriptionId: string) => `/subscription/get/${subscriptionId}`,
+    GET_ALL: () => `/subscription/get/all`,
+    NEW: () => `/subscription/new`,
+    UPDATE: (subscriptionId: string) => `/subscription/update/${subscriptionId}`,
+    CANCEL: (subscriptionId: string) => `/subscription/cancel/${subscriptionId}`,
+    PAUSE: (subscriptionId: string) => `/subscription/pause/${subscriptionId}`,
+    RESUME: (subscriptionId: string) => `/subscription/resume/${subscriptionId}`,
+    REACTIVATE: (subscriptionId: string) => `/subscription-management/reactivate/${subscriptionId}`,
+    HEALTH_CHECK: '/health'
+} as const;
 
 /**
  * Fetches a subscription by Id for a user
@@ -18,7 +34,7 @@ export const getSubscription = async (subscriptionId: string): Promise<Subscript
     }
 
     try {
-        const subscriptionResult = await api.safeRequest <Subscription>('get', `/Subscription/${subscriptionId}`);
+        const subscriptionResult = await api.get<Subscription>(ENDPOINTS.GET_ONE(subscriptionId));
 
         const subscription: Subscription = {
             ...subscriptionResult.data,
@@ -48,9 +64,9 @@ export const getSubscriptions = async (userId: string): Promise<Subscription[]> 
     }
 
     try {
-        const { data } = await api.get(`/Subscription/user/${userId}`);
+        const result = await api.get<Subscription[]>(ENDPOINTS.GET_ALL());
 
-        const subscriptionsData = data.data ?? [];
+        const subscriptionsData = result.data ?? [];
 
         var subscriptions = subscriptionsData.map((subscription: any) => ({
             ...subscription,
@@ -75,7 +91,7 @@ export const getSubscriptions = async (userId: string): Promise<Subscription[]> 
  * @param subscriptionData The subscription data
  * @returns Promise with the created subscription ID
  */
-export const createSubscription = async (subscriptionData: ICreateSubscriptionRequest): Promise<string> => {
+export const createSubscription = async (subscriptionData: ICreateSubscriptionRequest): Promise<any> => {
     try {
         // Validate input
         if (!subscriptionData.userId) {
@@ -129,27 +145,13 @@ export const createSubscription = async (subscriptionData: ICreateSubscriptionRe
 
         console.log("Creating subscription with payload:", JSON.stringify(requestPayload, null, 2));
 
-        const response = await api.post('/Subscription/new', requestPayload, { headers });
+        const response = await api.post <SubscriptionCreateResponse>(ENDPOINTS.NEW(), requestPayload, { headers });
 
-        if (!response.data) {
+        if (!response.success) {
             throw new Error("Server returned empty response");
         }
 
-        let subscriptionId;
-        if (response.data.id) {
-            subscriptionId = response.data.id;
-        } else if (response.data.data && response.data.data.id) {
-            subscriptionId = response.data.data.id;
-        } else if (response.data.data && typeof response.data.data === 'string') {
-            subscriptionId = response.data.data;
-        } else if (typeof response.data === 'string') {
-            subscriptionId = response.data;
-        } else {
-            console.error("Unexpected response format:", response.data);
-            throw new Error("Failed to extract subscription ID from response");
-        }
-
-        return subscriptionId;
+        return response.data.id;
     } catch (error) {
         logApiError(error, "Create Subscription Error");
         throw error;
@@ -199,10 +201,10 @@ export const updateSubscription = async (subscriptionId: string, updateFields: I
 
         // Update the subscription - backend will automatically handle Stripe updates for amount/endDate changes
         console.log("Updating subscription with payload:", JSON.stringify(requestPayload, null, 2));
-        const response = await api.put(`/Subscription/update/${subscriptionId}`, requestPayload, { headers });
+        const response = await api.put(ENDPOINTS.UPDATE(subscriptionId), requestPayload, { headers });
 
         console.log("Subscription updated successfully (Stripe sync handled automatically for amount/endDate changes)");
-        return response.data;
+
     } catch (error) {
         logApiError(error, "Update Subscription Error");
         throw error;
@@ -228,9 +230,7 @@ export const cancelSubscription = async (subscriptionId: string): Promise<void> 
             'X-Idempotency-Key': idempotencyKey
         };
 
-        const response = await api.post(`/Subscription/cancel/${subscriptionId}`, null, { headers });
-
-        return response.data;
+        const response = await api.post(ENDPOINTS.CANCEL(subscriptionId), null, { headers });
     } catch (error) {
         logApiError(error, "Cancel Subscription Error");
         throw error;
@@ -256,9 +256,8 @@ export const pauseSubscription = async (subscriptionId: string): Promise<void> =
             'X-Idempotency-Key': idempotencyKey
         };
 
-        const response = await api.post(`/Subscription/pause/${subscriptionId}`, null, { headers });
+        const response = await api.post(ENDPOINTS.PAUSE(subscriptionId), null, { headers });
 
-        return response.data;
     } catch (error) {
         logApiError(error, "Pause Subscription Error");
         throw error;
@@ -284,9 +283,8 @@ export const resumeSubscription = async (subscriptionId: string): Promise<void> 
             'X-Idempotency-Key': idempotencyKey
         };
 
-        const response = await api.post(`/Subscription/resume/${subscriptionId}`, null, { headers });
+        const response = await api.post(ENDPOINTS.RESUME(subscriptionId), null, { headers });
 
-        return response.data;
     } catch (error) {
         logApiError(error, "Resume Subscription Error");
         throw error;
@@ -294,21 +292,36 @@ export const resumeSubscription = async (subscriptionId: string): Promise<void> 
 };
 
 /**
- * Gets transaction history for a subscription
- * @param subscriptionId The ID of the subscription
- * @returns Promise with transaction history
+ * Updates the status of a subscription to ACTIVE
+ * @param subscriptionId The ID of the subscription to resume
+ * @returns Promise
  */
-export const getTransactions = async (subscriptionId: string): Promise<Transaction[]> => {
+export const reactivatecSubscription = async (subscriptionId: string): Promise<void> => {
     if (!subscriptionId) {
-        console.error("getSubscriptionTransactions called with undefined subscriptionId");
+        console.error("resumeSubscription called with undefined subscriptionId");
         return Promise.reject(new Error("Subscription ID is required"));
     }
 
     try {
-        const response = await api.get(`/Transaction/subscription/${subscriptionId}`);
-        return Array.isArray(response.data) ? response.data : [];
+        // Generate a unique idempotency key
+        const idempotencyKey = `resume-subscription-${subscriptionId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+
+        const headers: Record<string, string> = {
+            'X-Idempotency-Key': idempotencyKey
+        };
+
+        const response = await api.post(ENDPOINTS.REACTIVATE(subscriptionId), null, { headers });
+
+        if (response == null || response.data == null || !response.success) {
+            throw new Error(response.message || `Failed to update payment method`);
+        }
     } catch (error) {
-        console.error(`Error fetching transactions for subscription ${subscriptionId}:`, error);
-        return [];
+        logApiError(error, "Resume Subscription Error");
+        throw error;
     }
+};
+
+// Export type definitions
+export type {
+    SubscriptionCreateResponse
 };

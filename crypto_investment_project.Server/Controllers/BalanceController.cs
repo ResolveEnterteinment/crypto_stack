@@ -1,10 +1,10 @@
 using Application.Extensions;
 using Application.Interfaces;
-using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
+using Domain.Constants;
 using Domain.Constants.Asset;
+using Domain.DTOs;
 using Domain.DTOs.Balance;
-using Domain.Exceptions;
 using Domain.Models.Balance;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -13,131 +13,234 @@ using System.Security.Claims;
 
 namespace crypto_investment_project.Server.Controllers
 {
+    
+
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize] // Ensure the user is authenticated for all actions
     public class BalanceController(
         IBalanceService balanceService,
         IExchangeService exchangeService,
-        IAssetService assetService,
-        IUserService userService
+        IUserService userService,
+        ILogger<BalanceController> logger
         ) : ControllerBase
     {
         private readonly IBalanceService _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
         private readonly IExchangeService _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
-        private readonly IAssetService _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
         private readonly IUserService _userService = userService ?? throw new ArgumentNullException(nameof(userService));
+        private readonly ILogger<BalanceController> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         [HttpGet]
-        [Route("user/{user}")]
-        public async Task<IActionResult> GetUserBalances(string user)
+        [Route("get/all")]
+        [Authorize]
+        public async Task<IActionResult> GetUserBalances()
         {
-            var isUserValid = Guid.TryParse(user, out var userId);
-            if (user is null || user == string.Empty || !isUserValid)
+            var userId = GetUserId();
+
+            if (userId is null || userId == Guid.Empty)
             {
-                return ValidationProblem("A valid user is required.");
+                return ResultWrapper.Failure(FailureReason.ValidationError,
+                    "A valid user is required.")
+                    .ToActionResult(this);
             }
-            var balancesResult = await _balanceService.FetchBalancesWithAssetsAsync(userId, AssetType.Exchange);
-            return balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null
-                ? BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.")
-                : Ok(balancesResult.Data.Select(b => new BalanceDto(b)));
+
+            try
+            {
+                var balancesResult = await _balanceService.FetchBalancesWithAssetsAsync((Guid)userId, AssetType.Exchange);
+
+                if (balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
+                {
+                    return ResultWrapper.NotFound("Balance")
+                        .ToActionResult(this);
+                }
+
+                return ResultWrapper.Success(balancesResult.Data.Select(b => new BalanceDto(b)))
+                    .ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving balances for user ID {userId}");
+
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
+            }
         }
 
         [HttpGet]
-        [Route("asset/{ticker}")]
+        [Route("get/asset/{ticker}")]
         public async Task<IActionResult> GetAssetBalance(string ticker)
         {
-            var user = GetUserId();
-            if (user is null || user == Guid.Empty)
+            var userId = GetUserId();
+
+            if (userId is null || userId == Guid.Empty)
             {
-                return ValidationProblem("A valid user is required.");
+                return ResultWrapper.Failure(FailureReason.ValidationError,
+                    "A valid user is required.",
+                    "INVALID_REQUEST")
+                    .ToActionResult(this);
             }
-            var filter = new FilterDefinitionBuilder<BalanceData>().Where(b => b.UserId == user && b.Ticker == ticker);
-            var balancesResult = await _balanceService.GetUserBalanceByTickerAsync(user.Value, ticker);
-            return (balancesResult == null) ? BadRequest("Balance fetch error") :
-                balancesResult.IsSuccess ? Ok(new BalanceDto(balancesResult.Data)) :
-                balancesResult.ToActionResult(this);
+
+            try
+            {
+                var filter = new FilterDefinitionBuilder<BalanceData>().Where(b => b.UserId == userId && b.Ticker == ticker);
+                
+                var balancesResult = await _balanceService.GetUserBalanceByTickerAsync(userId.Value, ticker);
+                
+                if (balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
+                {
+                    return ResultWrapper.NotFound("Balance")
+                        .ToActionResult(this);
+                }
+                
+                return ResultWrapper.Success(new BalanceDto(balancesResult.Data))
+                    .ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving user ID {userId} balances for asset {ticker}");
+
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
+            }
         }
 
         [HttpGet]
         [Authorize(Roles = "ADMIN")]
-        [Route("user/{user}/asset/{ticker}")]
+        [Route("admin/user/{user}/asset/{ticker}")]
         public async Task<IActionResult> GetAssetBalanceForUser(string user, string ticker)
         {
             // Validate input
             if (string.IsNullOrEmpty(user) || !Guid.TryParse(user, out Guid userId) || userId == Guid.Empty)
             {
-                return BadRequest(new { message = "A valid user ID is required." });
+                return ResultWrapper.Failure(FailureReason.ValidationError,
+                    "A valid user is required.",
+                    "INVALID_REQUEST")
+                    .ToActionResult(this);
             }
 
             // Verify user exists
             var userExists = await _userService.CheckUserExists(userId);
             if (!userExists)
             {
-                return NotFound(new { message = "User not found" });
+                return ResultWrapper.NotFound("User", userId.ToString())
+                    .ToActionResult(this);
             }
 
-            // Authorization check
-
-            if (!User.IsInRole("ADMIN"))
+            try
             {
-                return Forbid();
-            }
+                var filter = new FilterDefinitionBuilder<BalanceData>().Where(b => b.UserId == userId && b.Ticker == ticker);
+                
+                var balancesResult = await _balanceService.GetUserBalanceByTickerAsync(userId, ticker);
+                
+                if (balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
+                {
+                    return ResultWrapper.NotFound("Balance")
+                        .ToActionResult(this);
+                }
 
-            var filter = new FilterDefinitionBuilder<BalanceData>().Where(b => b.UserId == userId && b.Ticker == ticker);
-            var balancesResult = await _balanceService.GetUserBalanceByTickerAsync(userId, ticker);
-            return balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null
-                ? BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.")
-                : Ok(balancesResult.Data);
+                return ResultWrapper.Success(new BalanceDto(balancesResult.Data))
+                    .ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving user ID {user} balances for asset {ticker}");
+
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
+            }
         }
 
         [HttpGet]
-        [Route("totalInvestments/{user}")]
-        public async Task<IActionResult> GetTotalInvestments(string user)
+        [Route("totalInvestments")]
+        [Authorize]
+        public async Task<IActionResult> GetTotalInvestments()
         {
-            var isUserValid = Guid.TryParse(user, out var userId);
-            if (user is null || user == string.Empty || !isUserValid)
+            var userId = GetUserId();
+
+            if (userId is null || userId == Guid.Empty)
             {
-                return ValidationProblem("A valid user is required.");
+                return ResultWrapper.Failure(FailureReason.ValidationError,
+                    "A valid user is required.",
+                    "INVALID_REQUEST")
+                    .ToActionResult(this);
             }
-            var balancesResult = await _balanceService.GetAllByUserIdAsync(userId, AssetType.Platform);
-            return balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null
-                ? BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.")
-                : Ok(balancesResult.Data);
+
+            try
+            {
+                var balancesResult = await _balanceService.GetAllByUserIdAsync(userId.Value, AssetType.Platform);
+                if(balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
+                {
+                    return ResultWrapper.NotFound("Balance")
+                        .ToActionResult(this);
+                }
+                return ResultWrapper.Success(balancesResult.Data.Select(b => new BalanceDto(b)))
+                    .ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving total investments for user ID {userId}");
+
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
+            }
         }
 
         [HttpGet]
-        [Route("portfolioValue/{user}")]
+        [Route("portfolioValue")]
         public async Task<IActionResult> GetUserPortfolioValue(string user)
         {
-            var isUserValid = Guid.TryParse(user, out var userId);
-            if (user is null || user == string.Empty || !isUserValid)
-            {
-                return ValidationProblem("A valid user is required.");
-            }
-            var balancesResult = await _balanceService.GetAllByUserIdAsync(userId, AssetType.Exchange);
-            if (balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
-            {
-                return BadRequest(balancesResult?.ErrorMessage ?? "Balance result returned null.");
-            }
-            var portfolioValue = 0m;
-            foreach (var balance in balancesResult.Data)
-            {
-                var assetResult = await _assetService.GetByIdAsync(balance.AssetId);
-                if (assetResult == null || !assetResult.IsSuccess)
-                {
-                    throw new AssetFetchException($"Failed to fetch asset {balance.AssetId}");
-                }
+            var userId = GetUserId();
 
-                var asset = assetResult.Data;
-                var priceResult = await _exchangeService.Exchanges[asset.Exchange].GetAssetPrice(asset.Ticker);
-                if (priceResult is null || !priceResult.IsSuccess)
-                {
-                    continue;
-                }
-                portfolioValue += priceResult.Data * balance.Total;
+            if (userId is null || userId == Guid.Empty)
+            {
+                return ResultWrapper.Failure(FailureReason.ValidationError,
+                    "A valid user is required.",
+                    "INVALID_REQUEST")
+                    .ToActionResult(this);
             }
 
-            return Ok(portfolioValue);
+            try
+            {
+                var balancesResult = await _balanceService.FetchBalancesWithAssetsAsync(userId.Value, AssetType.Exchange);
+                
+                if (balancesResult == null || !balancesResult.IsSuccess || balancesResult.Data == null)
+                {
+                    return ResultWrapper.NotFound("Balance")
+                        .ToActionResult(this);
+                }
+                
+                var portfolioValue = 0m;
+                
+                var balances = balancesResult.Data;
+
+                var tickers = balances.Select(b => b.Asset.Ticker).Distinct().ToList();
+
+                var priceResults = await _exchangeService.GetCachedAssetPricesAsync(tickers);
+
+                if(priceResults == null || !priceResults.IsSuccess || priceResults.Data == null)
+                {
+                    return ResultWrapper.Failure(FailureReason.ExchangeApiError,
+                        $"Failed to retrieve asset prices: {priceResults.ErrorMessage}")
+                        .ToActionResult(this);
+                }
+
+                var prices = priceResults.Data;
+
+                foreach (var balance in balances)
+                {
+                    portfolioValue += balance.Total * (prices.TryGetValue(balance.Asset.Ticker, out var price) ? price : 1m);
+                }
+
+                return ResultWrapper.Success(portfolioValue)
+                    .ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving total investments for user ID {userId}");
+
+                return ResultWrapper.InternalServerError()
+                .ToActionResult(this);
+            }
         }
 
         private Guid? GetUserId()

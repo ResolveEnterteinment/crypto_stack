@@ -6,15 +6,6 @@ namespace Domain.DTOs.Payment
     /// </summary>
     public class CheckoutSessionResponse
     {
-        /// <summary>
-        /// Whether the operation was successful
-        /// </summary>
-        public bool Success { get; set; }
-
-        /// <summary>
-        /// A message describing the result
-        /// </summary>
-        public string? Message { get; set; }
 
         /// <summary>
         /// URL to redirect the user to for checkout
@@ -25,5 +16,10 @@ namespace Domain.DTOs.Payment
         /// Client secret for Stripe Elements integration (if applicable)
         /// </summary>
         public string? ClientSecret { get; set; }
+
+        /// <summary>
+        /// Gets or sets the unique identifier for the current session.
+        /// </summary>
+        public string? SessionId { get; set; }
     }
 }

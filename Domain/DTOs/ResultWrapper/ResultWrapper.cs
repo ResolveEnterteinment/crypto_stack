@@ -202,6 +202,20 @@ namespace Domain.DTOs
         }
 
         /// <summary>
+        /// Creates an internal server error result with a standardized message
+        /// </summary>
+        public static ResultWrapper<T> InternalServerError(string message = "An error occured while processing your request")
+        {
+            return new ResultWrapper<T>
+            {
+                IsSuccess = false,
+                ErrorMessage = message,
+                ErrorCode = "INTERNAL_SERVER_ERROR",
+                Reason = FailureReason.Unknown
+            };
+        }
+
+        /// <summary>
         /// Attempts to extract the data from a result, following the TryParse pattern
         /// </summary>
         /// <param name="result">The result to extract data from</param>
@@ -706,6 +720,20 @@ namespace Domain.DTOs
                 ErrorCode = "VALIDATION_ERROR",
                 Reason = FailureReason.ValidationError,
                 ValidationErrors = errors ?? EmptyValidationErrors
+            };
+        }
+
+        /// <summary>
+        /// Creates an internal server error result with a standardized message
+        /// </summary>
+        public static new ResultWrapper InternalServerError(string message = "An error occured while processing your request")
+        {
+            return new ResultWrapper
+            {
+                IsSuccess = false,
+                ErrorMessage = message,
+                ErrorCode = "INTERNAL_SERVER_ERROR",
+                Reason = FailureReason.Unknown
             };
         }
     }

@@ -1,50 +1,65 @@
-import { useState, useEffect } from 'react';
-import { PaymentData } from "../../types/payment";
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+    Card, Button, Alert, Spin, Badge,
+    List, Space, Typography, notification,
+    Tooltip, Result
+} from 'antd';
+import {
+    CheckCircleOutlined, CloseCircleOutlined, ClockCircleOutlined,
+    ExclamationCircleOutlined, CreditCardOutlined, ReloadOutlined,
+    InfoCircleOutlined, WarningOutlined, SyncOutlined
+} from '@ant-design/icons';
 import { Subscription, SubscriptionStatus } from '../../types/subscription';
-import { AlertTriangle, Check, AlertCircle, Clock, CreditCard, RefreshCw, Info, CheckCircle } from 'lucide-react';
-import api from '../../services/api'; // Import the API service
-import { PaymentStatus } from '../../services/payment';
+import {
+    Payment, PaymentStatus, getSubscriptionPayments,
+    syncPayments, updatePaymentMethod, retryPayment
+} from '../../services/payment';
+import { reactivatecSubscription } from '../../services/subscription';
 
-interface ApiResponse<T> {
-    data: T | null;
+const { Title, Text } = Typography;
+
+interface PaymentStatusCardProps {
+    subscription: Subscription;
+    onDataUpdated?: () => void;
+    onUpdatePaymentMethod: (subscriptionId: string) => void;
 }
 
 // Payment status component for displaying subscription payment status
-const PaymentStatusCard = ({
+const PaymentStatusCard: React.FC<PaymentStatusCardProps> = ({
     subscription,
     onUpdatePaymentMethod,
     onDataUpdated
-}: {
-    subscription: Subscription | null;
-    onUpdatePaymentMethod: (subscriptionId: string) => void;
-    onDataUpdated?: () => void;
 }) => {
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [isRetrying, setIsRetrying] = useState<boolean>(false);
-    const [payments, setPayments] = useState<PaymentData[]>([]);
+    const [payments, setPayments] = useState<Payment[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-    useEffect(() => {
-        if (subscription?.id) {
-            fetchPaymentData();
+    const fetchPaymentData = useCallback(async () => {
+        // Early return if no subscription ID
+        if (!subscription?.id) {
+            setError('No subscription ID provided');
+            return;
         }
-    }, [subscription]);
 
-    const fetchPaymentData = async () => {
         setIsLoading(true);
-        try {
-            // Use the api service instead of fetch
-            const response = await api.get<ApiResponse<PaymentData[]>>(`/payment/subscription/${subscription?.id}`);
+        setError(null);
 
-            const data = response.data;
-            setPayments(data.data || []);
-            setError(null);
+        try {
+            // Pass the subscription ID to the function
+            const payments = await getSubscriptionPayments(subscription.id);
+
+            setPayments(payments || []);
         } catch (err: any) {
-            // The api service provides better error messages
             const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch payment data';
             setError(errorMessage);
-            console.error('Error fetching payment data:', err);
+
+            notification.error({
+                message: 'Payment Data Error',
+                description: errorMessage,
+                placement: 'topRight'
+            });
 
             // Handle authentication errors
             if (err.response?.status === 401) {
@@ -53,32 +68,39 @@ const PaymentStatusCard = ({
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [subscription?.id]);
 
-    const handleRetryUpdate = async () => {
-        if (!subscription?.id) return;
+    useEffect(() => {
+        if (subscription?.id) {
+            fetchPaymentData();
+        }
+    }, [subscription?.id, fetchPaymentData]);
+
+    const handleSync = useCallback(async () => {
+        if (!subscription?.id || isRetrying) return;
 
         setIsRetrying(true);
         setError(null);
         setSuccessMessage(null);
 
         try {
-            const response = await api.post(`/payment/fetch-update/${subscription.id}`);
+            const { processedCount, totalCount } = await syncPayments(subscription.id);
 
-            const { processedCount, message } = response.data;
+            const message = processedCount > 0
+                ? `Successfully synced ${processedCount} payment record${processedCount !== 1 ? 's' : ''} out of ${totalCount}`
+                : 'Payment records are up to date';
 
-            // Show success message
-            setSuccessMessage(
-                processedCount > 0
-                    ? `Successfully synced ${processedCount} payment record${processedCount !== 1 ? 's' : ''}`
-                    : 'Payment records are up to date'
-            );
+            setSuccessMessage(message);
 
-            // Wait a moment for the processing to complete, then refresh
+            notification.success({
+                message: 'Sync Complete',
+                description: message,
+                placement: 'topRight'
+            });
+
+            // Refresh data after a brief delay
             setTimeout(async () => {
                 await fetchPaymentData();
-
-                // Notify parent components to refresh their data
                 if (onDataUpdated) {
                     onDataUpdated();
                 }
@@ -87,295 +109,407 @@ const PaymentStatusCard = ({
         } catch (err: any) {
             const errorMessage = err.response?.data?.message || err.message || 'Failed to update payment records';
             setError(errorMessage);
-            console.error('Error updating payment records:', err);
+
+            notification.error({
+                message: 'Sync Failed',
+                description: errorMessage,
+                placement: 'topRight'
+            });
         } finally {
             setIsRetrying(false);
         }
-    };
+    }, [subscription?.id, isRetrying, fetchPaymentData, onDataUpdated]);
 
-    const handleUpdatePaymentMethod = async () => {
+    const handleUpdatePaymentMethod = useCallback(async () => {
         if (onUpdatePaymentMethod && subscription) {
             onUpdatePaymentMethod(subscription.id);
         }
-    };
+    }, [onUpdatePaymentMethod, subscription]);
+
+    const handleRetryPayment = useCallback(async (paymentId: string) => {
+        if (isRetrying) return;
+
+        setIsRetrying(true);
+        try {
+            await retryPayment(paymentId);
+
+            notification.success({
+                message: 'Payment Retry',
+                description: 'Payment retry initiated successfully',
+                placement: 'topRight'
+            });
+
+            // Refresh payment data
+            setTimeout(() => {
+                fetchPaymentData();
+            }, 1000);
+
+        } catch (error: any) {
+            const errorMessage = error.message || 'Failed to retry payment';
+            setError(errorMessage);
+
+            notification.error({
+                message: 'Retry Failed',
+                description: errorMessage,
+                placement: 'topRight'
+            });
+        } finally {
+            setIsRetrying(false);
+        }
+    }, [isRetrying, fetchPaymentData]);
 
     const getStatusIcon = (status: string) => {
         switch (status.toUpperCase()) {
             case PaymentStatus.Filled:
-                return <Check className="h-5 w-5 text-green-500" />;
+                return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
             case PaymentStatus.Pending:
-                return <Clock className="h-5 w-5 text-yellow-500" />;
+                return <ClockCircleOutlined style={{ color: '#faad14' }} />;
             case PaymentStatus.Failed:
-                return <AlertTriangle className="h-5 w-5 text-red-500" />;
+                return <CloseCircleOutlined style={{ color: '#ff4d4f' }} />;
             default:
-                return <AlertCircle className="h-5 w-5 text-gray-500" />;
+                return <ExclamationCircleOutlined style={{ color: '#8c8c8c' }} />;
         }
     };
 
     const getSubscriptionStatusBadge = () => {
         const status = subscription?.status || 'UNKNOWN';
 
-        const statusColorMap: { [key: string]: string } = {
-            'ACTIVE': 'bg-green-100 text-green-800',
-            'PENDING': 'bg-yellow-100 text-yellow-800',
-            'CANCELED': 'bg-gray-100 text-gray-800',
-            'SUSPENDED': 'bg-red-100 text-red-800',
-            'PAID': 'bg-gray-100 text-gray-800',
-            'UNKNOWN': 'bg-gray-100 text-gray-800'
+        const statusConfig = {
+            'ACTIVE': { color: 'success', text: 'Active' },
+            'PENDING': { color: 'processing', text: 'Pending' },
+            'CANCELED': { color: 'default', text: 'Canceled' },
+            'SUSPENDED': { color: 'error', text: 'Suspended' },
+            'PAID': { color: 'success', text: 'Paid' },
+            'UNKNOWN': { color: 'default', text: 'Unknown' }
         };
 
-        const colorClass = statusColorMap[status] || 'bg-gray-100 text-gray-800';
+        const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.UNKNOWN;
 
         return (
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${colorClass}`}>
-                {status}
-            </span>
+            <Badge
+                status={config.color as any}
+                text={config.text}
+            />
         );
     };
 
-    // Check if the subscription is suspended
+    // Check subscription status conditions
     const isSuspended = subscription?.status === SubscriptionStatus.Suspended;
-
-    // Check if there are any failed payments
     const hasFailedPayments = payments.some(payment => payment.status === PaymentStatus.Failed);
 
-    // Info section for no payment records
+    // Render no payment records info section
     const renderNoPaymentRecordsInfo = () => (
-        <div className="space-y-4">
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             {successMessage && (
-                <div className="p-4 bg-green-50 border-l-4 border-green-400">
-                    <div className="flex">
-                        <div className="flex-shrink-0">
-                            <CheckCircle className="h-5 w-5 text-green-400" />
-                        </div>
-                        <div className="ml-3">
-                            <p className="text-sm font-medium text-green-800">
-                                {successMessage}
-                            </p>
-                        </div>
-                    </div>
-                </div>
+                <Alert
+                    message="Sync Successful"
+                    description={successMessage}
+                    type="success"
+                    icon={<CheckCircleOutlined />}
+                    showIcon
+                    closable
+                    onClose={() => setSuccessMessage(null)}
+                />
             )}
 
-            <div className="p-4 bg-blue-50 border-l-4 border-blue-400">
-                <div className="flex">
-                    <div className="flex-shrink-0">
-                        <Info className="h-5 w-5 text-blue-400" />
-                    </div>
-                    <div className="ml-3 flex-1">
-                        <h3 className="text-sm font-medium text-blue-800">
-                            No Payment Records Found
-                        </h3>
-                        <div className="mt-2 text-sm text-blue-700">
-                            <p className="mb-2">
-                                This could happen for several reasons:
-                            </p>
-                            <ul className="list-disc list-inside space-y-1 text-xs">
-                                <li>Your subscription was recently created and the first payment is still being processed</li>
-                                <li>Payment webhook events from Stripe haven't been received yet</li>
-                                <li>There may be a temporary synchronization delay</li>
-                                <li>Your subscription is in a pending state waiting for payment confirmation</li>
-                            </ul>
-                        </div>
-                        <div className="mt-4 flex items-center space-x-3">
-                            <button
-                                type="button"
-                                onClick={handleRetryUpdate}
-                                disabled={isRetrying}
-                                className="inline-flex items-center px-3 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            <Alert
+                message="No Payment Records Found"
+                description={
+                    <div>
+                        <Text>This could happen for several reasons:</Text>
+                        <ul style={{ marginTop: 8, marginBottom: 16 }}>
+                            <li>Your subscription was recently created and the first payment is still being processed</li>
+                            <li>Payment webhook events from Stripe haven't been received yet</li>
+                            <li>There may be a temporary synchronization delay</li>
+                            <li>Your subscription is in a pending state waiting for payment confirmation</li>
+                        </ul>
+                        <Space>
+                            <Button
+                                type="primary"
+                                icon={isRetrying ? <SyncOutlined spin /> : <ReloadOutlined />}
+                                onClick={handleSync}
+                                loading={isRetrying}
+                                size="small"
                             >
-                                <RefreshCw className={`mr-2 h-4 w-4 ${isRetrying ? 'animate-spin' : ''}`} />
                                 {isRetrying ? 'Updating...' : 'Retry Update'}
-                            </button>
-                            <span className="text-xs text-blue-600">
+                            </Button>
+                            <Text type="secondary" style={{ fontSize: '12px' }}>
                                 This will fetch the latest payment records from Stripe
-                            </span>
-                        </div>
+                            </Text>
+                        </Space>
                     </div>
-                </div>
-            </div>
-        </div>
+                }
+                type="info"
+                icon={<InfoCircleOutlined />}
+                showIcon
+            />
+        </Space>
     );
 
-    return (
-        <div className="bg-white shadow rounded-lg overflow-hidden">
-            <div className="p-5 border-b border-gray-200">
-                <div className="flex justify-between items-center">
-                    <h3 className="text-lg font-medium text-gray-900">Subscription Payment Status</h3>
-                    {getSubscriptionStatusBadge()}
-                </div>
-            </div>
+    // Early return if no subscription
+    if (!subscription) {
+        return (
+            <Card title="Subscription Payment Status">
+                <Alert
+                    message="No Subscription"
+                    description="No subscription data provided"
+                    type="warning"
+                    showIcon
+                />
+            </Card>
+        );
+    }
 
+    return (
+        <Card style={{ marginBottom: 16 }}
+        >
+            {/* Alert for suspended subscription or failed payments */}
             {(isSuspended || hasFailedPayments) && (
-                <div className="p-4 bg-red-50 border-l-4 border-red-400">
-                    <div className="flex">
-                        <div className="flex-shrink-0">
-                            <AlertTriangle className="h-5 w-5 text-red-400" />
-                        </div>
-                        <div className="ml-3">
-                            <h3 className="text-sm font-medium text-red-800">
-                                {isSuspended
-                                    ? 'Your subscription is suspended due to payment issues.'
-                                    : 'We had trouble processing your last payment.'}
-                            </h3>
-                            <div className="mt-2 text-sm text-red-700">
-                                <p>
-                                    Please update your payment method to continue your subscription.
-                                </p>
-                            </div>
-                            <div className="mt-4">
-                                <button
-                                    type="button"
+                <Alert
+                    message={
+                        isSuspended
+                            ? 'Your subscription is suspended due to payment issues.'
+                            : 'We had trouble processing your last payment.'
+                    }
+                    description={
+                        <div>
+                            <Text>Please update your payment method to continue your subscription.</Text>
+                            <div style={{ marginTop: 12 }}>
+                                <Button
+                                    type="primary"
+                                    danger
+                                    icon={<CreditCardOutlined />}
                                     onClick={handleUpdatePaymentMethod}
-                                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
                                 >
-                                    <CreditCard className="mr-2 h-4 w-4" />
                                     Update Payment Method
-                                </button>
+                                </Button>
                             </div>
                         </div>
-                    </div>
-                </div>
+                    }
+                    type="error"
+                    icon={<WarningOutlined />}
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                />
             )}
 
-            <div className="p-5">
-                {isLoading ? (
-                    <div className="text-center py-4">
-                        <div className="animate-pulse flex justify-center">
-                            <div className="h-4 w-32 bg-gray-200 rounded"></div>
-                        </div>
-                    </div>
-                ) : error ? (
-                    <div className="text-center text-red-500 py-4">{error}</div>
-                ) : payments.length === 0 ? (
-                    renderNoPaymentRecordsInfo()
-                ) : (
-                    <div className="flow-root">
-                        <ul className="divide-y divide-gray-200">
-                            {payments.map((payment) => (
-                                <li key={payment.id} className="py-4">
-                                    <div className="flex items-center space-x-4">
-                                        <div className="flex-shrink-0">
-                                            {getStatusIcon(payment.status)}
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-gray-900 truncate">
-                                                {new Date(payment.createdAt).toLocaleDateString()} - {payment.currency} {payment.totalAmount}
-                                            </p>
-                                            {payment.status === PaymentStatus.Failed && (
-                                                <p className="text-sm text-red-500 truncate">
-                                                    {payment.failureReason || 'Payment failed'}
-                                                    {payment.nextRetryAt && (
-                                                        <span className="ml-2">
-                                                            Next retry: {new Date(payment.nextRetryAt).toLocaleDateString()}
-                                                        </span>
-                                                    )}
-                                                </p>
-                                            )}
-                                        </div>
-                                        <div className="inline-flex items-center text-sm text-gray-500">
-                                            {payment.status}
-                                        </div>
-                                    </div>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                )}
-            </div>
+            {/* Error Alert */}
+            {error && (
+                <Alert
+                    message="Error"
+                    description={error}
+                    type="error"
+                    closable
+                    onClose={() => setError(null)}
+                    style={{ marginBottom: 16 }}
+                />
+            )}
 
-            <div className="px-5 py-4 bg-gray-50 border-t border-gray-200">
-                <div className="flex justify-between text-sm">
-                    <button
-                        type="button"
-                        onClick={handleUpdatePaymentMethod}
-                        className="inline-flex items-center text-indigo-600 hover:text-indigo-900"
-                    >
-                        <CreditCard className="mr-1 h-4 w-4" />
-                        Update Payment Method
-                    </button>
-                    <button
-                        type="button"
-                        onClick={fetchPaymentData}
-                        className="inline-flex items-center text-gray-600 hover:text-gray-900"
-                    >
-                        Refresh
-                    </button>
+            {/* Loading state */}
+            {isLoading ? (
+                <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                    <Spin size="large" />
+                    <div style={{ marginTop: 8 }}>
+                        <Text>Loading payment data...</Text>
+                    </div>
                 </div>
+            ) : error && !payments.length ? (
+                <Result
+                    status="error"
+                    title="Failed to load payment data"
+                    subTitle={error}
+                    extra={
+                        <Button type="primary" onClick={fetchPaymentData}>
+                            Try Again
+                        </Button>
+                    }
+                />
+            ) : payments.length === 0 ? (
+                renderNoPaymentRecordsInfo()
+            ) : (
+                <List
+                    dataSource={payments}
+                    renderItem={(payment) => (
+                        <List.Item
+                            actions={[
+                                payment.status === PaymentStatus.Failed && (
+                                    <Space key="actions">
+                                        {payment.nextRetryAt && (
+                                            <Tooltip title={`Next retry: ${new Date(payment.nextRetryAt).toLocaleDateString()}`}>
+                                                <Text type="secondary" style={{ fontSize: '12px' }}>
+                                                    Next retry: {new Date(payment.nextRetryAt).toLocaleDateString()}
+                                                </Text>
+                                            </Tooltip>
+                                        )}
+                                        <Button
+                                            type="primary"
+                                            size="small"
+                                            onClick={() => handleRetryPayment(payment.id)}
+                                            loading={isRetrying}
+                                            icon={<ReloadOutlined />}
+                                        >
+                                            Retry Now
+                                        </Button>
+                                    </Space>
+                                )
+                            ].filter(Boolean)}
+                        >
+                            <List.Item.Meta
+                                avatar={getStatusIcon(payment.status)}
+                                title={
+                                    <Space>
+                                        <Text strong>
+                                            {new Date(payment.createdAt).toLocaleDateString()} - {payment.currency} {payment.totalAmount}
+                                        </Text>
+                                        <Badge
+                                            status={payment.status === PaymentStatus.Failed ? 'error' :
+                                                payment.status === PaymentStatus.Pending ? 'processing' : 'success'}
+                                            text={payment.status}
+                                        />
+                                    </Space>
+                                }
+                                description={
+                                    payment.status === PaymentStatus.Failed && payment.failureReason && (
+                                        <Text type="danger">
+                                            {payment.failureReason}
+                                        </Text>
+                                    )
+                                }
+                            />
+                        </List.Item>
+                    )}
+                />
+            )}
+
+            {/* Footer actions */}
+            <div style={{
+                marginTop: 16,
+                padding: '12px 0',
+                borderTop: '1px solid #f0f0f0',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+            }}>
+                <Button
+                    type="link"
+                    icon={<CreditCardOutlined />}
+                    onClick={handleUpdatePaymentMethod}
+                >
+                    Update Payment Method
+                </Button>
+                <Button
+                    type="text"
+                    icon={<ReloadOutlined />}
+                    onClick={fetchPaymentData}
+                >
+                    Refresh
+                </Button>
             </div>
-        </div>
+        </Card>
     );
 };
 
+interface SubscriptionPaymentManagerProps {
+    subscription: Subscription;
+    onDataUpdated?: () => void;
+}
+
 // Main component that handles payment update flow
-const SubscriptionPaymentManager = ({
+const SubscriptionPaymentManager: React.FC<SubscriptionPaymentManagerProps> = ({
     subscription,
     onDataUpdated
-}: {
-    subscription: Subscription | null;
-    onDataUpdated?: () => void;
 }) => {
     const [updateUrl, setUpdateUrl] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
-    const handleUpdatePaymentMethod = async (subscriptionId: string) => {
+    const handleUpdatePaymentMethod = useCallback(async (subscriptionId: string) => {
+        if (isLoading) return; // Prevent double submission
+
         setIsLoading(true);
         setError(null);
 
         try {
-            // Use the api service
-            const response = await api.post(`/payment-methods/update/${subscriptionId}`);
-            const data = response.data;
+            const data = await updatePaymentMethod(subscriptionId);
 
-            if (data.url) {
-                setUpdateUrl(data.url);
-                window.location.href = data.url; // Redirect to Stripe
+            if (data.checkoutUrl) {
+                setUpdateUrl(data.checkoutUrl);
+                window.location.href = data.checkoutUrl; // Redirect to Stripe
             } else {
                 throw new Error('No redirect URL returned');
             }
         } catch (err: any) {
             const errorMessage = err.response?.data?.message || err.message || 'Failed to create payment update session';
             setError(errorMessage);
-            console.error('Error creating payment update session:', err);
+
+            notification.error({
+                message: 'Payment Method Update Failed',
+                description: errorMessage,
+                placement: 'topRight'
+            });
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [isLoading]);
 
-    const handleReactivateSubscription = async (subscriptionId: string) => {
+    const handleReactivateSubscription = useCallback(async (subscriptionId: string) => {
+        if (isLoading) return; // Prevent double submission
+
         setIsLoading(true);
         setError(null);
 
         try {
-            // Use the api service
-            await api.post(`/subscription-management/reactivate/${subscriptionId}`);
+            await reactivatecSubscription(subscriptionId);
+
+            notification.success({
+                message: 'Subscription Reactivated',
+                description: 'Your subscription has been successfully reactivated',
+                placement: 'topRight'
+            });
 
             // Refresh the page to update status
-            window.location.reload();
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500);
+
         } catch (err: any) {
             const errorMessage = err.response?.data?.message || err.message || 'Failed to reactivate subscription';
             setError(errorMessage);
-            console.error('Error reactivating subscription:', err);
+
+            notification.error({
+                message: 'Reactivation Failed',
+                description: errorMessage,
+                placement: 'topRight'
+            });
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [isLoading]);
 
     return (
         <div>
+            {/* Global error alert */}
             {error && (
-                <div className="mb-4 p-4 bg-red-50 border-l-4 border-red-400 text-red-700">
-                    {error}
-                </div>
+                <Alert
+                    message="Error"
+                    description={error}
+                    type="error"
+                    closable
+                    onClose={() => setError(null)}
+                    style={{ marginBottom: 16 }}
+                />
             )}
 
+            {/* Loading overlay */}
             {isLoading ? (
-                <div className="text-center py-4">
-                    <div className="animate-pulse flex justify-center">
-                        <div className="h-6 w-48 bg-gray-200 rounded"></div>
+                <Card>
+                    <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                        <Spin size="large" />
+                        <div style={{ marginTop: 16 }}>
+                            <Text>Processing your request...</Text>
+                        </div>
                     </div>
-                </div>
+                </Card>
             ) : (
                 <PaymentStatusCard
                     subscription={subscription}
@@ -384,34 +518,33 @@ const SubscriptionPaymentManager = ({
                 />
             )}
 
+            {/* Subscription reactivation section */}
             {(subscription?.status === 'SUSPENDED' || subscription?.status === PaymentStatus.Pending) && (
-                <div className="mt-4 px-4 py-3 bg-yellow-50 rounded-lg">
-                    <div className="flex">
-                        <div className="flex-shrink-0">
-                            <AlertCircle className="h-5 w-5 text-yellow-400" />
-                        </div>
-                        <div className="ml-3">
-                            <h3 className="text-sm font-medium text-yellow-800">
-                                Subscription Suspended
-                            </h3>
-                            <div className="mt-2 text-sm text-yellow-700">
-                                <p>
+                <Card style={{ marginTop: 16 }}>
+                    <Alert
+                        message="Subscription Suspended"
+                        description={
+                            <div>
+                                <Text>
                                     After updating your payment method, you can reactivate your subscription.
-                                </p>
+                                </Text>
+                                <div style={{ marginTop: 12 }}>
+                                    <Button
+                                        type="primary"
+                                        icon={<CheckCircleOutlined />}
+                                        onClick={() => handleReactivateSubscription(subscription.id)}
+                                        loading={isLoading}
+                                    >
+                                        Reactivate Subscription
+                                    </Button>
+                                </div>
                             </div>
-                            <div className="mt-4">
-                                <button
-                                    type="button"
-                                    onClick={() => handleReactivateSubscription(subscription.id)}
-                                    disabled={isLoading}
-                                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-yellow-600 hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 disabled:opacity-50"
-                                >
-                                    Reactivate Subscription
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                        }
+                        type="warning"
+                        icon={<ExclamationCircleOutlined />}
+                        showIcon
+                    />
+                </Card>
             )}
         </div>
     );

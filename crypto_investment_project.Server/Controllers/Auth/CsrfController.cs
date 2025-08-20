@@ -1,4 +1,8 @@
-﻿using Application.Interfaces.Logging;
+﻿using Application.Contracts.Responses.Csrf;
+using Application.Extensions;
+using Application.Interfaces.Logging;
+using Domain.Constants;
+using Domain.DTOs;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -36,7 +40,12 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 Path = "/" // Ensure this explicitly to avoid path issues
             });
 
-            return Ok(new { token = tokens.RequestToken });
+            return ResultWrapper.Success(
+                new CsrfTokenResponse
+                {
+                    Token = tokens.RequestToken
+                })
+                .ToActionResult(this);
         }
 
         /// <summary>
@@ -54,32 +63,24 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 await _antiforgery.ValidateRequestAsync(HttpContext);
 
                 _logger.LogInformation("✅ CSRF token validation successful");
-                return Ok(new
-                {
-                    valid = true,
-                    message = "CSRF token is valid",
-                    timestamp = DateTime.UtcNow
-                });
+
+                return ResultWrapper.Success("CSRF token is valid").ToActionResult(this);
             }
             catch (AntiforgeryValidationException ex)
             {
                 _logger.LogWarning($"⚠️ CSRF token validation failed: {ex.Message}");
-                return BadRequest(new
-                {
-                    valid = false,
-                    error = "Invalid CSRF token",
-                    message = ex.Message,
-                    timestamp = DateTime.UtcNow
-                });
+
+                return ResultWrapper.Failure(
+                    FailureReason.ValidationError,
+                    "Invalid CSRF token")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError($"❌ CSRF token validation error: {ex.Message}");
-                return StatusCode(500, new
-                {
-                    error = "CSRF validation error",
-                    message = ex.Message
-                });
+
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -90,17 +91,12 @@ namespace crypto_investment_project.Server.Controllers.Auth
         [AllowAnonymous]
         public IActionResult Test()
         {
-            return Ok(new
-            {
-                message = "CSRF controller is working",
-                timestamp = DateTime.UtcNow,
-                endpoints = new[]
+            return ResultWrapper.Success(new[]
                 {
                     "GET /api/v1/csrf/refresh - Get new CSRF token",
                     "GET /api/v1/csrf/token - Get current token",
                     "POST /api/v1/csrf/validate - Validate token"
-                }
-            });
+                },"CSRF controller is working").ToActionResult(this);
         }
     }
 }

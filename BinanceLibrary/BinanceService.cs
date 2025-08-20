@@ -235,6 +235,7 @@ namespace BinanceLibrary
                     Price = placedBinanceOrder.AverageFillPrice,
                     QuantityFilled = placedBinanceOrder.QuantityFilled,
                     OrderId = placedBinanceOrder.Id,
+                    ClientOrderId = placedBinanceOrder.ClientOrderId,
                     Status = MapBinanceStatus(placedBinanceOrder.Status) ?? OrderStatus.Pending
                 };
             }
@@ -281,6 +282,7 @@ namespace BinanceLibrary
                     Price = placedBinanceOrder.AverageFillPrice,
                     QuantityFilled = placedBinanceOrder.QuantityFilled,
                     OrderId = placedBinanceOrder.Id,
+                    ClientOrderId = placedBinanceOrder.ClientOrderId,
                     Status = MapBinanceStatus(placedBinanceOrder.Status) ?? OrderStatus.Pending
                 };
             }
@@ -610,9 +612,8 @@ namespace BinanceLibrary
             try
             {
                 Dictionary<string, decimal> priceDict = new();
-                foreach (var ticker in tickers)
+                foreach (var ticker in tickers.Distinct())
                 {
-                    if (symbolsDict.ContainsKey(ticker)) continue;
                     var symbol = $"{ticker}{_reserveAssetTicker}";
                     symbolsDict.TryAdd(ticker, symbol);
                 };

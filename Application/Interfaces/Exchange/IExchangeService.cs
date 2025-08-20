@@ -23,6 +23,8 @@ namespace Application.Interfaces.Exchange
 
         Task<ResultWrapper<decimal>> GetCachedAssetPriceAsync(string ticker);
 
+        Task<ResultWrapper<Dictionary<string, decimal>>> GetCachedAssetPricesAsync(IEnumerable<string> tickers);
+
         /// <summary>
         /// Retrieves all pending exchange orders that need reconciliation.
         /// </summary>

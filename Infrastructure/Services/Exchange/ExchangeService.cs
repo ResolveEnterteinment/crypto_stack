@@ -24,6 +24,9 @@ namespace Infrastructure.Services.Exchange
         private const string ASSET_PRICE_CATCHE_FORMAT = "price:{0}:{1}";
         private static readonly TimeSpan ASSET_PRICE_CACHE_DURATION = TimeSpan.FromSeconds(30);
 
+        private const string MIN_NOTIONAL_CATCHE_FORMAT = "min_notional:{0}:{1}";
+        private static readonly TimeSpan MIN_NOTIONAL_CACHE_DURATION = TimeSpan.FromHours(1);
+
 
         public IReadOnlyDictionary<string, IExchange> Exchanges => _exchanges;
         public IExchange DefaultExchange => _exchanges.Values.FirstOrDefault()
@@ -32,8 +35,6 @@ namespace Infrastructure.Services.Exchange
 
         public ExchangeService(
             IOptions<ExchangeServiceSettings> settings,
-            ISubscriptionService subscriptionService,
-            IBalanceService balanceService,
             ITransactionService transactionService,
             IAssetService assetService,
             IServiceProvider serviceProvider)
@@ -113,6 +114,136 @@ namespace Infrastructure.Services.Exchange
                         ASSET_PRICE_CACHE_DURATION);
 
                     return cachedPrice;
+                })
+                .WithExchangeOperationResilience()
+                .WithPerformanceMonitoring(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15))
+                .WithPerformanceThreshold(TimeSpan.FromSeconds(3))
+                .ExecuteAsync();
+        }
+
+        public async Task<ResultWrapper<Dictionary<string, decimal>>> GetCachedAssetPricesAsync(IEnumerable<string> tickers)
+        {
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Exchange",
+                    FileName = "ExchangeService",
+                    OperationName = "GetCachedAssetPricesAsync(IEnumerable<string> tickers)",
+                    State = {
+                        ["Ticker"] = string.Join(',', tickers),
+                    },
+                    LogLevel = LogLevel.Critical
+                },
+                async () =>
+                {
+                    if (tickers == null || tickers.Count() == 0)
+                        throw new ArgumentException("At least one ticker is required", nameof(tickers));
+
+                    // Get assets from database to determine exchanges
+                    var assetsResult = await _assetService.GetManyByTickersAsync(tickers);
+                    
+                    if (assetsResult == null || !assetsResult.IsSuccess || assetsResult.Data == null || !assetsResult.Data.Any())
+                        throw new AssetFetchException("None of the requested tickers were found");
+
+                    // Group assets by exchange
+                    var assetsByExchange = assetsResult.Data
+                        .GroupBy(a => a.Exchange)
+                        .ToDictionary(g => g.Key, g => g.ToList());
+
+                    var result = new Dictionary<string, decimal>();
+
+                    // Process each exchange group in parallel
+                    var tasks = assetsByExchange.Select(async exchangeGroup =>
+                    {
+                        var exchangeName = exchangeGroup.Key;
+                        var exchangeAssets = exchangeGroup.Value;
+
+                        // Verify exchange exists
+                        if (!_exchanges.TryGetValue(exchangeName, out var exchange))
+                        {
+                            _loggingService.LogWarning("Exchange {Exchange} not supported, skipping tickers", exchangeName);
+                            return;
+                        }
+
+                        var exchangeTickers = exchangeAssets.Select(a => a.Ticker).Distinct().ToArray();
+
+                        try
+                        {
+                            // Step 1: Check individual cache entries first
+                            var cachedResults = new Dictionary<string, decimal>();
+                            var uncachedTickers = new List<string>();
+
+                            foreach (var ticker in exchangeTickers)
+                            {
+                                var individualCacheKey = string.Format(ASSET_PRICE_CATCHE_FORMAT, exchangeName, ticker);
+
+                                if (_cacheService.TryGetValue(individualCacheKey, out decimal cachedValue))
+                                {
+                                    cachedResults[ticker] = cachedValue;
+                                    _loggingService.LogInformation("Cache hit for asset price: {Exchange}:{Ticker}", exchangeName, ticker);
+                                }
+                                else
+                                {
+                                    uncachedTickers.Add(ticker);
+                                }
+                            }
+
+                            // Step 2: Fetch remaining tickers from exchange if any
+                            Dictionary<string, decimal>? fetchedResults = null;
+                            if (uncachedTickers.Any())
+                            {
+                                _loggingService.LogInformation("Fetching {Count} uncached asset price(s) from {Exchange}",
+                                    uncachedTickers.Count, exchangeName);
+
+                                var assetPricesResult = await exchange.GetAssetPrices(uncachedTickers.ToArray());
+
+                                if (!assetPricesResult.IsSuccess || assetPricesResult.Data == null)
+                                    throw new ExchangeApiException($"Failed to get asset prices from {exchangeName}: {assetPricesResult?.ErrorMessage ?? "Unknown error"}", exchangeName);
+
+                                fetchedResults = assetPricesResult.Data;
+
+                                // Step 3: Cache individual results for future use
+                                foreach (var ticker in uncachedTickers)
+                                {
+                                    var symbol = $"{ticker}{exchange.QuoteAssetTicker}";
+
+                                    if (fetchedResults.TryGetValue(symbol, out decimal price))
+                                    {
+                                        var individualCacheKey = string.Format(ASSET_PRICE_CATCHE_FORMAT, exchangeName, ticker);
+
+                                        _cacheService.Set(individualCacheKey, price, MIN_NOTIONAL_CACHE_DURATION);
+
+                                        cachedResults[ticker] = price;
+                                    }
+                                }
+                            }
+
+                            // Step 4: Combine cached and fetched results
+                            foreach (var asset in exchangeAssets)
+                            {
+                                if (cachedResults.TryGetValue(asset.Ticker, out decimal assetPrice))
+                                {
+                                    lock (result)
+                                    {
+                                        result[asset.Ticker] = assetPrice;
+                                    }
+                                }
+                            }
+
+                            _loggingService.LogInformation("Asset prices for {Exchange}: {CachedCount} cached, {FetchedCount} fetched",
+                                exchangeName, cachedResults.Count - uncachedTickers.Count, uncachedTickers.Count);
+                        }
+                        catch (Exception ex)
+                        {
+                            _loggingService.LogError("Failed to get asset prices from {Exchange}: {Error}",
+                                exchangeName, ex.Message);
+                        }
+                    });
+
+                    // Wait for all exchange calls to complete
+                    await Task.WhenAll(tasks);
+
+                    return result;
                 })
                 .WithExchangeOperationResilience()
                 .WithPerformanceMonitoring(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15))
@@ -326,8 +457,8 @@ namespace Infrastructure.Services.Exchange
                     FileName = "ExchangeService",
                     OperationName = "GetMinNotionalsAsync(string[] tickers, CancellationToken ct = default)",
                     State = {
-                ["TickerCount"] = tickers.Length,
-                ["Tickers"] = string.Join(",", tickers),
+                        ["TickerCount"] = tickers.Length,
+                        ["Tickers"] = string.Join(",", tickers),
                     },
                     LogLevel = LogLevel.Critical
                 },
@@ -347,7 +478,6 @@ namespace Infrastructure.Services.Exchange
                         .ToDictionary(g => g.Key, g => g.ToList());
 
                     var result = new Dictionary<string, decimal>();
-                    var cacheDuration = TimeSpan.FromHours(1);
 
                     // Process each exchange group in parallel
                     var tasks = assetsByExchange.Select(async exchangeGroup =>
@@ -362,7 +492,7 @@ namespace Infrastructure.Services.Exchange
                             return;
                         }
 
-                        var exchangeTickers = exchangeAssets.Select(a => a.Ticker).ToArray();
+                        var exchangeTickers = exchangeAssets.Select(a => a.Ticker).Distinct().ToArray();
 
                         try
                         {
@@ -372,7 +502,8 @@ namespace Infrastructure.Services.Exchange
 
                             foreach (var ticker in exchangeTickers)
                             {
-                                var individualCacheKey = $"min_notional:{exchangeName}:{ticker}";
+                                var individualCacheKey = string.Format(MIN_NOTIONAL_CATCHE_FORMAT, exchangeName, ticker);
+                                
                                 if (_cacheService.TryGetValue(individualCacheKey, out decimal cachedValue))
                                 {
                                     cachedResults[ticker] = cachedValue;
@@ -392,6 +523,7 @@ namespace Infrastructure.Services.Exchange
                                     uncachedTickers.Count, exchangeName);
 
                                 var minNotionalsResult = await exchange.GetMinNotionals(uncachedTickers.ToArray());
+                                
                                 if (!minNotionalsResult.IsSuccess || minNotionalsResult.Data == null)
                                     throw new ExchangeApiException($"Failed to get minimum notionals from {exchangeName}: {minNotionalsResult?.ErrorMessage ?? "Unknown error"}", exchangeName);
 
@@ -401,10 +533,13 @@ namespace Infrastructure.Services.Exchange
                                 foreach (var ticker in uncachedTickers)
                                 {
                                     var symbol = $"{ticker}{exchange.QuoteAssetTicker}";
+                                    
                                     if (fetchedResults.TryGetValue(symbol, out decimal minNotional))
                                     {
                                         var individualCacheKey = $"min_notional:{exchangeName}:{ticker}";
-                                        _cacheService.Set(individualCacheKey, minNotional, cacheDuration);
+                                        
+                                        _cacheService.Set(individualCacheKey, minNotional, MIN_NOTIONAL_CACHE_DURATION);
+                                        
                                         cachedResults[ticker] = minNotional;
                                     }
                                 }

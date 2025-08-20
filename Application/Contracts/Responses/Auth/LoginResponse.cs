@@ -3,7 +3,7 @@
     /// <summary>
     /// Response model for user login operations
     /// </summary>
-    public class LoginResponse : BaseResponse
+    public class LoginResponse
     {
         /// <summary>
         /// JWT access token for API authorization

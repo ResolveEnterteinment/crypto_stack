@@ -10,7 +10,6 @@ using Application.Interfaces.Subscription;
 using Application.Interfaces.Withdrawal;
 using Application.Validation;
 using Domain.DTOs.Settings;
-using Domain.Interfaces;
 using Infrastructure.Services;
 using Infrastructure.Services.Asset;
 using Infrastructure.Services.Base;
@@ -168,24 +167,24 @@ public static class CoreServicesExtensions
 
 
         // 2) Your existing registrations...
-        _ = services.AddScoped<IExchangeService, ExchangeService>();
-        _ = services.AddScoped<IPaymentProcessingService, PaymentProcessingService>();
-        _ = services.AddScoped<IOrderManagementService, OrderManagementService>();
-        _ = services.AddScoped<IBalanceManagementService, BalanceManagementService>();
-        _ = services.AddScoped<IPaymentService, PaymentService>();
-        _ = services.AddScoped<IPaymentWebhookHandler, StripeWebhookHandler>();
-        _ = services.AddScoped<ISubscriptionService, SubscriptionService>();
-        _ = services.AddScoped<ISubscriptionRetryService, SubscriptionRetryService>();
-        _ = services.AddScoped<IAssetService, AssetService>();
-        _ = services.AddScoped<INetworkService, NetworkService>();
-        _ = services.AddScoped<IBalanceService, BalanceService>();
-        _ = services.AddScoped<ITransactionService, TransactionService>();
-        _ = services.AddScoped<IDashboardService, DashboardService>();
-        _ = services.AddScoped<IAuthenticationService, AuthenticationService>();
-        _ = services.AddScoped<IUserService, UserService>();
-        _ = services.AddScoped<ILogExplorerService, LogExplorerService>();
-        _ = services.AddScoped<INotificationService, NotificationService>();
-        _ = services.AddScoped<IIdempotencyService, IdempotencyService>();
-        _ = services.AddScoped<IWithdrawalService, WithdrawalService>();
+        services.AddScoped<IExchangeService, ExchangeService>();
+        services.AddScoped<IPaymentProcessingService, PaymentProcessingService>();
+        services.AddScoped<IOrderManagementService, OrderManagementService>();
+        services.AddScoped<IBalanceManagementService, BalanceManagementService>();
+        services.AddScoped<IPaymentService, PaymentService>();
+        services.AddScoped<IPaymentWebhookHandler, StripeWebhookHandler>();
+        services.AddScoped<ISubscriptionService, SubscriptionService>();
+        services.AddScoped<ISubscriptionRetryService, SubscriptionRetryService>();
+        services.AddScoped<IAssetService, AssetService>();
+        services.AddScoped<INetworkService, NetworkService>();
+        services.AddScoped<IBalanceService, BalanceService>();
+        services.AddScoped<ITransactionService, TransactionService>();
+        services.AddScoped<IDashboardService, DashboardService>();
+        services.AddScoped<IAuthenticationService, AuthenticationService>();
+        services.AddScoped<IUserService, UserService>();
+        services.AddScoped<ILogExplorerService, LogExplorerService>();
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<IIdempotencyService, IdempotencyService>();
+        services.AddScoped<IWithdrawalService, WithdrawalService>();
     }
 }

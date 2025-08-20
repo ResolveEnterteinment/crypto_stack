@@ -3,8 +3,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import AssetAllocationForm from './AssetAllocationForm';
 import { Allocation } from '../../types/subscription';
 import { Asset } from '../../types/assetTypes';
-import exchangeService, { MinNotionalResponse } from '../../services/exchangeService';
-import { calculateNetInvestmentAmount, calculateFeeBreakdown, FeeBreakdown } from '../../utils/feeCalculation';
+import exchangeService from '../../services/exchangeService';
+import { calculateFeeBreakdown, FeeBreakdown } from '../../utils/feeCalculation';
 
 // Enhanced Asset interface with minimum notional value
 export interface EnhancedAsset extends Asset {
@@ -76,7 +76,7 @@ const AssetAllocationStep: React.FC<AssetAllocationStepProps> = ({
                 // Enhance assets with minimum notional data
                 const enhanced: EnhancedAsset[] = availableAssets.map(asset => ({
                     ...asset,
-                    minNotional: minNotionals[asset.ticker] || undefined
+                    minNotional: minNotionals[asset.ticker] || 10 // Default to $10 if not found
                 }));
 
                 setEnhancedAssets(enhanced);

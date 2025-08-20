@@ -29,7 +29,8 @@ import PortfolioChart from "../components/Dashboard/portfolio-chart";
 import AssetBalanceCard from "../components/Dashboard/asset-balance-card";
 import SubscriptionCard from "../components/Dashboard/subscription-card";
 import { getDashboardData } from "../services/dashboard";
-import { getSubscriptions, getTransactions, cancelSubscription } from "../services/subscription";
+import { getSubscriptions, cancelSubscription } from "../services/subscription";
+import { getBySubscription as getTransactionsBySubscription } from "../services/transactionService";
 import { Subscription } from "../types/subscription";
 import ITransaction from "../interfaces/ITransaction";
 import ApiTestPanel from '../components/DevTools/ApiTestPanel';
@@ -215,7 +216,7 @@ const DashboardPageContent: React.FC = () => {
 
         try {
             setTransactionsLoading(true);
-            const data = await getTransactions(subscriptionId);
+            const data = await getTransactionsBySubscription(subscriptionId);
             setTransactions(data);
         } catch (err) {
             console.error('Error fetching transactions:', err);
@@ -467,7 +468,7 @@ const DashboardPageContent: React.FC = () => {
                                     Investment Dashboard
                                 </Title>
                                 <Text type="secondary" style={{ fontSize: '16px' }}>
-                                    Welcome back, {user?.email}. Here's your portfolio overview.
+                                    Welcome back, {user?.fullName}. Here's your portfolio overview.
                                 </Text>
                             </Col>
                             <Col>

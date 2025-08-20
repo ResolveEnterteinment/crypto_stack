@@ -62,16 +62,15 @@ const KycAdminPanel: React.FC = () => {
     const fetchVerifications = async () => {
         try {
             setLoading(true);
-            const response = await api.get<{ success: boolean; data: PaginatedResult }>(
+            const response = await api.get<PaginatedResult>(
                 `/admin/kyc/pending?page=${page}&pageSize=10`
             );
 
-            if (response.data.success) {
-                setVerifications(response.data.data.items);
-                setTotalPages(response.data.data.totalPages);
-            } else {
-                setError('Failed to fetch verifications');
-            }
+            if (response.data == null || !response.success) {
+                throw new Error(response.message || 'Failed to fetch verifications');
+            } 
+            setVerifications(response.data.items);
+            setTotalPages(response.data.totalPages);
         } catch (err: any) {
             setError(err.message || 'An error occurred');
         } finally {
@@ -89,12 +88,12 @@ const KycAdminPanel: React.FC = () => {
         }
 
         try {
-            const response = await api.post(`/admin/kyc/update-status/${selectedVerification.userId}`, {
+            const response = await api.post<void>(`/admin/kyc/update-status/${selectedVerification.userId}`, {
                 status: statusUpdate.status,
                 comment: statusUpdate.comment,
             });
 
-            if (response.data.success) {
+            if (response.success) {
                 // Refresh the verifications list
                 fetchVerifications();
                 // Close the detail view

@@ -1,9 +1,13 @@
 ﻿using Application.Contracts.Requests.Auth;
 using Application.Contracts.Responses;
 using Application.Contracts.Responses.Auth;
+using Application.Extensions;
 using Application.Interfaces;
+using Domain.Constants;
+using Domain.DTOs;
 using Domain.DTOs.Error;
 using Domain.Models.Authentication;
+using Domain.Utilities;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -69,15 +73,13 @@ namespace crypto_investment_project.Server.Controllers.Auth
             {
                 if (!ModelState.IsValid)
                 {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "Invalid role data provided",
-                        Code = "INVALID_ROLE_DATA",
-                        ValidationErrors = ModelState.ToDictionary(
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid role data provided",
+                        "INVALID_REQUEST",
+                        ModelState.ToDictionary(
                             kvp => kvp.Key,
-                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()),
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()))
+                        .ToActionResult(this);
                 }
 
                 // Sanitize role name for security
@@ -86,12 +88,13 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 // Check if role already exists
                 if (await _roleManager.RoleExistsAsync(sanitizedRoleName))
                 {
-                    return Conflict(new ErrorResponse
-                    {
-                        Message = $"Role '{sanitizedRoleName}' already exists",
-                        Code = "ROLE_ALREADY_EXISTS",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Failure(FailureReason.ConcurrencyConflict,
+                        $"Role '{sanitizedRoleName}' already exists",
+                        "ROLE_ALREADY_EXISTS",
+                        ModelState.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()))
+                        .ToActionResult(this);
                 }
 
                 var appRole = new ApplicationRole { Name = sanitizedRoleName };
@@ -99,37 +102,28 @@ namespace crypto_investment_project.Server.Controllers.Auth
 
                 if (!createRoleResult.Succeeded)
                 {
-                    return StatusCode(500, new ErrorResponse
-                    {
-                        Message = "Failed to create role",
-                        Code = "ROLE_CREATION_FAILED",
-                        ValidationErrors = new Dictionary<string, string[]>
+                    return ResultWrapper.Failure(FailureReason.Unknown,
+                        "Failed to create role",
+                        "ROLE_CREATION_FAILED",
+                        new Dictionary<string, string[]>
                         {
                             ["Errors"] = createRoleResult.Errors.Select(e => e.Description).ToArray()
-                        },
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                        })
+                        .ToActionResultWithStatusCode(this, 500);
                 }
 
                 _logger.LogInformation("Role {RoleName} created successfully by {UserId}",
                     sanitizedRoleName, User.FindFirstValue(ClaimTypes.NameIdentifier));
 
-                return Ok(new BaseResponse
-                {
-                    Success = true,
-                    Message = $"Role '{sanitizedRoleName}' created successfully"
-                });
+                return ResultWrapper.Success($"Role '{sanitizedRoleName}' created successfully")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating role {RoleName}", request.Role);
 
-                return StatusCode(500, new ErrorResponse
-                {
-                    Message = "An error occurred while creating the role",
-                    Code = "INTERNAL_SERVER_ERROR",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -146,7 +140,7 @@ namespace crypto_investment_project.Server.Controllers.Auth
         [Route("register")]
         [EnableRateLimiting("AuthEndpoints")]
         [IgnoreAntiforgeryToken]
-        [ProducesResponseType(typeof(RegisterResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
@@ -156,15 +150,13 @@ namespace crypto_investment_project.Server.Controllers.Auth
             {
                 if (!ModelState.IsValid)
                 {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "Invalid registration data",
-                        Code = "INVALID_REGISTRATION_DATA",
-                        ValidationErrors = ModelState.ToDictionary(
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid registration data",
+                        "INVALID_REQUEST",
+                        ModelState.ToDictionary(
                             kvp => kvp.Key,
-                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()),
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()))
+                        .ToActionResult(this);
                 }
 
                 // Get client IP for rate limiting/security
@@ -175,18 +167,16 @@ namespace crypto_investment_project.Server.Controllers.Auth
 
                 // Even if registration fails due to duplicate email or other validation,
                 // we return 200 with failure details to prevent user enumeration attacks
-                return Ok(result);
+
+                return ResultWrapper.Success(result)
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error during registration");
+                _logger.LogError(ex, "An error occurred during registration");
 
-                return StatusCode(500, new ErrorResponse
-                {
-                    Message = "An error occurred during registration",
-                    Code = "REGISTRATION_ERROR",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -216,33 +206,31 @@ namespace crypto_investment_project.Server.Controllers.Auth
             {
                 if (!ModelState.IsValid)
                 {
-                    return BadRequest(new ErrorResponse
+                    if (!ModelState.IsValid)
                     {
-                        Message = "Invalid login data",
-                        Code = "INVALID_LOGIN_DATA",
-                        ValidationErrors = ModelState.ToDictionary(
-                            kvp => kvp.Key,
-                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()),
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                        return ResultWrapper.Failure(FailureReason.ValidationError,
+                            "Invalid login data",
+                            "INVALID_REQUEST",
+                            ModelState.ToDictionary(
+                                kvp => kvp.Key,
+                                kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()))
+                            .ToActionResult(this);
+                    }
                 }
 
                 // Get client IP for rate limiting/security
                 string clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
                 _logger.LogInformation("Login attempt from IP {ClientIP}", clientIp);
 
-                var result = await _authenticationService.LoginAsync(request);
+                var loginResult = await _authenticationService.LoginAsync(request);
 
-                if (!result.Success)
+                if (!loginResult.IsSuccess)
                 {
                     // Return 401 for authentication failures
-                    return Unauthorized(new ErrorResponse
-                    {
-                        Message = result.Message,
-                        Code = "AUTHENTICATION_FAILED",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return loginResult.ToActionResultWithStatusCode(this, 401);
                 }
+
+                var result = loginResult.Data;
 
                 // Queue cache warmup - this is why you need singleton registration
                 cacheWarmup.QueueUserCacheWarmup(Guid.Parse(result.UserId));
@@ -251,27 +239,21 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 SetRefreshTokenCookie(result.RefreshToken);
 
                 // Return success response with access token
-                return Ok(new
-                {
-                    result.Success,
-                    result.Message,
-                    result.AccessToken,
-                    result.UserId,
-                    result.Username,
-                    result.EmailConfirmed
+                return ResultWrapper.Success(new LoginResponse {
+                    AccessToken = result.AccessToken,
+                    RefreshToken = result.RefreshToken,
+                    UserId = DataMaskingUtility.MaskAlphanumeric(result.UserId.ToString()),
+                    Username = DataMaskingUtility.MaskFullName(result.Username),
+                    EmailConfirmed = result.EmailConfirmed
                     // Note: RefreshToken deliberately not included in response body
-                });
+                }).ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during login");
 
-                return StatusCode(500, new ErrorResponse
-                {
-                    Message = "An error occurred during login",
-                    Code = "LOGIN_ERROR",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -286,30 +268,26 @@ namespace crypto_investment_project.Server.Controllers.Auth
         [Authorize]
         [ProducesResponseType(typeof(UserDataResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        public async Task<IActionResult> GetCurrentUser()
+        public async Task<IActionResult> GetCurrentUser([FromServices] CacheWarmupService cacheWarmup)
         {
             try
             {
                 var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (string.IsNullOrEmpty(userId))
                 {
-                    return Unauthorized(new ErrorResponse
-                    {
-                        Message = "User identity not found",
-                        Code = "IDENTITY_NOT_FOUND",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Failure(FailureReason.Unauthorized,
+                            "User identity not found",
+                            "USER_NOT_FOUND")
+                            .ToActionResult(this);
                 }
 
                 var user = await _userManager.FindByIdAsync(userId);
                 if (user == null)
                 {
-                    return Unauthorized(new ErrorResponse
-                    {
-                        Message = "User not found",
-                        Code = "USER_NOT_FOUND",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Failure(FailureReason.Unauthorized,
+                            "User not found",
+                            "USER_NOT_FOUND")
+                            .ToActionResult(this);
                 }
 
                 var roles = await _userManager.GetRolesAsync(user);
@@ -317,27 +295,26 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 // Get user data
                 var userData = await _userService.GetAsync(user.Id);
 
-                return Ok(new UserDataResponse
+                // Queue cache warmup - this is why you need singleton registration
+                cacheWarmup.QueueUserCacheWarmup(Guid.Parse(userId));
+
+                return ResultWrapper.Success(new UserDataResponse
                 {
                     Success = true,
-                    UserId = user.Id.ToString(),
-                    Email = user.Email,
-                    Username = user.Fullname,
+                    Id = user.Id.ToString(),
+                    Email = DataMaskingUtility.MaskEmail(user.Email),
+                    Username = DataMaskingUtility.MaskFullName(user.UserName),
                     EmailConfirmed = user.EmailConfirmed,
                     Roles = roles.ToArray(),
                     IsFirstLogin = !user.HasCompletedOnboarding
-                });
+                }).ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving current user");
 
-                return StatusCode(500, new ErrorResponse
-                {
-                    Message = "An error occurred while retrieving user information",
-                    Code = "USER_RETRIEVAL_ERROR",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -354,12 +331,10 @@ namespace crypto_investment_project.Server.Controllers.Auth
         {
             if (string.IsNullOrEmpty(request.Token))
             {
-                return BadRequest(new ErrorResponse
-                {
-                    Message = "Invalid confirmation token",
-                    Code = "INVALID_TOKEN",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid confirmation token",
+                        "INVALID_TOKEN")
+                        .ToActionResult(this);
             }
 
             try
@@ -368,12 +343,10 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 string[] tokenParts = request.Token.Split(':', 2);
                 if (tokenParts.Length != 2)
                 {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "Invalid token format",
-                        Code = "INVALID_TOKEN_FORMAT",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid token format",
+                        "INVALID_TOKEN")
+                        .ToActionResult(this);
                 }
 
                 string userId = tokenParts[0];
@@ -381,18 +354,19 @@ namespace crypto_investment_project.Server.Controllers.Auth
 
                 var result = await _authenticationService.ConfirmEmail(userId, emailToken);
 
-                return Ok(result);
+                if (result == null || !result.IsSuccess)
+                {
+                    throw new Exception("Failed to confirm email");
+                }
+
+                return result.ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during email confirmation");
-                
-                return StatusCode(500, new ErrorResponse
-                {
-                    Message = "An error occurred during email confirmation",
-                    Code = "EMAIL_CONFIRMATION_ERROR",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -414,15 +388,14 @@ namespace crypto_investment_project.Server.Controllers.Auth
             {
                 if (!ModelState.IsValid)
                 {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "Invalid email",
-                        Code = "INVALID_EMAIL",
-                        ValidationErrors = ModelState.ToDictionary(
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid email",
+                        "INVALID_REQUEST",
+                        ModelState.ToDictionary(
                             kvp => kvp.Key,
-                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()),
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray())
+                        )
+                        .ToActionResult(this);
                 }
 
                 // Get client IP for rate limiting/security
@@ -436,13 +409,9 @@ namespace crypto_investment_project.Server.Controllers.Auth
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during confirmation email resend");
-                
-                return StatusCode(500, new ErrorResponse
-                {
-                    Message = "An error occurred during confirmation email resend",
-                    Code = "RESEND_CONFIRMATION_ERROR",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -452,14 +421,30 @@ namespace crypto_investment_project.Server.Controllers.Auth
         {
             if (!ModelState.IsValid)
             {
-                return BadRequest(new { success = false, message = "Invalid input", validationErrors = ModelState });
+                return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid input",
+                        "INVALID_REQUEST",
+                        ModelState.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray())
+                        )
+                        .ToActionResult(this);
             }
 
-            var result = await _authenticationService.ForgotPasswordAsync(request);
+            try
+            {
+                var result = await _authenticationService.ForgotPasswordAsync(request);
 
-            return result.Success
-                ? Ok(new { success = true, message = result.Message })
-                : BadRequest(new { success = false, message = result.Message });
+                return result.ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during forgot password email resend");
+
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
+            }
+            
         }
 
         [HttpPost("reset-password")]
@@ -468,14 +453,30 @@ namespace crypto_investment_project.Server.Controllers.Auth
         {
             if (!ModelState.IsValid)
             {
-                return BadRequest(new { success = false, message = "Invalid input", validationErrors = ModelState });
+                return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid input",
+                        "INVALID_REQUEST",
+                        ModelState.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray())
+                        )
+                        .ToActionResult(this);
             }
 
-            var result = await _authenticationService.ResetPasswordAsync(request);
+            try
+            {
+                var result = await _authenticationService.ResetPasswordAsync(request);
 
-            return result.Success
-                ? Ok(new { success = true, message = result.Message })
-                : BadRequest(new { success = false, message = result.Message });
+                return result.ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during password reset");
+
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
+            }
+
         }
 
         /// <summary>
@@ -499,43 +500,42 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 // Get the refresh token from cookie
                 if (!Request.Cookies.TryGetValue("refreshToken", out string refreshToken))
                 {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "Refresh token is missing",
-                        Code = "MISSING_REFRESH_TOKEN",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Refresh token is missing",
+                        "INVALID_REQUEST",
+                        ModelState.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray())
+                        )
+                        .ToActionResult(this);
                 }
 
                 // Get the expired access token from the authorization header
                 string accessToken = Request.Headers["Authorization"].ToString().Replace("Bearer ", "");
                 if (string.IsNullOrEmpty(accessToken))
                 {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "Access token is missing",
-                        Code = "MISSING_ACCESS_TOKEN",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Access token is missing",
+                        "INVALID_REQUEST",
+                        ModelState.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray())
+                        )
+                        .ToActionResult(this);
                 }
 
                 var result = await _authenticationService.RefreshToken(accessToken, refreshToken);
 
-                if (!result.Success)
+                if (!result.IsSuccess)
                 {
                     // Clear refresh token cookie on failure
                     Response.Cookies.Delete("refreshToken");
 
-                    return Unauthorized(new ErrorResponse
-                    {
-                        Message = result.Message,
-                        Code = "INVALID_REFRESH_TOKEN",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
+                    return result.ToActionResult(this);
                 }
 
                 // Cast to LoginResponse to access the tokens
-                var loginResponse = result as LoginResponse;
+                var loginResponse = result.Data as LoginResponse;
 
                 // ✅ Trigger cache warmup on token refresh too
                 cacheWarmup.QueueUserCacheWarmup(Guid.Parse(loginResponse.UserId));
@@ -544,27 +544,14 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 SetRefreshTokenCookie(loginResponse.RefreshToken);
 
                 // Return new access token in response body
-                return Ok(new
-                {
-                    loginResponse.Success,
-                    loginResponse.Message,
-                    loginResponse.AccessToken,
-                    loginResponse.UserId,
-                    loginResponse.Username,
-                    loginResponse.EmailConfirmed
-                    // Note: RefreshToken deliberately not included in response body
-                });
+                return result.ToActionResult(this);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error refreshing token");
+                _logger.LogError(ex, "Error during token refresh");
 
-                return StatusCode(500, new ErrorResponse
-                {
-                    Message = "An error occurred while refreshing the token",
-                    Code = "REFRESH_TOKEN_ERROR",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -584,55 +571,30 @@ namespace crypto_investment_project.Server.Controllers.Auth
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> AddRoleToUser([FromBody] AddRoleRequest request)
         {
+            if (!ModelState.IsValid)
+            {
+                return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid role assignment data",
+                        "INVALID_REQUEST",
+                        ModelState.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray())
+                        )
+                        .ToActionResult(this);
+            }
+
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "Invalid role assignment data",
-                        Code = "INVALID_ROLE_ASSIGNMENT",
-                        ValidationErrors = ModelState.ToDictionary(
-                            kvp => kvp.Key,
-                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()),
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
                 var result = await _authenticationService.AddRoleToUser(request);
 
-                if (!result.Success)
-                {
-                    if (result.Message.Contains("not found"))
-                    {
-                        return NotFound(new ErrorResponse
-                        {
-                            Message = result.Message,
-                            Code = "RESOURCE_NOT_FOUND",
-                            TraceId = HttpContext.TraceIdentifier
-                        });
-                    }
-
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = result.Message,
-                        Code = "ROLE_ASSIGNMENT_FAILED",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                return Ok(result);
+                return result.ToActionResult(this);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error adding role to user");
+                _logger.LogError(ex, "Error during adding role");
 
-                return StatusCode(500, new ErrorResponse
-                {
-                    Message = "An error occurred while assigning the role",
-                    Code = "ROLE_ASSIGNMENT_ERROR",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -652,55 +614,30 @@ namespace crypto_investment_project.Server.Controllers.Auth
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
         public async Task<IActionResult> RemoveRoleFromUser([FromBody] AddRoleRequest request)
         {
+            if (!ModelState.IsValid)
+            {
+                return ResultWrapper.Failure(FailureReason.ValidationError,
+                        "Invalid role removal data",
+                        "INVALID_REQUEST",
+                        ModelState.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray())
+                        )
+                        .ToActionResult(this);
+            }
+
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = "Invalid role removal data",
-                        Code = "INVALID_ROLE_REMOVAL",
-                        ValidationErrors = ModelState.ToDictionary(
-                            kvp => kvp.Key,
-                            kvp => kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray()),
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
                 var result = await _authenticationService.RemoveRoleFromUser(request);
 
-                if (!result.Success)
-                {
-                    if (result.Message.Contains("not found"))
-                    {
-                        return NotFound(new ErrorResponse
-                        {
-                            Message = result.Message,
-                            Code = "RESOURCE_NOT_FOUND",
-                            TraceId = HttpContext.TraceIdentifier
-                        });
-                    }
-
-                    return BadRequest(new ErrorResponse
-                    {
-                        Message = result.Message,
-                        Code = "ROLE_REMOVAL_FAILED",
-                        TraceId = HttpContext.TraceIdentifier
-                    });
-                }
-
-                return Ok(result);
+                return result.ToActionResult(this);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error removing role from user");
+                _logger.LogError(ex, "Error during removing role");
 
-                return StatusCode(500, new ErrorResponse
-                {
-                    Message = "An error occurred while removing the role",
-                    Code = "ROLE_REMOVAL_ERROR",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 
@@ -727,22 +664,15 @@ namespace crypto_investment_project.Server.Controllers.Auth
 
                 _logger.LogInformation("User {UserId} logged out", userEmail);
 
-                return Ok(new BaseResponse
-                {
-                    Success = true,
-                    Message = "Logout successful"
-                });
+                return ResultWrapper.Success("Logout successful")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during logout");
 
-                return StatusCode(500, new ErrorResponse
-                {
-                    Message = "An error occurred during logout",
-                    Code = "LOGOUT_ERROR",
-                    TraceId = HttpContext.TraceIdentifier
-                });
+                return ResultWrapper.InternalServerError()
+                    .ToActionResult(this);
             }
         }
 

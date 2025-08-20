@@ -28,9 +28,9 @@ const PaymentCancelPage: React.FC = () => {
         // If we have the subscription ID, navigate back to the edit page
         try {
             setRetrying(true);
-            var checkoutUrl = await paymentService.initiatePayment(paymentData!);
+            var data = await paymentService.initiatePayment(paymentData!);
             // Redirect to checkout
-            window.location.href = checkoutUrl;
+            window.location.href = data.checkoutUrl;
         } catch (error: any) {
             console.error('Payment retry error:', error);
             // Format user-friendly error message

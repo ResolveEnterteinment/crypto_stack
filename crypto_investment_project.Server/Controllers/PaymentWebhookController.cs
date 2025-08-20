@@ -139,6 +139,5 @@ namespace crypto_investment_project.Server.Controllers
                 return Ok(); // Return OK to Stripe even if internal error happened to avoid retries
             }
         }
-
     }
 }

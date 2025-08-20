@@ -9,6 +9,7 @@ export const useDashboardSignalR = (
 ) => {
     const { user, token } = useAuth(); // Now token is available
     const signalRServiceRef = useRef<DashboardSignalRService | null>(null);
+    const initializingRef = useRef<boolean>(false);
 
     const initializeConnection = useCallback(async () => {
         if (!user?.id || !token) {
@@ -16,38 +17,75 @@ export const useDashboardSignalR = (
             return;
         }
 
-        try {
-            // Create new service instance with token
-            signalRServiceRef.current = new DashboardSignalRService(token);
+        // Prevent multiple simultaneous initializations
+        if (initializingRef.current) {
+            console.log('SignalR initialization already in progress');
+            return;
+        }
 
-            // Set up event handlers
-            signalRServiceRef.current.setUpdateHandler(onDashboardUpdate);
-            if (onError) {
-                signalRServiceRef.current.setErrorHandler(onError);
+        initializingRef.current = true;
+
+        try {
+            // Clean up existing connection if any
+            if (signalRServiceRef.current) {
+                await signalRServiceRef.current.stop();
+                signalRServiceRef.current = null;
             }
 
-            // Start connection and subscribe
-            await signalRServiceRef.current.start();
-            await signalRServiceRef.current.subscribe(user.id);
+            // Create new service instance with token
+            const service = new DashboardSignalRService(token);
+
+            // Set up event handlers before starting connection
+            service.setUpdateHandler(onDashboardUpdate);
+            if (onError) {
+                service.setErrorHandler(onError);
+            }
+
+            // Start connection first
+            await service.start();
+
+            // Then subscribe to updates
+            await service.subscribe(user.id);
+
+            // Only assign to ref after successful initialization
+            signalRServiceRef.current = service;
 
             console.log('Dashboard SignalR connection established');
         } catch (error) {
             console.error('Failed to initialize dashboard SignalR connection:', error);
             onError?.('Failed to establish real-time connection');
+
+            // Ensure ref is null on failure
+            signalRServiceRef.current = null;
+        } finally {
+            initializingRef.current = false;
         }
     }, [user?.id, token, onDashboardUpdate, onError]);
 
     const refreshDashboard = useCallback(async () => {
-        if (signalRServiceRef.current) {
-            await signalRServiceRef.current.refreshDashboard();
+        if (signalRServiceRef.current && signalRServiceRef.current.isConnected()) {
+            try {
+                await signalRServiceRef.current.refreshDashboard();
+            } catch (error) {
+                console.error('Failed to refresh dashboard:', error);
+                onError?.('Failed to refresh dashboard');
+            }
+        } else {
+            console.warn('SignalR service not connected, cannot refresh dashboard');
         }
-    }, []);
+    }, [onError]);
 
     const cleanup = useCallback(async () => {
         if (signalRServiceRef.current) {
-            await signalRServiceRef.current.stop();
-            signalRServiceRef.current = null;
+            try {
+                await signalRServiceRef.current.stop();
+            } catch (error) {
+                console.error('Error during SignalR cleanup:', error);
+            } finally {
+                signalRServiceRef.current = null;
+            }
         }
+        initializingRef.current = false;
     }, []);
 
     // Initialize connection when user changes
@@ -61,6 +99,7 @@ export const useDashboardSignalR = (
 
     return {
         refreshDashboard,
-        isConnected: signalRServiceRef.current !== null
+        isConnected: signalRServiceRef.current?.isConnected() ?? false,
+        connectionState: signalRServiceRef.current?.getConnectionState() ?? null
     };
 };

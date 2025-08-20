@@ -6,14 +6,8 @@ namespace Domain.DTOs.Payment
     /// </summary>
     public class PaymentCancelResponse
     {
-        /// <summary>
-        /// Whether the operation was successful
-        /// </summary>
-        public bool Success { get; set; }
-
-        /// <summary>
-        /// A message describing the result
-        /// </summary>
-        public string? Message { get; set; }
+        public string? PaymentId { get; set; }
+        public string? Status { get; set; }
+        public DateTime? CancelledAt { get; set; }
     }
 }

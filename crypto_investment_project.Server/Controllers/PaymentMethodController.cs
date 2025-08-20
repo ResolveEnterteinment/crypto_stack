@@ -1,23 +1,30 @@
-using Domain.Interfaces;
+using Application.Contracts.Responses.Payment;
+using Application.Extensions;
+using Application.Interfaces.Payment;
+using Application.Interfaces.Subscription;
+using Domain.DTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 
-namespace WebApi.Controllers
+namespace crypto_investment_project.Server.Controllers
 {
     [ApiController]
     [Route("api/payment-methods")]
     [Authorize]
     public class PaymentMethodController : ControllerBase
     {
-        private readonly IUnitOfWork _unitOfWork;
+        private readonly IPaymentService _paymentService;
+        private readonly ISubscriptionService _subscriptionService;
         private readonly ILogger<PaymentMethodController> _logger;
 
         public PaymentMethodController(
-            IUnitOfWork unitOfWork,
+            IPaymentService paymentService,
+            ISubscriptionService subscriptionService,
             ILogger<PaymentMethodController> logger)
         {
-            _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
+            _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
+            _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -35,65 +42,51 @@ namespace WebApi.Controllers
                 var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (string.IsNullOrEmpty(userId))
                 {
-                    return Unauthorized("User ID not found in claims");
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
                 }
 
                 // Verify that the subscription belongs to the user
-                var subscription = await _unitOfWork.Subscriptions.GetByIdAsync(Guid.Parse(subscriptionId));
+                var subscription = await _subscriptionService.GetByIdAsync(Guid.Parse(subscriptionId));
                 if (!subscription.IsSuccess || subscription.Data == null)
                 {
-                    return NotFound($"Subscription {subscriptionId} not found");
+                    return ResultWrapper.NotFound("Subscription", subscriptionId)
+                        .ToActionResult(this);
                 }
 
                 if (subscription.Data.UserId.ToString() != userId && !User.IsInRole("ADMIN"))
                 {
-                    return Forbid("You don't have permission to update this subscription's payment method");
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
                 }
 
                 // Create the update payment method session
-                var sessionResult = await _unitOfWork.Payments.CreateUpdatePaymentMethodSessionAsync(userId, subscriptionId);
+                var sessionResult = await _paymentService.CreateUpdatePaymentMethodSessionAsync(userId, subscriptionId);
                 if (!sessionResult.IsSuccess)
                 {
-                    return BadRequest(sessionResult.ErrorMessage);
+                    return ResultWrapper.Failure(sessionResult.Reason, "Failed to create payment method session")
+                        .ToActionResult(this);
                 }
 
-                return Ok(new { url = sessionResult.Data });
+                var checkoutSession = sessionResult.Data;
+
+                // Create response
+                var response = new CheckoutSessionResponse
+                {
+                    CheckoutUrl = checkoutSession.Url,
+                    ClientSecret = checkoutSession.ClientSecret,
+                    SessionId = checkoutSession.Id
+                };
+
+                return ResultWrapper.Success(response, "Payment method session created successfully")
+                        .ToActionResult(this);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating update payment method session for subscription {SubscriptionId}", subscriptionId);
-                return StatusCode(500, "An error occurred while processing your request");
-            }
-        }
-
-        /// <summary>
-        /// Manually retry a failed payment
-        /// </summary>
-        /// <param name="paymentId">ID of the failed payment to retry</param>
-        /// <returns>Success or error result</returns>
-        [HttpPost("retry/{paymentId}")]
-        [Authorize(Roles = "ADMIN")]
-        public async Task<IActionResult> RetryPayment(string paymentId)
-        {
-            try
-            {
-                if (!Guid.TryParse(paymentId, out var parsedPaymentId))
-                {
-                    return BadRequest("Invalid payment ID format");
-                }
-
-                var retryResult = await _unitOfWork.Payments.RetryPaymentAsync(parsedPaymentId);
-                if (!retryResult.IsSuccess)
-                {
-                    return BadRequest(retryResult.ErrorMessage);
-                }
-
-                return Ok(new { message = "Payment retry initiated successfully" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrying payment {PaymentId}", paymentId);
-                return StatusCode(500, "An error occurred while processing your request");
+                
+                return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
             }
         }
     }
