@@ -38,6 +38,8 @@ namespace Application.Interfaces.Payment
 
         Task<ResultWrapper<PaymentData?>> GetByProviderIdAsync(string paymentProviderId);
 
+        Task<(decimal total, decimal fee, decimal platform, decimal net)> CalculatePaymentFees(InvoiceRequest i);
+
         Task<ResultWrapper> ProcessPaymentFailedAsync(PaymentIntentRequest paymentIntentRequest);
 
         // Update Application/Interfaces/Payment/IPaymentService.cs to add:

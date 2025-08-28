@@ -29,7 +29,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
             try
             {
                 // Basic flow validation
-                if (string.IsNullOrEmpty(flow.FlowId))
+                if (flow.FlowId == Guid.Empty)
                 {
                     result.Errors.Add("Flow ID cannot be empty");
                 }
@@ -112,11 +112,6 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                     result.Errors.Add("Step name cannot be empty");
                 }
 
-                if (step.ExecuteAsync == null)
-                {
-                    result.Errors.Add("Step must have an ExecuteAsync function");
-                }
-
                 // Validate timeout settings
                 if (step.Timeout.HasValue && step.Timeout.Value <= TimeSpan.Zero)
                 {
@@ -135,9 +130,9 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                 }
 
                 // Validate dependencies
-                if (step.Dependencies?.Any() == true)
+                if (step.StepDependencies?.Any() == true)
                 {
-                    foreach (var dependency in step.Dependencies)
+                    foreach (var dependency in step.StepDependencies)
                     {
                         if (!flow.Steps.Any(s => s.Name == dependency))
                         {
@@ -180,24 +175,21 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                         }
 
                         // Validate sub-steps within the branch
-                        if (branch.SubSteps?.Any() == true)
+                        if (branch.Steps?.Any() == true)
                         {
-                            foreach (var subStep in branch.SubSteps)
+                            foreach (var subStep in branch.Steps)
                             {
-                                if (string.IsNullOrEmpty(subStep.Name))
+                                var stepValidation = await ValidateStepAsync(subStep, flow);
+                                if (!stepValidation.IsValid)
                                 {
-                                    result.Errors.Add($"Sub-step in {branchIdentifier} must have a name");
-                                }
-
-                                if (subStep.ExecuteAsync == null)
-                                {
-                                    result.Errors.Add($"Sub-step '{subStep.Name}' in {branchIdentifier} must have an ExecuteAsync function");
+                                    result.Errors.AddRange(stepValidation.Errors.Select(e => $"Branch sub-step '{subStep.Name}': {e}"));
+                                    result.Warnings.AddRange(stepValidation.Warnings.Select(w => $"Branch sub-step '{subStep.Name}': {w}"));
                                 }
                             }
                         }
                         else
                         {
-                            result.Warnings.Add($"{branchIdentifier} has no sub-steps defined");
+                            result.Errors.Add($"{branchIdentifier} has no sub-steps defined");
                         }
                     }
 
@@ -205,6 +197,19 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                     if (!hasDefaultBranch)
                     {
                         result.Warnings.Add("Step has conditional branches but no default branch - execution may be skipped if no conditions match");
+                    }
+                }
+
+                // Validate JumpTo step
+                if (!string.IsNullOrEmpty(step.JumpTo))
+                {
+                    if (!flow.Steps.Any(s => s.Name == step.JumpTo))
+                    {
+                        result.Errors.Add($"JumpTo step '{step.JumpTo}' not found in flow steps");
+                    }
+                    else if (step.JumpTo == step.Name)
+                    {
+                        result.Errors.Add("Step cannot jump to itself");
                     }
                 }
 
@@ -313,9 +318,9 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                 // Check for missing dependencies
                 foreach (var step in flow.Steps)
                 {
-                    if (step.Dependencies?.Any() == true)
+                    if (step.StepDependencies?.Any() == true)
                     {
-                        foreach (var dependency in step.Dependencies)
+                        foreach (var dependency in step.StepDependencies)
                         {
                             if (!stepNames.Contains(dependency))
                             {
@@ -361,9 +366,9 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
             recursionStack.Add(stepName);
 
             var currentStep = steps.FirstOrDefault(s => s.Name == stepName);
-            if (currentStep?.Dependencies != null)
+            if (currentStep?.StepDependencies != null)
             {
-                foreach (var dependency in currentStep.Dependencies)
+                foreach (var dependency in currentStep.StepDependencies)
                 {
                     if (!visited.Contains(dependency))
                     {

@@ -9,23 +9,25 @@ namespace Infrastructure.Services.FlowEngine.Core.Interfaces
     /// </summary>
     public interface IFlowEngineService
     {
-        Task<FlowResult<TFlow>> StartAsync<TFlow>(object initialData = null, string userId = null, string correlationId = null, CancellationToken cancellationToken = default) where TFlow : FlowDefinition, new();
-        Task<FlowResult<TFlow>> ResumeAsync<TFlow>(string flowId, CancellationToken cancellationToken = default) where TFlow : FlowDefinition, new();
-        Task FireAsync<TFlow>(object initialData = null, string userId = null) where TFlow : FlowDefinition, new();
-        Task<FlowResult<TTriggered>> TriggerAsync<TTriggered>(FlowContext context, object triggerData = null) where TTriggered : FlowDefinition, new();
-        Task<FlowStatus> GetStatusAsync(string flowId);
-        Task<bool> CancelAsync(string flowId, string reason = null);
-        Task<FlowTimeline> GetTimelineAsync(string flowId);
+        Task<FlowResult<TFlow>> StartAsync<TFlow>(Dictionary<string, object>? initialData = null, string userId = null, string correlationId = null, CancellationToken cancellationToken = default) where TFlow : FlowDefinition;
+        Task<FlowResult<TFlow>> ResumeAsync<TFlow>(Guid flowId, CancellationToken cancellationToken = default) where TFlow : FlowDefinition;
+        Task<FlowResult<FlowDefinition>> ResumeRuntimeAsync(Guid flowId, CancellationToken cancellationToken = default);
+        Task RestoreFlowRuntime();
+        Task FireAsync<TFlow>(Dictionary<string, object>? initialData = null, string userId = null) where TFlow : FlowDefinition;
+        Task<FlowResult<TTriggered>> TriggerAsync<TTriggered>(FlowContext context, Dictionary<string, object>? triggerData = null) where TTriggered : FlowDefinition;
+        Task<FlowStatus> GetStatusAsync(Guid flowId);
+        Task<bool> CancelAsync(Guid flowId, string reason = null);
+        Task<FlowTimeline> GetTimelineAsync(Guid flowId);
         Task<PagedResult<FlowSummary>> QueryAsync(FlowQuery query);
         Task<RecoveryResult> RecoverCrashedFlowsAsync();
         Task<int> CleanupAsync(TimeSpan olderThan);
 
         // NEW: Pause/Resume capabilities
-        Task<bool> ResumeManuallyAsync(string flowId, string userId, string reason = null);
-        Task<bool> ResumeByEventAsync(string flowId, string eventType, object eventData = null);
-        Task<PagedResult<FlowSummary>> GetPausedFlowsAsync(FlowQuery query = null);
-        Task<bool> SetResumeConditionAsync(string flowId, ResumeCondition condition);
+        Task<bool> ResumeManuallyAsync(Guid flowId, string userId, string reason = null);
+        Task<bool> ResumeByEventAsync(Guid flowId, string eventType, object eventData = null);
+        List<FlowDefinition> GetPausedFlowsAsync();
+        Task<PagedResult<FlowSummary>> GetPausedFlowSummariesAsync(FlowQuery query = null);
+        Task<bool> SetResumeConditionAsync(Guid flowId, ResumeCondition condition);
         Task PublishEventAsync(string eventType, object eventData, string correlationId = null);
-        Task<int> CheckAutoResumeConditionsAsync();
     }
 }

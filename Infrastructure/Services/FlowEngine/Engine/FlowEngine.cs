@@ -6,7 +6,6 @@ using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using System.Threading;
 
 namespace Infrastructure.Services.FlowEngine.Engine
 {
@@ -52,12 +51,11 @@ namespace Infrastructure.Services.FlowEngine.Engine
         {
             if (_isInitialized) return;
             
-            _lock.EnterReadLock();
+            _lock.EnterUpgradeableReadLock();
             try
             {
                 if (!_isInitialized)
                 {
-                    _lock.ExitReadLock();
                     _lock.EnterWriteLock();
                     try
                     {
@@ -68,13 +66,11 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     {
                         _lock.ExitWriteLock();
                     }
-                    return;
                 }
             }
             finally
             {
-                if (_lock.IsReadLockHeld)
-                    _lock.ExitReadLock();
+                _lock.ExitUpgradeableReadLock();
             }
         }
 
@@ -85,7 +81,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Resume a paused flow manually (admin/user intervention)
         /// </summary>
-        public static async Task<bool> ResumeManually(string flowId, string userId, string reason = null)
+        public static async Task<bool> ResumeManually(Guid flowId, string userId, string reason = null)
         {
             EnsureInitialized();
             var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
@@ -95,7 +91,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Resume a paused flow via event trigger
         /// </summary>
-        public static async Task<bool> ResumeByEvent(string flowId, string eventType, object eventData = null)
+        public static async Task<bool> ResumeByEvent(Guid flowId, string eventType, object eventData = null)
         {
             EnsureInitialized();
             var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
@@ -109,13 +105,13 @@ namespace Infrastructure.Services.FlowEngine.Engine
         {
             EnsureInitialized();
             var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
-            return await service.GetPausedFlowsAsync(query);
+            return await service.GetPausedFlowSummariesAsync(query);
         }
 
         /// <summary>
         /// Set resume condition for a paused flow
         /// </summary>
-        public static async Task<bool> SetResumeCondition(string flowId, ResumeCondition condition)
+        public static async Task<bool> SetResumeCondition(Guid flowId, ResumeCondition condition)
         {
             EnsureInitialized();
             var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
@@ -132,16 +128,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
             await service.PublishEventAsync(eventType, eventData, correlationId);
         }
 
-        /// <summary>
-        /// Check and auto-resume flows based on their conditions
-        /// </summary>
-        public static async Task<int> CheckAutoResumeConditions()
-        {
-            EnsureInitialized();
-            var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
-            return await service.CheckAutoResumeConditionsAsync();
-        }
-
         #endregion
 
         #region Core Flow Execution API
@@ -155,11 +141,11 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <param name="correlationId">Optional correlation ID for tracking</param>
         /// <returns>Flow execution result</returns>
         public static async Task<FlowResult<TFlow>> Start<TFlow>(
-            object initialData = null,
+            Dictionary<string, object>? initialData = null,
             string userId = null,
             string correlationId = null,
             CancellationToken cancellationToken = default)
-            where TFlow : FlowDefinition, new()
+            where TFlow : FlowDefinition
         {
             EnsureInitialized();
             var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
@@ -170,9 +156,9 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// Resume a previously started flow
         /// </summary>
         public static async Task<FlowResult<TFlow>> Resume<TFlow>(
-            string flowId,
+            Guid flowId,
             CancellationToken cancellationToken = default)
-            where TFlow : FlowDefinition, new()
+            where TFlow : FlowDefinition
         {
             EnsureInitialized();
             var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
@@ -182,8 +168,8 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Quick fire-and-forget flow execution
         /// </summary>
-        public static async Task Fire<TFlow>(
-            object initialData = null,
+        public static async Task Fire<TFlow, TData>(
+            Dictionary<string, object>? initialData = null,
             string userId = null)
             where TFlow : FlowDefinition, new()
         {
@@ -195,9 +181,9 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Trigger a flow from another flow step
         /// </summary>
-        public static async Task<FlowResult<TTriggered>> Trigger<TTriggered>(
+        public static async Task<FlowResult<TTriggered>> Trigger<TTriggered, TData>(
             FlowContext context,
-            object triggerData = null)
+            Dictionary<string, object>? triggerData = null)
             where TTriggered : FlowDefinition, new()
         {
             EnsureInitialized();
@@ -212,7 +198,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Get flow status and progress
         /// </summary>
-        public static async Task<FlowStatus> GetStatus(string flowId)
+        public static async Task<FlowStatus> GetStatus(Guid flowId)
         {
             EnsureInitialized();
             var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
@@ -222,7 +208,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Cancel a running flow
         /// </summary>
-        public static async Task<bool> Cancel(string flowId, string reason = null)
+        public static async Task<bool> Cancel(Guid flowId, string reason = null)
         {
             EnsureInitialized();
             var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
@@ -232,7 +218,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Get flow execution timeline
         /// </summary>
-        public static async Task<FlowTimeline> GetTimeline(string flowId)
+        public static async Task<FlowTimeline> GetTimeline(Guid flowId)
         {
             EnsureInitialized();
             var service = _serviceProvider.GetRequiredService<IFlowEngineService>();

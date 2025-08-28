@@ -7,7 +7,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
     /// </summary>
     public class FlowSummary
     {
-        public string FlowId { get; set; }
+        public Guid FlowId { get; set; }
         public string FlowType { get; set; }
         public FlowStatus Status { get; set; }
         public string UserId { get; set; }

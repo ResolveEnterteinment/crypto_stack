@@ -3,7 +3,7 @@
     public class FlowBranch
     {
         public Func<FlowContext, bool> Condition { get; set; }
-        public bool IsDefault { get; set; }
-        public List<FlowSubStep> SubSteps { get; set; } = new();
+        public bool IsDefault { get; set; } = false;
+        public List<FlowStep> Steps { get; set; } = new();
     }
 }

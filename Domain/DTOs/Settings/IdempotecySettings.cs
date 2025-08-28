@@ -224,7 +224,7 @@ namespace Domain.Settings
             }
 
             // Default behavior: cache 2xx and 4xx, don't cache 5xx
-            return statusCode >= 200 && statusCode < 500;
+            return statusCode >= 200 && statusCode < 300;
         }
 
         /// <summary>

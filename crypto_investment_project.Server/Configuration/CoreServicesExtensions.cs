@@ -10,9 +10,11 @@ using Application.Interfaces.Subscription;
 using Application.Interfaces.Withdrawal;
 using Application.Validation;
 using Domain.DTOs.Settings;
+using Infrastructure.Flows.Demo;
 using Infrastructure.Services;
 using Infrastructure.Services.Asset;
 using Infrastructure.Services.Base;
+using Infrastructure.Services.Demo;
 using Infrastructure.Services.Email;
 using Infrastructure.Services.Exchange;
 using Infrastructure.Services.Index;
@@ -186,5 +188,6 @@ public static class CoreServicesExtensions
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IIdempotencyService, IdempotencyService>();
         services.AddScoped<IWithdrawalService, WithdrawalService>();
+        services.AddScoped<IDemoService, DemoService>();
     }
 }

@@ -105,7 +105,7 @@ namespace Infrastructure.Services
                     }
 
                     // Calculate amounts
-                    var (total, fee, platformFee, net) = await CalculatePaymentAmounts(invoice);
+                    var (total, fee, platformFee, net) = await CalculatePaymentFees(invoice);
 
                     var paymentData = new PaymentData
                     {
@@ -1246,7 +1246,7 @@ namespace Infrastructure.Services
             var chargeId = invoice.ChargeId;
 
             // Calculate payment amounts
-            var (total, fee, platformFee, net) = await CalculatePaymentAmounts(new()
+            var (total, fee, platformFee, net) = await CalculatePaymentFees(new()
             {
                 Provider = "Stripe",
                 ChargeId = chargeId,
@@ -1373,7 +1373,7 @@ namespace Infrastructure.Services
             list.Add(msg);
         }
 
-        private async Task<(decimal total, decimal fee, decimal platform, decimal net)> CalculatePaymentAmounts(InvoiceRequest i)
+        public async Task<(decimal total, decimal fee, decimal platform, decimal net)> CalculatePaymentFees(InvoiceRequest i)
         {
             var total = i.Amount / 100m;
             var fee = await Providers["stripe"].GetFeeAsync(i.PaymentIntentId);

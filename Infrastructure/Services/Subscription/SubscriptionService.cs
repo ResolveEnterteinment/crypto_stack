@@ -673,6 +673,111 @@ namespace Infrastructure.Services.Subscription
                 })
             .ExecuteAsync();
 
+        /// <summary>
+        /// Fetches subscription allocations enhanced with comprehensive asset details
+        /// </summary>
+        /// <param name="subscriptionId">The subscription ID</param>
+        /// <param name="includePerformanceData">Whether to include asset performance data</param>
+        /// <returns>Enhanced allocation data with asset details</returns>
+        public Task<ResultWrapper<List<EnhancedAllocationDto>>> GetEnhancedAllocationsAsync(Guid subscriptionId, bool includePerformanceData = false)
+            => _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Subscription",
+                    FileName = "SubscriptionService",
+                    OperationName = "GetEnhancedAllocationsAsync(Guid subscriptionId, bool includePerformanceData = false)",
+                    State = {
+                ["subscriptionId"] = subscriptionId,
+                ["includePerformanceData"] = includePerformanceData
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    // Get subscription
+                    var subWr = await GetByIdAsync(subscriptionId);
+                    if (!subWr.IsSuccess || subWr.Data == null)
+                        throw new KeyNotFoundException($"Subscription #{subscriptionId} not found.");
+
+                    var subscription = subWr.Data;
+                    if (subscription.Allocations == null || !subscription.Allocations.Any())
+                        throw new ArgumentException($"No allocations found for subscription #{subscriptionId}.");
+
+                    var enhancedAllocations = new List<EnhancedAllocationDto>();
+
+                    // Process each allocation
+                    foreach (var allocation in subscription.Allocations)
+                    {
+                        try
+                        {
+                            // Get asset details
+                            var assetWr = await _assetService.GetByIdAsync(allocation.AssetId);
+                            if (!assetWr.IsSuccess || assetWr.Data == null)
+                            {
+                                _loggingService.LogWarning("Failed to fetch asset {AssetId} for allocation: {Error}",
+                                    allocation.AssetId, assetWr.ErrorMessage);
+                                continue;
+                            }
+
+                            var asset = assetWr.Data;
+
+                            // Calculate allocation amount
+                            var allocationAmount = Math.Round(subscription.Amount * (allocation.PercentAmount / 100m), 2, MidpointRounding.ToZero);
+
+                            // Create enhanced allocation DTO
+                            var enhancedAllocation = new EnhancedAllocationDto
+                            {
+                                AssetId = allocation.AssetId,
+                                AssetName = asset.Name,
+                                AssetTicker = asset.Ticker,
+                                AssetSymbol = asset.Symbol,
+                                AssetType = asset.Type,
+                                AssetClass = asset.Class,
+                                Exchange = asset.Exchange,
+                                Precision = asset.Precision,
+                                SubunitName = asset.SubunitName,
+                                PercentAmount = allocation.PercentAmount,
+                                AllocationAmount = allocationAmount,
+                                Currency = subscription.Currency
+                            };
+
+                            // Add performance data if requested
+                            if (includePerformanceData)
+                            {
+                                try
+                                {
+                                    // Get current asset price (this would come from your exchange service)
+                                    // For now, we'll leave these as optional fields that can be populated
+                                    // when you have access to pricing data
+                                    enhancedAllocation.CurrentPrice = null; // TODO: Implement price fetching
+                                    enhancedAllocation.PriceChange24h = null; // TODO: Implement price change calculation
+                                    enhancedAllocation.LastUpdated = DateTime.UtcNow;
+                                }
+                                catch (Exception ex)
+                                {
+                                    _loggingService.LogWarning("Failed to fetch performance data for asset {AssetId}: {Error}",
+                                        allocation.AssetId, ex.Message);
+                                    // Continue without performance data
+                                }
+                            }
+
+                            enhancedAllocations.Add(enhancedAllocation);
+                        }
+                        catch (Exception ex)
+                        {
+                            _loggingService.LogError("Error processing allocation for asset {AssetId}: {Error}",
+                                allocation.AssetId, ex.Message);
+                            // Continue processing other allocations
+                        }
+                    }
+
+                    if (!enhancedAllocations.Any())
+                        throw new InvalidOperationException($"No valid allocations could be processed for subscription #{subscriptionId}.");
+
+                    return enhancedAllocations;
+                })
+            .ExecuteAsync();
+
         public Task<ResultWrapper<List<SubscriptionDto>>> GetAllByUserIdAsync(Guid userId, string? statusFilter = null)
              => _resilienceService.CreateBuilder(
                 new Scope

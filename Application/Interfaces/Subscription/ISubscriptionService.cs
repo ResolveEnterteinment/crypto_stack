@@ -21,6 +21,7 @@ namespace Application.Interfaces.Subscription
         Task<ResultWrapper<CrudResult<SubscriptionData>>> CreateAsync(SubscriptionCreateRequest request);
         Task<ResultWrapper<CrudResult<SubscriptionData>>> UpdateAsync(Guid id, SubscriptionUpdateRequest request);
         Task<ResultWrapper<List<AllocationDto>>> GetAllocationsAsync(Guid subscriptionId);
+        Task<ResultWrapper<List<EnhancedAllocationDto>>> GetEnhancedAllocationsAsync(Guid subscriptionId, bool includePerformanceData = false);
         Task<ResultWrapper<List<SubscriptionDto>>> GetAllByUserIdAsync(Guid userId, string? statusFilter = null);
         Task<ResultWrapper<CrudResult<SubscriptionData>>> UpdateSubscriptionStatusAsync(Guid subscriptionId, string status);
         Task<ResultWrapper> ReactivateSubscriptionAsync(Guid subscriptionId);

@@ -46,7 +46,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Interfaces
         public bool IsValid { get; set; }
         public List<string> Errors { get; set; } = new();
         public List<string> Warnings { get; set; } = new();
-        public string FlowId { get; set; }
+        public Guid FlowId { get; set; }
         public string FlowType { get; set; }
     }
 

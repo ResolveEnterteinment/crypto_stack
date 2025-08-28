@@ -7,7 +7,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
     /// </summary>
     public class FlowTimeline
     {
-        public string FlowId { get; set; }
+        public Guid FlowId { get; set; }
         public List<FlowTimelineEvent> Events { get; set; } = new();
     }
 

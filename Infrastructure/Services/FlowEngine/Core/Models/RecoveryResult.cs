@@ -8,8 +8,8 @@
         public int TotalFlowsChecked { get; set; }
         public int FlowsRecovered { get; set; }
         public int FlowsFailed { get; set; }
-        public List<string> RecoveredFlowIds { get; set; } = new();
-        public List<string> FailedFlowIds { get; set; } = new();
+        public List<Guid> RecoveredFlowIds { get; set; } = new();
+        public List<Guid> FailedFlowIds { get; set; } = new();
         public TimeSpan Duration { get; set; }
         public DateTime CompletedAt { get; set; } = DateTime.UtcNow;
     }

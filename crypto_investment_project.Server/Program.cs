@@ -6,12 +6,18 @@ using HealthChecks.UI.Client;
 using Infrastructure.Hubs;
 using Infrastructure.Services.FlowEngine.Extensions;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Serializers;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
 Console.WriteLine("🚀 Starting StackFi Server...");
 Console.WriteLine($"🌍 Environment: {builder.Environment.EnvironmentName}");
+
+// Register a global serializer to ensure GUIDs are stored using the Standard representation
+BsonSerializer.RegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
 
 // Apply configuration through extension methods
 builder.Services

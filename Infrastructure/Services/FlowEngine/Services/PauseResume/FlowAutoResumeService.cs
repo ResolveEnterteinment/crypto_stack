@@ -3,35 +3,38 @@ using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace Infrastructure.Services.FlowEngine.Services.Events
+namespace Infrastructure.Services.FlowEngine.Services.PauseResume
 {
     public class FlowAutoResumeService : IFlowAutoResumeService
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<FlowAutoResumeService> _logger;
+        private readonly IFlowEngineService _flowEngineService;
+        private readonly IFlowExecutor _flowExecutor;
+
         private Timer _checkTimer;
         private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(1);
 
-        public FlowAutoResumeService(IServiceProvider serviceProvider, ILogger<FlowAutoResumeService> logger)
+        public FlowAutoResumeService(
+            IServiceProvider serviceProvider, 
+            ILogger<FlowAutoResumeService> logger,
+            IFlowEngineService flowEngineService,
+            IFlowExecutor flowExecutor)
         {
-            _serviceProvider = serviceProvider;
             _logger = logger;
+            _flowEngineService = flowEngineService;
+            _flowExecutor = flowExecutor;
+            _serviceProvider = serviceProvider;
         }
 
         public async Task<int> CheckAndResumeFlowsAsync()
         {
             var resumedCount = 0;
-
+            _logger.LogDebug("Checking paused flows for auto-resume conditions");
             try
             {
-                var persistence = _serviceProvider.GetRequiredService<IFlowPersistence>();
-                var pausedFlows = await persistence.GetPausedFlowsForAutoResumeAsync();
+                var pausedFlows = _flowEngineService.GetPausedFlowsAsync();
 
                 _logger.LogDebug("Checking {FlowCount} paused flows for auto-resume conditions", pausedFlows.Count);
 
@@ -39,9 +42,17 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
                 {
                     if (await ShouldResumeFlow(flow))
                     {
-                        await persistence.ResumeFlowAsync(flow.FlowId, ResumeReason.Condition, "system", "Auto-resume condition met");
-                        resumedCount++;
-                        _logger.LogInformation("Auto-resumed flow {FlowId}", flow.FlowId);
+                        try
+                        {
+                            await _flowExecutor.ResumeFlowAsync(flow, "Auto-resume condition met");
+                            resumedCount++;
+                            _logger.LogInformation("Auto-resumed flow {FlowId}", flow.FlowId);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to resume flow");
+                        }
+                        
                     }
                 }
             }
@@ -55,7 +66,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
 
         private async Task<bool> ShouldResumeFlow(FlowDefinition flow)
         {
-            var resumeConfig = flow.ActiveResumeConfig;
+            var resumeConfig = flow.ActiveResumeConfig; // ActiveResumeConfig returns null! 
             if (resumeConfig == null) return false;
 
             // Check timeout condition

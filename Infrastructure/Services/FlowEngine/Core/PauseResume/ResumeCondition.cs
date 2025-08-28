@@ -7,7 +7,7 @@ namespace Infrastructure.Services.FlowEngine.Core.PauseResume
     /// </summary>
     public class ResumeCondition
     {
-        public string FlowId { get; set; }
+        public Guid FlowId { get; set; }
         public Func<FlowContext, Task<bool>> Condition { get; set; }
         public TimeSpan CheckInterval { get; set; } = TimeSpan.FromMinutes(5);
         public DateTime NextCheck { get; set; } = DateTime.UtcNow;

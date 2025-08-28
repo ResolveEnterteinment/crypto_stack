@@ -15,7 +15,7 @@ namespace Infrastructure.Services.FlowEngine.Extensions
         /// </summary>
         public static async Task<List<FlowResult<TFlow>>> StartBatch<TFlow>(
             this Type _,
-            IEnumerable<object> dataItems,
+            IEnumerable<Dictionary<string, object>> dataItems,
             string userId = null,
             int maxConcurrency = 10)
             where TFlow : FlowDefinition, new()
@@ -40,13 +40,13 @@ namespace Infrastructure.Services.FlowEngine.Extensions
         /// <summary>
         /// Resume multiple paused flows by their IDs
         /// </summary>
-        public static async Task<Dictionary<string, bool>> ResumeBatch(
+        public static async Task<Dictionary<Guid, bool>> ResumeBatch(
             this Type _,
-            IEnumerable<string> flowIds,
+            IEnumerable<Guid> flowIds,
             string userId,
             string reason = null)
         {
-            var results = new Dictionary<string, bool>();
+            var results = new Dictionary<Guid, bool>();
 
             var tasks = flowIds.Select(async flowId =>
             {
@@ -229,60 +229,6 @@ namespace Infrastructure.Services.FlowEngine.Extensions
                 Reason = reason,
                 Timestamp = DateTime.UtcNow
             });
-        }
-
-        #endregion
-
-        #region Flow Templates & Shortcuts
-
-        /// <summary>
-        /// Quick start for payment processing flows
-        /// </summary>
-        public static async Task<FlowResult<TPaymentFlow>> StartPaymentFlow<TPaymentFlow>(
-            this Type _,
-            decimal amount,
-            string currency,
-            string userId,
-            Dictionary<string, object> additionalData = null)
-            where TPaymentFlow : FlowDefinition, new()
-        {
-            var data = new Dictionary<string, object>
-            {
-                ["Amount"] = amount,
-                ["Currency"] = currency,
-                ["UserId"] = userId,
-                ["Timestamp"] = DateTime.UtcNow
-            };
-
-            if (additionalData != null)
-            {
-                foreach (var kvp in additionalData)
-                {
-                    data[kvp.Key] = kvp.Value;
-                }
-            }
-
-            return await Engine.FlowEngine.Start<TPaymentFlow>(data, userId);
-        }
-
-        /// <summary>
-        /// Quick start for API integration flows
-        /// </summary>
-        public static async Task<FlowResult<TApiFlow>> StartApiFlow<TApiFlow>(
-            this Type _,
-            string endpoint,
-            object requestData = null,
-            string userId = null)
-            where TApiFlow : FlowDefinition, new()
-        {
-            var data = new Dictionary<string, object>
-            {
-                ["Endpoint"] = endpoint,
-                ["RequestData"] = requestData,
-                ["Timestamp"] = DateTime.UtcNow
-            };
-
-            return await Engine.FlowEngine.Start<TApiFlow>(data, userId);
         }
 
         #endregion

@@ -17,10 +17,10 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// <summary>
         /// Add a conditional branch
         /// </summary>
-        public FlowBranchBuilder When(Func<FlowContext, bool> condition, Action<FlowSubStepBuilder> defineSteps)
+        public FlowBranchBuilder When(Func<FlowContext, bool> condition, Action<BranchStepBuilder> defineSteps)
         {
             var branch = new FlowBranch { Condition = condition };
-            var builder = new FlowSubStepBuilder(branch);
+            var builder = new BranchStepBuilder(branch);
             defineSteps(builder);
             _step.Branches.Add(branch);
             return this;
@@ -29,10 +29,10 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// <summary>
         /// Add default branch (executed if no conditions match)
         /// </summary>
-        public FlowBranchBuilder Otherwise(Action<FlowSubStepBuilder> defineSteps)
+        public FlowBranchBuilder Otherwise(Action<BranchStepBuilder> defineSteps)
         {
             var branch = new FlowBranch { IsDefault = true };
-            var builder = new FlowSubStepBuilder(branch);
+            var builder = new BranchStepBuilder(branch);
             defineSteps(builder);
             _step.Branches.Add(branch);
             return this;

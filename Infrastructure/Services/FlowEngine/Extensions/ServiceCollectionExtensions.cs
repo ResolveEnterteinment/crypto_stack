@@ -5,6 +5,7 @@ using Infrastructure.Services.FlowEngine.Engine;
 using Infrastructure.Services.FlowEngine.Middleware;
 using Infrastructure.Services.FlowEngine.Services.Events;
 using Infrastructure.Services.FlowEngine.Services.Metrics;
+using Infrastructure.Services.FlowEngine.Services.PauseResume;
 using Infrastructure.Services.FlowEngine.Services.Persistence;
 using Infrastructure.Services.FlowEngine.Services.Recovery;
 using Infrastructure.Services.FlowEngine.Services.Security;
@@ -61,8 +62,12 @@ namespace Infrastructure.Services.FlowEngine.Extensions
             services.AddScoped<IFlowMetrics, FlowMetricsService>();
 
             // Register pause/resume services
-            services.AddSingleton<IFlowEventService, FlowEventService>();
-            services.AddSingleton<IFlowAutoResumeService, FlowAutoResumeService>();
+            services.AddScoped<IFlowEventService, FlowEventService>();
+            services.AddScoped<IFlowAutoResumeService, FlowAutoResumeService>();
+
+            // ✅ Automatically register all flows
+            services.AddFlows()
+                .ValidateFlowRegistrations();
 
             // Register persistence based on configuration
             services.AddFlowPersistence(config);
@@ -74,78 +79,6 @@ namespace Infrastructure.Services.FlowEngine.Extensions
             services.AddFlowSecurity(config);
 
             return services;
-        }
-
-        /// <summary>
-        /// Add FlowEngine services to the DI container (legacy method for backward compatibility)
-        /// </summary>
-        public static IServiceCollection AddFlowEngine(this IServiceCollection services, Action<FlowEngineConfiguration> configure = null)
-        {
-            var config = new FlowEngineConfiguration();
-            configure?.Invoke(config);
-
-            services.AddSingleton(config);
-            services.AddLogging();
-            services.AddMemoryCache();
-
-            // Register core services
-            services.AddScoped<IFlowExecutor, FlowExecutor>();
-            services.AddScoped<IFlowEngineService, FlowEngineService>();
-            services.AddScoped<IFlowValidation, FlowValidationService>();
-            services.AddScoped<IFlowSecurity, FlowSecurityService>();
-            services.AddScoped<IFlowRecovery, FlowRecoveryService>();
-            services.AddScoped<IFlowMetrics, FlowMetricsService>();
-
-            // Register pause/resume services
-            services.AddSingleton<IFlowEventService, FlowEventService>();
-            services.AddSingleton<IFlowAutoResumeService, FlowAutoResumeService>();
-
-            // Register persistence based on configuration
-            services.AddFlowPersistence(config);
-
-            // Register middleware
-            services.AddFlowMiddleware(config);
-
-            // Register security services
-            services.AddFlowSecurity(config);
-
-            return services;
-        }
-
-        /// <summary>
-        /// Add FlowEngine with MongoDB persistence
-        /// </summary>
-        public static IServiceCollection AddFlowEngineWithMongoDB(this IServiceCollection services, string connectionString, string databaseName = "FlowEngine")
-        {
-            return services.AddFlowEngine(config =>
-            {
-                config.PersistenceType = PersistenceType.MongoDB;
-                config.ConnectionString = connectionString;
-                config.DatabaseName = databaseName;
-            });
-        }
-
-        /// <summary>
-        /// Add FlowEngine with SQL Server persistence
-        /// </summary>
-        public static IServiceCollection AddFlowEngineWithSqlServer(this IServiceCollection services, string connectionString)
-        {
-            return services.AddFlowEngine(config =>
-            {
-                config.PersistenceType = PersistenceType.SqlServer;
-                config.ConnectionString = connectionString;
-            });
-        }
-
-        /// <summary>
-        /// Add FlowEngine with in-memory persistence (for testing)
-        /// </summary>
-        public static IServiceCollection AddFlowEngineWithInMemory(this IServiceCollection services)
-        {
-            return services.AddFlowEngine(config =>
-            {
-                config.PersistenceType = PersistenceType.InMemory;
-            });
         }
 
         private static IServiceCollection AddFlowPersistence(this IServiceCollection services, FlowEngineConfiguration config)

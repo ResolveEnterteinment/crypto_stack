@@ -15,5 +15,10 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
 
         public static FlowResult<T> Failure(T flow, string message, Exception error = null) =>
             new() { Flow = flow, Status = FlowStatus.Failed, Message = message, Error = error };
+        public static FlowResult<T> Cancelled(T flow, string message = null) =>
+            new() { Flow = flow, Status = FlowStatus.Cancelled, Message = message };
+
+        public static FlowResult<T> Paused(T flow, string message = null) =>
+            new() { Flow = flow, Status = FlowStatus.Paused, Message = message };
     }
 }

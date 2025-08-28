@@ -3,15 +3,16 @@
 namespace Infrastructure.Services.FlowEngine.Definition.Builders
 {
     /// <summary>
-    /// Fluent builder for flow steps
+    /// Builder for sub-steps within branches
     /// </summary>
-    public class FlowStepBuilder
+    public class BranchStepBuilder
     {
-        private readonly FlowDefinition _flow;
+        private readonly StepBuilder _stepBuilder;
+        private readonly FlowBranch _branch;
 
-        public FlowStepBuilder(FlowDefinition flow)
+        internal BranchStepBuilder(FlowBranch branch)
         {
-            _flow = flow;
+            _branch = branch;
         }
 
         /// <summary>
@@ -19,7 +20,7 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// </summary>
         public StepBuilder Step(string name)
         {
-            return new StepBuilder(name, _flow.Steps);
+            return new StepBuilder(name, _branch.Steps);
         }
     }
 }

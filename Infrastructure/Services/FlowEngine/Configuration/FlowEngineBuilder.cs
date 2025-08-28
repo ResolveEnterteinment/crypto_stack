@@ -5,6 +5,7 @@ using Infrastructure.Services.FlowEngine.Engine;
 using Infrastructure.Services.FlowEngine.Middleware;
 using Infrastructure.Services.FlowEngine.Services.Events;
 using Infrastructure.Services.FlowEngine.Services.Metrics;
+using Infrastructure.Services.FlowEngine.Services.PauseResume;
 using Infrastructure.Services.FlowEngine.Services.Persistence;
 using Infrastructure.Services.FlowEngine.Services.Recovery;
 using Infrastructure.Services.FlowEngine.Services.Security;

@@ -10,6 +10,7 @@ public static class HostedServicesExtensions
     {
         services.AddHostedService<SubscriptionRetryBackgroundService>();
         services.AddHostedService<OldPaymentCleanupBackgroundService>();
+        services.AddHostedService<FlowRestoreBackgroundService>();
         services.AddHostedService(sp => sp.GetRequiredService<OpenSanctionsService>());
 
         // Change stream services
