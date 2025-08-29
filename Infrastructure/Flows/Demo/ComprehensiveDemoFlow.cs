@@ -163,7 +163,7 @@ namespace Infrastructure.Flows.Demo
                         var pausedAt = context.Flow.PausedAt;
                         
                         return pausedAt.HasValue && 
-                               DateTime.UtcNow.Subtract(pausedAt.Value) > TimeSpan.FromMinutes(2);
+                               DateTime.UtcNow.Subtract(pausedAt.Value) > TimeSpan.FromMinutes(1);
                     });
                 })
                 .Execute(async context =>
@@ -249,6 +249,7 @@ namespace Infrastructure.Flows.Demo
                     });
                 })
                 .WithRetries(maxRetries: 5, delay: TimeSpan.FromSeconds(3))
+                .WithIdempotency()
                 .WithTimeout(TimeSpan.FromSeconds(30))
                 .AllowFailure()
                 .Build();
@@ -261,7 +262,7 @@ namespace Infrastructure.Flows.Demo
                     branches.When(
                         context =>
                         {
-                            var apiResponse = context.GetData<object>("ApiResponse");
+                            var apiResponse = context.GetData<ApiResult>("ApiResponse");
                             return apiResponse != null;
                         },
                         branch => branch.Step("SuccessPath")
@@ -271,7 +272,6 @@ namespace Infrastructure.Flows.Demo
                             await Task.Delay(500, context.CancellationToken);
                             return StepResult.Success("Success path completed");
                         })
-                        .JumpTo("PerformComplexCalculation")
                         .Build());
 
                     branches.Otherwise(
@@ -282,6 +282,7 @@ namespace Infrastructure.Flows.Demo
                             await Task.Delay(300, context.CancellationToken);
                             return StepResult.Success("Error path completed with recovery");
                         })
+                        .JumpTo("PerformComplexCalculation") // Loop back for demo purposes to test idempotency
                         .Build());
                 })
                 .Build();

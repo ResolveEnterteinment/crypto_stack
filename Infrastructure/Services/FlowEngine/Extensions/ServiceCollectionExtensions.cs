@@ -54,6 +54,7 @@ namespace Infrastructure.Services.FlowEngine.Extensions
             services.AddMemoryCache();
 
             // Register core services
+            services.AddSingleton<IFlowRuntimeStore, FlowRuntimeStore>();
             services.AddScoped<IFlowExecutor, FlowExecutor>();
             services.AddScoped<IFlowEngineService, FlowEngineService>();
             services.AddScoped<IFlowValidation, FlowValidationService>();

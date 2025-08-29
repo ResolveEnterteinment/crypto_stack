@@ -4,10 +4,9 @@ using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
 using Infrastructure.Services.FlowEngine.Services.Persistence;
-using Infrastructure.Utilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Polly;
+using Infrastructure.Services.FlowEngine.Engine;
 
 namespace Infrastructure.Services.FlowEngine.Engine
 {
@@ -21,20 +20,22 @@ namespace Infrastructure.Services.FlowEngine.Engine
         private readonly IFlowPersistence _persistence;
         private readonly IFlowRecovery _recovery;
         private readonly ILogger<FlowEngineService> _logger;
-        private readonly Dictionary<Guid, FlowDefinition> _flows = new();
+        private readonly IFlowRuntimeStore _runtimeStore;
 
         public FlowEngineService(
             IFlowExecutor executor,
             IFlowPersistence persistence,
             IFlowRecovery recovery,
             ILogger<FlowEngineService> logger,
-            IServiceProvider serviceProvider)
+            IServiceProvider serviceProvider,
+            IFlowRuntimeStore runtimeStore)
         {
             _executor = executor;
             _persistence = persistence;
             _recovery = recovery;
             _logger = logger;
             _serviceProvider = serviceProvider;
+            _runtimeStore = runtimeStore;
         }
 
         public async Task RestoreFlowRuntime()
@@ -56,7 +57,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                 var restoreResult = await RestoreRuntimeFlows(flowsToRestore);
 
-                foreach (var flow in _flows.Values.Where(f => f.Status != FlowStatus.Paused))
+                foreach (var flow in _runtimeStore.Flows.Values.Where(f => f.Status != FlowStatus.Paused))
                 {
                     await _executor.ExecuteAsync(flow, CancellationToken.None);
                 }
@@ -144,7 +145,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                         _logger.LogDebug("Restored pause condition for flow {FlowId} at step {StepName}", flow.FlowId, pauseStep.Name);
                     }
-                    _flows.Add(flowDoc.FlowId, flow);
+                    _runtimeStore.Flows.Add(flowDoc.FlowId, flow);
                     _logger.LogInformation("Restored flow {FlowType} with ID {FlowId}", flow.GetType().Name, flow.FlowId);
 
                     result.FlowsRestored++;
@@ -189,7 +190,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 flow.SetInitialData(initialData);
             }
 
-            _flows.Add(flowId, flow);
+            _runtimeStore.Flows.Add(flowId, flow);
             _logger.LogInformation("Starting flow {FlowType} with ID {FlowId}",
                 typeof(TFlow).Name, flowId);
 
@@ -236,7 +237,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             Guid flowId,
             CancellationToken cancellationToken = default)
         {
-            if(!_flows.TryGetValue(flowId, out var flow))
+            if(!_runtimeStore.Flows.TryGetValue(flowId, out var flow))
             {
                 throw new FlowNotFoundException($"Flow {flowId} not found in runtime store");
             }
@@ -370,7 +371,8 @@ namespace Infrastructure.Services.FlowEngine.Engine
         public async Task<bool> ResumeManuallyAsync(Guid flowId, string userId, string reason = null)
         {
             _logger.LogInformation("Manual resume requested for flow {FlowId} by user {UserId}", flowId, userId);
-            return await _persistence.ResumeFlowAsync(flowId, ResumeReason.Manual, userId, reason);
+            var resumeResult=  await ResumeRuntimeAsync(flowId);
+            return resumeResult.Status == FlowStatus.Running;
         }
 
         public async Task<bool> ResumeByEventAsync(Guid flowId, string eventType, object eventData = null)
@@ -388,7 +390,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
         public List<FlowDefinition> GetPausedFlowsAsync()
         {
-            var pausedFlows = _flows.Values.Where(f => f.Status == FlowStatus.Paused).ToList();
+            var pausedFlows = _runtimeStore.Flows.Values.Where(f => f.Status == FlowStatus.Paused).ToList();
             return pausedFlows;
         }
 

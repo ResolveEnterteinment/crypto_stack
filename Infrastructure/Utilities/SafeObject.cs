@@ -2,30 +2,32 @@ using MongoDB.Bson.Serialization.Attributes;
 using System.Text.Json.Serialization;
 using System.Reflection;
 using System.Collections;
+using MongoDB.Bson;
 
 namespace Infrastructure.Utilities
 {
     /// <summary>
-    /// Represents a type-safe serializable object with embedded type information
+    /// Backward compatible SafeObject that can read old _t/_v format
+    /// but writes new type/val format
     /// </summary>
     public class SafeObject
     {
         /// <summary>
-        /// Type information - stored as string for MongoDB compatibility
+        /// Type information - using "type" to avoid MongoDB's reserved "_t"
         /// </summary>
-        [BsonElement("_t")]
-        [JsonPropertyName("_t")]
+        [BsonElement("_type_")]
+        [JsonPropertyName("_type_")]
         public string Type { get; set; }
 
         /// <summary>
-        /// The actual value - can be primitive, collection, or nested SafeObject structure
+        /// The actual value - using "val" instead of "_v" for consistency
         /// </summary>
-        [BsonElement("_v")]
-        [JsonPropertyName("_v")]
+        [BsonElement("_value_")]
+        [JsonPropertyName("_value_")]
         public object Value { get; set; }
 
         /// <summary>
-        /// Creates a SafeObject for a simple value
+        /// Creates a SafeObject for a simple value (always uses new format)
         /// </summary>
         public static SafeObject FromValue(object value)
         {
@@ -33,6 +35,27 @@ namespace Infrastructure.Utilities
                 return new SafeObject { Type = "null", Value = null };
 
             var type = value.GetType();
+
+            // Convert GUIDs to strings for storage
+            if (type == typeof(Guid))
+            {
+                return new SafeObject
+                {
+                    Type = "System.Guid",
+                    Value = value.ToString()
+                };
+            }
+
+            // Handle nullable GUIDs
+            if (type == typeof(Guid?))
+            {
+                var nullableGuid = (Guid?)value;
+                return new SafeObject
+                {
+                    Type = "System.Nullable`1[[System.Guid]]",
+                    Value = nullableGuid?.ToString()
+                };
+            }
 
             // Handle simple types directly
             if (IsSimpleType(type))
@@ -83,6 +106,21 @@ namespace Infrastructure.Utilities
             if (Type == "null" || Value == null)
                 return null;
 
+            // Reconstruct GUIDs from strings
+            if (Type == "System.Guid" && Value is string guidString)
+            {
+                return Guid.Parse(guidString);
+            }
+
+            // Handle nullable GUIDs
+            if (Type == "System.Nullable`1[[System.Guid]]")
+            {
+                if (Value == null)
+                    return null;
+                if (Value is string nullableGuidString)
+                    return Guid.Parse(nullableGuidString);
+            }
+
             var actualType = targetType ?? ResolveType(Type);
             if (actualType == null)
                 throw new InvalidOperationException($"Cannot resolve type: {Type}");
@@ -90,6 +128,11 @@ namespace Infrastructure.Utilities
             // Handle simple types
             if (IsSimpleType(actualType))
             {
+                // Handle BsonDateTime for DateTime values
+                if (Value is BsonDateTime bsonDate)
+                {
+                    return Convert.ChangeType(bsonDate.ToUniversalTime(), actualType);
+                }
                 return Convert.ChangeType(Value, actualType);
             }
 
@@ -99,10 +142,70 @@ namespace Infrastructure.Utilities
                 return ReconstructCollection(safeObjects, actualType);
             }
 
+            // Handle collections from MongoDB (might be BsonArray)
+            if (Value is BsonArray bsonArray && typeof(IEnumerable).IsAssignableFrom(actualType))
+            {
+                var items = new List<SafeObject>();
+                foreach (var item in bsonArray)
+                {
+                    if (item is BsonDocument doc)
+                    {
+                        var so = new SafeObject();
+                        if (doc.Contains("type"))
+                            so.Type = doc["type"].AsString;
+                        else if (doc.Contains("_t"))
+                            so.Type = doc["_t"].AsString;
+
+                        if (doc.Contains("val"))
+                            so.Value = BsonTypeMapper.MapToDotNetValue(doc["val"]);
+                        else if (doc.Contains("_v"))
+                            so.Value = BsonTypeMapper.MapToDotNetValue(doc["_v"]);
+
+                        items.Add(so);
+                    }
+                    else
+                    {
+                        // Simple value
+                        items.Add(SafeObject.FromValue(BsonTypeMapper.MapToDotNetValue(item)));
+                    }
+                }
+                return ReconstructCollection(items, actualType);
+            }
+
             // Handle complex objects
             if (Value is Dictionary<string, SafeObject> safeDict)
             {
                 return ReconstructComplexObject(safeDict, actualType);
+            }
+
+            // Handle BsonDocument
+            if (Value is BsonDocument bsonDoc)
+            {
+                var dict = new Dictionary<string, SafeObject>();
+                foreach (var element in bsonDoc)
+                {
+                    var val = BsonTypeMapper.MapToDotNetValue(element.Value);
+                    if (val is BsonDocument subdoc && (subdoc.Contains("type") || subdoc.Contains("_t")))
+                    {
+                        var so = new SafeObject();
+                        if (subdoc.Contains("type"))
+                            so.Type = subdoc["type"].AsString;
+                        else if (subdoc.Contains("_t"))
+                            so.Type = subdoc["_t"].AsString;
+
+                        if (subdoc.Contains("val"))
+                            so.Value = BsonTypeMapper.MapToDotNetValue(subdoc["val"]);
+                        else if (subdoc.Contains("_v"))
+                            so.Value = BsonTypeMapper.MapToDotNetValue(subdoc["_v"]);
+
+                        dict[element.Name] = so;
+                    }
+                    else
+                    {
+                        dict[element.Name] = SafeObject.FromValue(val);
+                    }
+                }
+                return ReconstructComplexObject(dict, actualType);
             }
 
             throw new InvalidOperationException($"Cannot reconstruct value of type {Type}");
@@ -153,7 +256,10 @@ namespace Infrastructure.Utilities
             var elementType = targetType.IsArray ? targetType.GetElementType() :
                              targetType.IsGenericType ? targetType.GetGenericArguments()[0] : typeof(object);
 
-            var items = safeObjects.Select(so => so.ToValue(elementType)).ToList();
+            var items = safeObjects.Select(so =>
+            {
+                return so.ToValue(elementType);
+            }).ToList();
 
             if (targetType.IsArray)
             {
@@ -210,32 +316,31 @@ namespace Infrastructure.Utilities
                    type == typeof(decimal) ||
                    type == typeof(DateTime) ||
                    type == typeof(DateTimeOffset) ||
-                   type == typeof(TimeSpan) ||
-                   type == typeof(Guid) ||
-                   (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>) &&
-                    IsSimpleType(Nullable.GetUnderlyingType(type)));
+                   type == typeof(TimeSpan);
         }
 
-        private static Type ResolveType(string typeInfo)
+        private static Type ResolveType(string typeName)
         {
-            if (string.IsNullOrEmpty(typeInfo)) return null;
+            if (string.IsNullOrEmpty(typeName))
+                return null;
 
-            try
-            {
-                // Try to get type from current app domain first
-                var type = System.Type.GetType(typeInfo);
-                if (type != null) return type;
+            // Handle special cases
+            if (typeName == "System.Guid")
+                return typeof(Guid);
+            if (typeName == "System.Nullable`1[[System.Guid]]")
+                return typeof(Guid?);
 
-                // Search through all loaded assemblies
-                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    type = assembly.GetType(typeInfo);
-                    if (type != null) return type;
-                }
-            }
-            catch
+            // Try to get the type directly
+            var type = System.Type.GetType(typeName);
+            if (type != null)
+                return type;
+
+            // Try from all loaded assemblies
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                // Type resolution failed
+                type = assembly.GetType(typeName);
+                if (type != null)
+                    return type;
             }
 
             return null;

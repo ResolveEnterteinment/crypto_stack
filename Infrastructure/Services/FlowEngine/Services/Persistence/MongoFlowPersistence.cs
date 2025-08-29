@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Bson.Serialization.Conventions;
 using MongoDB.Bson.Serialization.Options;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
@@ -499,72 +500,63 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
 
         private void ConfigureMongoSerialization()
         {
-
-            // Configure object serializer to use JSON strings for complex objects
-            if (BsonSerializer.LookupSerializer(typeof(object)) == null)
-            {
-                BsonSerializer.RegisterSerializer(
-                    typeof(object),
-                    new ObjectSerializer(type =>
-                        ObjectSerializer.DefaultAllowedTypes(type) ||
-                        typeof(Dictionary<string, SafeObject>).IsAssignableFrom(type) ||
-                        typeof(List<SafeObject>).IsAssignableFrom(type)
-                    )
-                );
-            }
-
-            // Register Guid serializer first - this is critical for handling Guids in dictionaries
-            if (BsonSerializer.LookupSerializer(typeof(Guid)) == null)
-            {
-                BsonSerializer.RegisterSerializer(typeof(Guid), new GuidSerializer(GuidRepresentation.Standard));
-            }
-
-            // Register Guid? serializer for nullable Guids
-            if (BsonSerializer.LookupSerializer(typeof(Guid?)) == null)
-            {
-                BsonSerializer.RegisterSerializer(typeof(Guid?), new NullableSerializer<Guid>(new GuidSerializer(GuidRepresentation.Standard)));
-            }
-
-            // Register serializer for Dictionary<string, SafeObject>
-            if (BsonSerializer.LookupSerializer(typeof(Dictionary<string, SafeObject>)) == null)
-            {
-                BsonSerializer.RegisterSerializer(
-                    typeof(Dictionary<string, SafeObject>),
-                    new DictionaryInterfaceImplementerSerializer<Dictionary<string, SafeObject>>(DictionaryRepresentation.Document)
-                );
-            }
-
-            // Register serializer for SafeObject itself if not already registered
+            // Register SafeObject class map
             if (!BsonClassMap.IsClassMapRegistered(typeof(SafeObject)))
             {
                 BsonClassMap.RegisterClassMap<SafeObject>(cm =>
                 {
                     cm.AutoMap();
                     cm.SetIgnoreExtraElements(true);
-
-                    // Use a custom ObjectSerializer for the Value property
-                    cm.MapProperty(c => c.Value)
-                      .SetSerializer(new ObjectSerializer(type =>
-                          ObjectSerializer.DefaultAllowedTypes(type) ||
-                          typeof(Dictionary<string, SafeObject>).IsAssignableFrom(type) ||
-                          typeof(List<SafeObject>).IsAssignableFrom(type)
-                      ))
-                      .SetDefaultValue(new Dictionary<string, object>())
-                      .SetIgnoreIfDefault(false);
                 });
             }
 
-            // Ensure that Exception types can be serialized/deserialized
+            // Register ObjectSerializer with ALL the types SafeObject might use
+            // This should be sufficient to handle List<SafeObject>
+            try
+            {
+                BsonSerializer.RegisterSerializer(
+                    typeof(object),
+                    new ObjectSerializer(
+                        type =>
+                            type == typeof(SafeObject) ||
+                            type == typeof(List<SafeObject>) ||  // This allows List<SafeObject>
+                            type == typeof(Dictionary<string, SafeObject>) ||
+                            ObjectSerializer.DefaultAllowedTypes(type)
+                    )
+                );
+            }
+            catch (Exception)
+            {
+                // Already registered
+            }
+
+            // Register Dictionary<string, SafeObject> serializer
+            try
+            {
+                BsonSerializer.RegisterSerializer(
+                    typeof(Dictionary<string, SafeObject>),
+                    new DictionaryInterfaceImplementerSerializer<Dictionary<string, SafeObject>>(
+                        DictionaryRepresentation.Document)
+                );
+            }
+            catch (BsonSerializationException)
+            {
+                // Already registered
+            }
+
+            // Register Exception class map
             if (!BsonClassMap.IsClassMapRegistered(typeof(Exception)))
             {
                 BsonClassMap.RegisterClassMap<Exception>(cm =>
                 {
                     cm.AutoMap();
                     cm.SetIgnoreExtraElements(true);
+                    cm.UnmapProperty(e => e.TargetSite);
+                    cm.UnmapProperty(e => e.Data);
                 });
             }
 
-            // Ensure that FlowContext types can be serialized/deserialized
+            // Register FlowContext class map
             if (!BsonClassMap.IsClassMapRegistered(typeof(FlowContext)))
             {
                 BsonClassMap.RegisterClassMap<FlowContext>(cm =>
@@ -574,51 +566,45 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                 });
             }
 
-            // Ensure that StepResult types can be serialized/deserialized
+            // Register StepResult class map
             if (!BsonClassMap.IsClassMapRegistered(typeof(StepResult)))
             {
                 BsonClassMap.RegisterClassMap<StepResult>(cm =>
                 {
                     cm.AutoMap();
                     cm.SetIgnoreExtraElements(true);
-                    // Configure the Data dictionary to handle complex objects safely
                     cm.MapProperty(c => c.Data)
                       .SetDefaultValue(new Dictionary<string, SafeObject>())
                       .SetIgnoreIfDefault(false);
                 });
             }
 
-            // Register FlowEvent class map if needed
+            // Register FlowEvent class map
             if (!BsonClassMap.IsClassMapRegistered(typeof(FlowEvent)))
             {
                 BsonClassMap.RegisterClassMap<FlowEvent>(cm =>
                 {
                     cm.AutoMap();
                     cm.SetIgnoreExtraElements(true);
-                    // Configure the Data dictionary to handle complex objects safely
                     cm.MapProperty(c => c.Data)
                       .SetDefaultValue(new Dictionary<string, SafeObject>())
                       .SetIgnoreIfDefault(false);
                 });
             }
 
-            // Register enum serialization for FlowStatus
-            if (BsonSerializer.LookupSerializer(typeof(FlowStatus)) == null)
+            // Register enum serializers
+            try
             {
                 BsonSerializer.RegisterSerializer(typeof(FlowStatus), new EnumSerializer<FlowStatus>(BsonType.String));
-            }
-
-            // Register enum serialization for PauseReason
-            if (BsonSerializer.LookupSerializer(typeof(PauseReason)) == null)
-            {
                 BsonSerializer.RegisterSerializer(typeof(PauseReason), new EnumSerializer<PauseReason>(BsonType.String));
-            }
-
-            // Register enum serialization for ResumeReason
-            if (BsonSerializer.LookupSerializer(typeof(ResumeReason)) == null)
-            {
                 BsonSerializer.RegisterSerializer(typeof(ResumeReason), new EnumSerializer<ResumeReason>(BsonType.String));
             }
+            catch (BsonSerializationException)
+            {
+                // Already registered
+            }
+
+            _logger.LogInformation("MongoDB serialization configured with SafeObject support");
         }
     }
 
