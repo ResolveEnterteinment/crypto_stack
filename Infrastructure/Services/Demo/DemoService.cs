@@ -51,7 +51,7 @@ namespace Infrastructure.Services.Demo
             await Task.Delay(Random.Shared.Next(1000, 3000));
             
             // Simulate occasional API failures
-            if (Random.Shared.Next(1, 10) == 1) // 10% chance of failure
+            if (Random.Shared.Next(1, 10) > 1) // 70% chance of failure
             {
                 throw new HttpRequestException("External API temporarily unavailable");
             }

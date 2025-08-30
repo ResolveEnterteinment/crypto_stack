@@ -39,9 +39,9 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 flow.Status = FlowStatus.Running;
                 flow.StartedAt = DateTime.UtcNow;
 
-                for (int i = flow.CurrentStepIndex; i < flow.Steps.Count; i++)
+                while (flow.CurrentStepIndex < flow.Steps.Count)
                 {
-                    var step = flow.Steps[i];
+                    var step = flow.Steps[flow.CurrentStepIndex];
                     flow.CurrentStepName = step.Name;
                     flow.CurrentStepIndex = flow.Steps.IndexOf(step);
 
@@ -51,6 +51,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                     if (flow.Status == FlowStatus.Paused || cancellationToken.IsCancellationRequested)
                         break;
+                    flow.CurrentStepIndex++;
                 }
 
                 if (cancellationToken.IsCancellationRequested)
@@ -75,6 +76,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 flow.Status = FlowStatus.Failed;
                 flow.LastError = ex;
                 flow.CompletedAt = DateTime.UtcNow;
+                _logger.LogError(ex, "Flow {FlowId} failed at step {StepName}: {ErrorMessage}", flow.FlowId, flow.CurrentStepName, ex.Message);
 
                 await _persistence.SaveFlowStateAsync(flow);
 
@@ -194,6 +196,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 catch (Exception)
                 {
                     step.Status = StepStatus.Failed;
+
                     if (step.AllowFailure)
                     {
                         _logger.LogWarning("Step {StepName} failed but is allowed to fail, continuing flow", step.Name);
@@ -203,7 +206,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
                         _logger.LogError("Step {StepName} failed, aborting flow", step.Name);
                         throw; // Rethrow to be caught by outer flow execution handler
                     }
-                    throw;
                 }
             }
 
@@ -236,8 +238,15 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
 
             // Handle jump to another step if configured
-            if (step.JumpTo != null && !string.IsNullOrWhiteSpace(step.JumpTo))
+            if (!string.IsNullOrWhiteSpace(step.JumpTo))
             {
+                if(step.MaxJumps.HasValue && step.CurrentJumps >= step.MaxJumps.Value)
+                {
+                    step.Status = StepStatus.Failed;
+
+                    throw new FlowExecutionException($"Step {step.Name} exceeded maximum jumps to {step.JumpTo} (max {step.MaxJumps})");
+                }
+
                 var targetIndex = flow.Steps.FindIndex(s => s.Name == step.JumpTo);
                 if (targetIndex == -1)
                 {
@@ -245,6 +254,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     throw new FlowExecutionException($"Step {step.Name} attempted to jump to unknown step {step.JumpTo}");
                 }
                 flow.CurrentStepIndex = targetIndex - 1; // -1 because the main loop will increment it
+                step.CurrentJumps++;
             }
 
             step.Status = StepStatus.Completed;
@@ -351,7 +361,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             // Get data items that will become sub-steps
             var dataItems = config.DataSelector(context).ToList();
 
-            if (!dataItems.Any())
+            if (dataItems.Count == 0)
             {
                 _logger.LogInformation("No data items found for dynamic branching in step {StepName}", context.CurrentStep.Name);
                 return;
@@ -521,7 +531,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     }
                 }
 
-                if (dependencyData.Any())
+                if (dependencyData.Count != 0)
                 {
                     var contentHash = GenerateContentHash(dependencyData);
                     keyComponents.Append($":hash:{contentHash}");

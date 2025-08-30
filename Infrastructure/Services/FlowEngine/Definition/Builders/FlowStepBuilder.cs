@@ -17,9 +17,9 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// <summary>
         /// Fluent API for defining steps
         /// </summary>
-        public StepBuilder Step(string name)
+        public StepBuilder<FlowStep> Step(string name)
         {
-            return new StepBuilder(name, _flow.Steps);
+            return new StepBuilder<FlowStep>(name, _flow.Steps);
         }
     }
 }

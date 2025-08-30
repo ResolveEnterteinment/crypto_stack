@@ -156,13 +156,13 @@ namespace Infrastructure.Flows.Demo
                     });
 
                     resume.AllowManual(["ADMIN"]);
-                    
+
                     resume.WhenCondition(async context =>
                     {
                         // Auto-approve after 5 minutes for demo purposes
                         var pausedAt = context.Flow.PausedAt;
-                        
-                        return pausedAt.HasValue && 
+
+                        return pausedAt.HasValue &&
                                DateTime.UtcNow.Subtract(pausedAt.Value) > TimeSpan.FromMinutes(1);
                     });
                 })
@@ -185,8 +185,8 @@ namespace Infrastructure.Flows.Demo
                     }
 
                     return StepResult.Success("No approval required");
-                })
-                .Build();
+                });
+                //.Build();
 
             // Step 5: Resource-intensive step with load balancing
             _builder.Step("PerformComplexCalculation")
@@ -252,42 +252,39 @@ namespace Infrastructure.Flows.Demo
                 .WithIdempotency()
                 .WithTimeout(TimeSpan.FromSeconds(30))
                 .AllowFailure()
-                .Build();
-
-            // Step 7: Conditional branching
-            _builder.Step("ProcessBasedOnResult")
-                .After("CallExternalAPI")
-                .WithBranches(branches =>
+                .WithBranches(branchBuilder =>
                 {
-                    branches.When(
+                    branchBuilder.When(
                         context =>
                         {
                             var apiResponse = context.GetData<ApiResult>("ApiResponse");
                             return apiResponse != null;
                         },
-                        branch => branch.Step("SuccessPath")
-                        .Execute(async context =>
-                        {
-                            _logger.LogInformation("Following success path");
-                            await Task.Delay(500, context.CancellationToken);
-                            return StepResult.Success("Success path completed");
-                        })
-                        .Build());
+                        stepBuilder => stepBuilder.Step("SuccessPath")
+                            .Execute(async context =>
+                            {
+                                _logger.LogInformation("Following success path");
+                                await Task.Delay(500, context.CancellationToken);
+                                return StepResult.Success("Success path completed");
+                            })
+                            //.JumpTo("CallExternalAPI") // Loop back for demo purposes to test idempotency
+                            .Build());
 
-                    branches.Otherwise(
-                        branch => branch.Step("ErrorPath")
-                        .Execute(async context =>
-                        {
-                            _logger.LogWarning("Following error path");
-                            await Task.Delay(300, context.CancellationToken);
-                            return StepResult.Success("Error path completed with recovery");
-                        })
-                        .JumpTo("PerformComplexCalculation") // Loop back for demo purposes to test idempotency
-                        .Build());
+                    branchBuilder.Otherwise(
+                        stepBuilder => stepBuilder.Step("ErrorPath")
+                            .Execute(async context =>
+                            {
+                                _logger.LogWarning("Following error path");
+                                await Task.Delay(300, context.CancellationToken);
+                                return StepResult.Failure("Error path completed with recovery");
+                            })
+                            .AllowFailure()
+                            .JumpTo("CallExternalAPI", 3) // Loop back for demo purposes to test idempotency
+                            .Build());
                 })
                 .Build();
 
-            // Step 8: Triggering another flow
+            // Step 7: Triggering another flow
             _builder.Step("TriggerNotificationFlow")
                 .After("ProcessBasedOnResult")
                 .Execute(async context =>
@@ -309,9 +306,10 @@ namespace Infrastructure.Flows.Demo
                     });
                 })
                 .Triggers<DemoNotificationFlow>()
+                .AllowFailure()
                 .Build();
 
-            // Step 9: Final cleanup and reporting
+            // Step 8: Final cleanup and reporting
             _builder.Step("FinalizeDemo")
                 .After("TriggerNotificationFlow")
                 .Execute(async context =>
@@ -337,8 +335,6 @@ namespace Infrastructure.Flows.Demo
                         ["ExecutionTime"] = summary.EndTime.Subtract(summary.StartTime)
                     });
                 })
-                .WithIdempotency()
-                .AllowFailure()
                 .Build();
         }
     }

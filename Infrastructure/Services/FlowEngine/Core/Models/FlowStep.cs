@@ -1,15 +1,19 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace Infrastructure.Services.FlowEngine.Core.Models
 {
+    [BsonIgnoreExtraElements]
     public class FlowStep
     {
         public string Name { get; set; } = "Unnamed Step";
         public StepStatus Status { get; set; } = StepStatus.Pending;
+        [BsonIgnore]
         public Func<FlowContext, Task<StepResult>>? ExecuteAsync { get; set; }
         public List<string> StepDependencies { get; set; } = [];
         public Dictionary<string, Type> DataDependencies { get; internal set; } = [];
+        [BsonIgnore]
         public Func<FlowContext, bool>? Condition { get; set; }
         public StepResult? Result {  get; set; }
         public bool CanRunInParallel { get; set; }
@@ -21,20 +25,16 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
         public DynamicBranchingConfig? DynamicBranching { get; set; }
         public List<Type> TriggeredFlows { get; set; } = [];
         public string? JumpTo { get; set; } = null;
+        public int? MaxJumps { get; set; } = null;
+        public int CurrentJumps { get; set; } = 0;
         public bool IsCritical { get; set; } = false;
         public bool AllowFailure { get; set; } = false;
         public bool IsIdempotent { get; set; } = false;
 
         // NEW: Pause/Resume capabilities
+        [BsonIgnore]
         public Func<FlowContext, PauseCondition>? PauseCondition { get; set; }
+        [BsonIgnore]
         public ResumeConfig? ResumeConfig { get; set; }
-
-        //Sub step related properties
-        public int Priority { get; set; } = 0;
-        public object? SourceData { get; set; }
-        public int Index { get; set; } = -1;
-        public Dictionary<string, object> Metadata { get; set; } = [];
-        public TimeSpan? EstimatedDuration { get; set; }
-        public string? ResourceGroup { get; set; } // For round-robin distribution
     }
 }
