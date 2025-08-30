@@ -1,4 +1,4 @@
-﻿using Application.Interfaces;
+﻿,using Application.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Exceptions;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
@@ -19,13 +19,15 @@ namespace Infrastructure.Services.FlowEngine.Engine
         private readonly ILogger<FlowExecutor> _logger;
         private readonly IFlowPersistence _persistence;
         private readonly IIdempotencyService _idempotency;
+        private readonly IServiceScopeFactory _scopeFactory;
 
-        public FlowExecutor(IServiceProvider serviceProvider, ILogger<FlowExecutor> logger)
+        public FlowExecutor(IServiceProvider serviceProvider, ILogger<FlowExecutor> logger, IServiceScopeFactory scopeFactory)
         {
             _serviceProvider = serviceProvider;
             _logger = logger;
             _persistence = serviceProvider.GetRequiredService<IFlowPersistence>();
             _idempotency = serviceProvider.GetRequiredService<IIdempotencyService>();
+            _scopeFactory = scopeFactory;
         }
 
         public async Task<FlowResult<T>> ExecuteAsync<T>(T flow, CancellationToken cancellationToken) where T : FlowDefinition
@@ -471,8 +473,12 @@ namespace Infrastructure.Services.FlowEngine.Engine
         {
             _logger.LogInformation("Triggering flow {FlowType} from step {StepName}", flowType.Name, context.CurrentStep.Name);
 
+            // Create a new scope for the triggered flow
+            using var scope = _scopeFactory.CreateScope();
+            var scopedProvider = scope.ServiceProvider;
+
             // Get flow instance from DI container
-            var flow = (FlowDefinition)_serviceProvider.GetRequiredService(flowType);
+            var flow = (FlowDefinition)scopedProvider.GetRequiredService(flowType);
 
             // Initialize the flow
             flow.FlowId = Guid.NewGuid();
@@ -482,7 +488,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             flow.Status = FlowStatus.Initializing;
 
             // Execute the flow
-            var executor = _serviceProvider.GetRequiredService<IFlowExecutor>();
+            var executor = scopedProvider.GetRequiredService<IFlowExecutor>();
             return executor.ExecuteAsync(flow, context.CancellationToken);
         }
 
