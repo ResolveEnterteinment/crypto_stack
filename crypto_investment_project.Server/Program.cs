@@ -122,6 +122,7 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
 // Map SignalR hubs
 app.MapHub<NotificationHub>("/hubs/notificationHub");
 app.MapHub<DashboardHub>("/hubs/dashboardHub");
+app.MapHub<FlowHub>("/hubs/flowHub");
 Console.WriteLine("✅ SignalR hubs configured");
 
 // Map diagnostic endpoint

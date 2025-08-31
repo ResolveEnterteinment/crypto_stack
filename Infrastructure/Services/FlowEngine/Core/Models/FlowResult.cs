@@ -8,7 +8,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
         public FlowStatus Status { get; set; }
         public string Message { get; set; }
         public TimeSpan ExecutionTime { get; set; }
-        public Exception Error { get; set; }
+        public Exception? Error { get; set; } = null;
 
         public static FlowResult<T> Success(T flow, string message = null) =>
             new() { Flow = flow, Status = FlowStatus.Completed, Message = message };

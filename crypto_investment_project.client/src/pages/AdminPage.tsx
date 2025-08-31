@@ -2,6 +2,7 @@
 import { useNavigate } from 'react-router-dom';
 import AdminLogsPanel from "../components/Admin/AdminLogsPanel";
 import WithdrawalManagementPanel from "../components/Admin/WithdrawalManagement";
+import FlowEngineAdminPanel from "../components/Admin/FlowEngineAdminPanel";
 import AdminPaymentDashboard from "../components/Admin/AdminPaymentDashboard";
 import KycAdminPanel from "../components/KYC/KycAdminPanel";
 import KycAdminDashboard from "../components/Admin/KycAdminDashboard";
@@ -73,15 +74,24 @@ const AdminPageContent: React.FC = () => {
                                     }`}
                             >
                                 User Management
-                            </button>
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('payments')}
+                            className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'payments'
+                                ? 'border-blue-500 text-blue-600'
+                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                }`}
+                        >
+                            Payments
+                        </button>
                             <button
-                                onClick={() => setActiveTab('payments')}
+                                onClick={() => setActiveTab('flows')}
                                 className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'payments'
                                     ? 'border-blue-500 text-blue-600'
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                                     }`}
                             >
-                                Payments Management
+                                Flows
                             </button>
                             <button
                                 onClick={() => setActiveTab('kyc')}
@@ -90,7 +100,7 @@ const AdminPageContent: React.FC = () => {
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                                     }`}
                             >
-                                KYC Management
+                                KYC
                             </button>
                             <button
                                 onClick={() => setActiveTab('kyc-dashboard')}
@@ -126,7 +136,7 @@ const AdminPageContent: React.FC = () => {
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                                     }`}
                             >
-                                Withdrawal Management
+                                Withdrawals
                             </button>
                             <button
                                 onClick={() => setActiveTab('settings')}
@@ -149,6 +159,7 @@ const AdminPageContent: React.FC = () => {
                                 <p className="text-gray-500">User management functionality coming soon...</p>
                             </div>
                         )}
+                        {activeTab === 'flows' && <FlowEngineAdminPanel />}
                         {activeTab === 'payments' && <AdminPaymentDashboard />}
                         {activeTab === 'kyc' && <KycAdminPanel />}
                         {activeTab === 'kyc-dashboard' && <KycAdminDashboard />}

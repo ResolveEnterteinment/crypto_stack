@@ -1,11 +1,8 @@
 ﻿using Application.Interfaces;
-using Domain.Models.Asset;
-using Domain.Models.Balance;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using MongoDB.Driver;
 using System.Security.Claims;
 
 namespace Infrastructure.Hubs

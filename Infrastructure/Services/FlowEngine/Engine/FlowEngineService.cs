@@ -165,6 +165,95 @@ namespace Infrastructure.Services.FlowEngine.Engine
             return Task.FromResult(result);
         }
 
+        private FlowDefinition? RestoreRuntimeFlow(FlowDocument flowDoc)
+        {
+            try
+            {
+                // Create an instance of Type flowDoc.FlowType using DI
+                var flowType = Type.GetType(flowDoc.FlowType);
+                if (flowType == null)
+                {
+                    _logger.LogWarning("Could not resolve flow type {FlowType} for flow {FlowId}", flowDoc.FlowType, flowDoc.FlowId);
+                    throw new FlowExecutionException($"Could not resolve flow type {flowDoc.FlowType} for flow {flowDoc.FlowId}");
+                }
+
+                // Try to get from DI container first (recommended)
+                FlowDefinition flow = null;
+                try
+                {
+                    flow = (FlowDefinition)_serviceProvider.GetRequiredService(flowType);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Fallback to Activator if not registered in DI
+                    _logger.LogWarning("Flow type {FlowType} not registered in DI container, using Activator fallback", flowType.Name);
+                    flow = (FlowDefinition)Activator.CreateInstance(flowType);
+                }
+
+                if (flow == null)
+                {
+                    _logger.LogWarning("Failed to initiate flow {FlowType} using Activator fallback", flowDoc.FlowType);
+                    throw new FlowExecutionException($"Failed to initiate flow {flowDoc.FlowType} using Activator fallback");
+                }
+
+                // Initialize the flow to ensure steps are properly defined
+                flow.Initialize();
+
+                // Instead of deserializing directly, copy the state from the document
+                // Populate the flow with persisted data
+
+                CopyFlowState(flowDoc, flow);
+
+                if (flow.Status == FlowStatus.Paused)
+                {
+                    var pauseStep = flow.Steps[flow.CurrentStepIndex];
+
+                    var context = new FlowContext
+                    {
+                        Flow = flow,
+                        CurrentStep = pauseStep,
+                        CancellationToken = default,
+                        Services = _serviceProvider
+                    };
+
+                    var pauseCondition = pauseStep.PauseCondition(context);
+
+                    flow.ActiveResumeConfig = pauseCondition.ResumeConfig ?? pauseStep.ResumeConfig;
+
+                    _logger.LogDebug("Restored pause condition for flow {FlowId} at step {StepName}", flow.FlowId, pauseStep.Name);
+                }
+                _runtimeStore.Flows.Add(flowDoc.FlowId, flow);
+                _logger.LogInformation("Restored flow {FlowType} with ID {FlowId}", flow.GetType().Name, flow.FlowId);
+                
+                return flow;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to restore flow {FlowId}", flowDoc.FlowId);
+                return null;
+            }
+        }
+        public async Task<FlowDefinition?> GetFlowById(Guid flowId)
+        {
+            if (_runtimeStore.Flows.TryGetValue(flowId, out var flow))
+            {
+                return flow;
+            }
+            else
+            {
+                //resolve from persistence
+                var flowDoc = await _persistence.GetByFlowId(flowId);
+                flow = RestoreRuntimeFlow(flowDoc);
+                if (flow != null)
+                {
+                    return flow;
+                }
+            }
+
+            _logger.LogError("Flow {FlowId} not found in runtime store", flowId);
+            return null;
+        }
+
         public async Task<FlowResult<TFlow>> StartAsync<TFlow>(
             Dictionary<string, object>? initialData = null,
             string userId = null,
@@ -209,29 +298,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 throw;
             }
         }
-
-        public async Task<FlowResult<TFlow>> ResumeAsync<TFlow>(
-            Guid flowId,
-            CancellationToken cancellationToken = default)
-            where TFlow : FlowDefinition
-        {
-            // Load the persisted flow state
-            var persistedFlow = await _persistence.GetByFlowId(flowId);
-            if (persistedFlow == null)
-                throw new FlowNotFoundException($"Flow {flowId} not found");
-
-            // ✅ Create a fresh flow instance from DI
-            var flow = _serviceProvider.GetRequiredService<TFlow>();
-
-            // ✅ Copy the persisted state to the fresh instance
-            CopyFlowState(persistedFlow, flow);
-
-            _logger.LogInformation("Resuming flow {FlowId} from step {CurrentStep}",
-                flowId, flow.CurrentStepName);
-
-            return await _executor.ExecuteAsync(flow, cancellationToken);
-        }
-
 
         public async Task<FlowResult<FlowDefinition>> ResumeRuntimeAsync(
             Guid flowId,
@@ -337,9 +403,9 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 context.CancellationToken);
         }
 
-        public async Task<FlowStatus> GetStatusAsync(Guid flowId)
+        public FlowStatus? GetStatus(Guid flowId)
         {
-            return await _persistence.GetFlowStatusAsync(flowId);
+            return _runtimeStore.Flows.Values.FirstOrDefault(f => f.FlowId == flowId)?.Status;
         }
 
         public async Task<bool> CancelAsync(Guid flowId, string reason = null)

@@ -10,12 +10,12 @@ namespace Infrastructure.Services.FlowEngine.Core.Interfaces
     public interface IFlowEngineService
     {
         Task<FlowResult<TFlow>> StartAsync<TFlow>(Dictionary<string, object>? initialData = null, string userId = null, string correlationId = null, CancellationToken cancellationToken = default) where TFlow : FlowDefinition;
-        Task<FlowResult<TFlow>> ResumeAsync<TFlow>(Guid flowId, CancellationToken cancellationToken = default) where TFlow : FlowDefinition;
+        Task<FlowDefinition?> GetFlowById(Guid flowId);
+        FlowStatus? GetStatus(Guid flowId);
         Task<FlowResult<FlowDefinition>> ResumeRuntimeAsync(Guid flowId, CancellationToken cancellationToken = default);
         Task RestoreFlowRuntime();
         Task FireAsync<TFlow>(Dictionary<string, object>? initialData = null, string userId = null) where TFlow : FlowDefinition;
         Task<FlowResult<TTriggered>> TriggerAsync<TTriggered>(FlowContext context, Dictionary<string, object>? triggerData = null) where TTriggered : FlowDefinition;
-        Task<FlowStatus> GetStatusAsync(Guid flowId);
         Task<bool> CancelAsync(Guid flowId, string reason = null);
         Task<FlowTimeline> GetTimelineAsync(Guid flowId);
         Task<PagedResult<FlowSummary>> QueryAsync(FlowQuery query);

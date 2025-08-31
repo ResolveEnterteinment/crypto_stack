@@ -1,9 +1,6 @@
 using Infrastructure.Flows.Demo;
-using Infrastructure.Flows.Payment;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using System.Reflection;
 
 namespace Infrastructure.Services.FlowEngine.Extensions
 {
@@ -23,19 +20,6 @@ namespace Infrastructure.Services.FlowEngine.Extensions
             services.AddScoped<ComprehensiveDemoFlow>();
             services.AddScoped<DemoNotificationFlow>();
 
-            return services;
-        }
-
-        /// <summary>
-        /// Registers a single flow type
-        /// </summary>
-        /// <typeparam name="TFlow">The flow type to register</typeparam>
-        /// <param name="services">The service collection</param>
-        /// <returns>The service collection for chaining</returns>
-        public static IServiceCollection AddFlow<TFlow>(this IServiceCollection services) 
-            where TFlow : FlowDefinition
-        {
-            services.AddScoped<TFlow>();
             return services;
         }
 
@@ -76,6 +60,5 @@ namespace Infrastructure.Services.FlowEngine.Extensions
 
             return services;
         }
-
     }
 }

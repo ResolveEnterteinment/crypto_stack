@@ -104,8 +104,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 return; // Skip step execution
             }
 
-            _logger.LogInformation("Executing step {StepName} in flow {FlowId}", step.Name, flow.FlowId);
-
             // Check data dependencies
             foreach (var dependency in step.DataDependencies)
             {
@@ -128,10 +126,14 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 if (pauseCondition.ShouldPause)
                 {
                     step.Status = StepStatus.Paused;
-                    await PauseFlowAsync(flow, step, pauseCondition);
+                    await PauseFlowAsync(flow, pauseCondition);
                     return; // Exit step execution as flow is paused
                 }
             }
+
+            step.Status = StepStatus.InProgress;
+
+            _logger.LogInformation("Executing step {StepName} in flow {FlowId}", step.Name, flow.FlowId);
 
             // Check if step is idempotent
             string? idempotencyKey = null;
@@ -263,7 +265,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Pause the flow with the specified condition
         /// </summary>
-        private async Task PauseFlowAsync<T>(T flow, FlowStep step, PauseCondition pauseCondition) where T : FlowDefinition
+        public async Task<FlowResult<T>> PauseFlowAsync<T>(T flow, PauseCondition pauseCondition) where T : FlowDefinition
         {
             flow.Status = FlowStatus.Paused;
             flow.PausedAt = DateTime.UtcNow;
@@ -271,8 +273,11 @@ namespace Infrastructure.Services.FlowEngine.Engine
             flow.PauseMessage = pauseCondition.Message;
             flow.PauseData = pauseCondition.Data.ToSafe();
 
+            var step = flow.Steps.ElementAtOrDefault(flow.CurrentStepIndex);
+
             // Set resume configuration from step or pause condition
             flow.ActiveResumeConfig = pauseCondition.ResumeConfig ?? step.ResumeConfig;
+
 
             _logger.LogInformation("Flow {FlowId} paused at step {StepName}: {Reason} - {Message}",
                 flow.FlowId, step.Name, pauseCondition.Reason, pauseCondition.Message);
@@ -307,6 +312,8 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                 await _persistence.SetResumeConditionAsync(flow.FlowId, resumeCondition);
             }
+
+            return FlowResult<T>.Paused(flow, "Flow is paused");
         }
 
         /// <summary>
@@ -371,6 +378,12 @@ namespace Infrastructure.Services.FlowEngine.Engine
             var subSteps = dataItems
                 .Select((item, index) => config.StepFactory(item, index))
                 .ToList();
+
+            context.CurrentStep.Branches.Add(new FlowBranch
+            {
+                IsDefault = true,
+                Steps = subSteps
+            });
 
             _logger.LogInformation("Generated {SubStepCount} dynamic sub-steps for step {StepName} using strategy {Strategy}",
                 subSteps.Count, context.CurrentStep.Name, config.ExecutionStrategy);

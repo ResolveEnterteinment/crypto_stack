@@ -45,7 +45,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Recovery
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Failed to recover flow {FlowId}", flowSummary.FlowId);
-                        result.FailedFlowIds.Add(flowSummary.FlowId);
+                        result.FailedFlowsDict.Add(flowSummary.FlowId, ex);
                         result.FlowsFailed++;
                     }
                 }

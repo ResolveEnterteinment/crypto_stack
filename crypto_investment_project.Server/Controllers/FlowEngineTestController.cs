@@ -74,7 +74,7 @@ namespace Controllers
         {
             try
             {
-                var status = await _flowEngineService.GetStatusAsync(flowId);
+                var status = _flowEngineService.GetStatus(flowId);
                 var timeline = await _flowEngineService.GetTimelineAsync(flowId);
 
                 return Ok(new
@@ -293,7 +293,7 @@ namespace Controllers
                     FlowsRecovered = result.FlowsRecovered,
                     FlowsFailed = result.FlowsFailed,
                     RecoveredFlowIds = result.RecoveredFlowIds,
-                    FailedFlowIds = result.FailedFlowIds,
+                    FailedFlowIds = result.FailedFlowsDict,
                     Duration = result.Duration
                 });
             }

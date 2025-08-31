@@ -153,19 +153,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
         }
 
         /// <summary>
-        /// Resume a previously started flow
-        /// </summary>
-        public static async Task<FlowResult<TFlow>> Resume<TFlow>(
-            Guid flowId,
-            CancellationToken cancellationToken = default)
-            where TFlow : FlowDefinition
-        {
-            EnsureInitialized();
-            var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
-            return await service.ResumeAsync<TFlow>(flowId, cancellationToken);
-        }
-
-        /// <summary>
         /// Quick fire-and-forget flow execution
         /// </summary>
         public static async Task Fire<TFlow, TData>(
@@ -198,11 +185,11 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Get flow status and progress
         /// </summary>
-        public static async Task<FlowStatus> GetStatus(Guid flowId)
+        public static FlowStatus? GetStatus(Guid flowId)
         {
             EnsureInitialized();
             var service = _serviceProvider.GetRequiredService<IFlowEngineService>();
-            return await service.GetStatusAsync(flowId);
+            return service.GetStatus(flowId);
         }
 
         /// <summary>
