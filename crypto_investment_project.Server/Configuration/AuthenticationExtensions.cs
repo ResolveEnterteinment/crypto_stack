@@ -43,23 +43,24 @@ public static class AuthenticationExtensions
                     var accessToken = context.Request.Query["access_token"];
                     if (string.IsNullOrEmpty(accessToken))
                     {
-                        accessToken = context.Request.Headers["Authorization"].FirstOrDefault()?.Replace("Bearer ", "");
+                        accessToken = context.Request.Headers.Authorization.FirstOrDefault()?.Replace("Bearer ", "");
                     }
 
                     var path = context.HttpContext.Request.Path;
-                    if (!string.IsNullOrEmpty(accessToken) && 
-                        (path.StartsWithSegments("/hubs/notificationHub") || path.StartsWithSegments("/hubs/dashboardHub")))
+                    if (!string.IsNullOrEmpty(accessToken) && (path.StartsWithSegments("/hubs")))
                     {
                         context.Token = accessToken;
                     }
+
                     return Task.CompletedTask;
                 },
+
                 OnAuthenticationFailed = context =>
                 {
                     if (context.Exception.GetType() == typeof(SecurityTokenExpiredException))
                     {
-                        context.Response.Headers.Add("Token-Expired", "true");
-                        context.Response.Headers.Add("Access-Control-Expose-Headers", "Token-Expired");
+                        context.Response.Headers.Append("Token-Expired", "true");
+                        context.Response.Headers.Append("Access-Control-Expose-Headers", "Token-Expired");
                     }
                     return Task.CompletedTask;
                 }

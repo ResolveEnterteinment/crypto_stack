@@ -1,5 +1,6 @@
 ﻿using Infrastructure.Services.FlowEngine.Configuration.Options;
 using Infrastructure.Services.FlowEngine.Core.Enums;
+using Infrastructure.Services.FlowEngine.Core.Exceptions;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
@@ -145,6 +146,8 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                 CompletedAt = f.CompletedAt,
                 LastUpdatedAt = f.UpdatedAt,
                 CurrentStepName = f.CurrentStepName,
+                CurrentStepIndex = f.Steps.IndexOf(f.Steps.First(s => s.Name == f.CurrentStepName)) + 1,
+                TotalSteps = f.Steps.Count,
                 PauseReason = f.PauseReason,
                 ErrorMessage = f.LastError?.Message
             }).ToList();
@@ -195,8 +198,8 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                 // Create a MongoDB-safe FlowEvent using SafeObject
                 var cancelEvent = new FlowEvent
                 {
-                    EventId = Guid.NewGuid().ToString(),
-                    FlowId = flowId.ToString(),
+                    EventId = Guid.NewGuid(),
+                    FlowId = flowId,
                     EventType = "FlowCancelled",
                     Description = reason ?? "Flow cancelled",
                     Timestamp = DateTime.UtcNow,
@@ -230,8 +233,8 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                 // Create a MongoDB-safe FlowEvent using SafeObject
                 var resumeEvent = new FlowEvent
                 {
-                    EventId = Guid.NewGuid().ToString(),
-                    FlowId = flowId.ToString(),
+                    EventId = Guid.NewGuid(),
+                    FlowId = flowId,
                     EventType = "FlowResumed",
                     Description = message ?? $"Flow resumed by {resumedBy} (reason: {reason})",
                     Timestamp = DateTime.UtcNow,
@@ -358,7 +361,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                 CurrentStepIndex = flow.CurrentStepIndex,
                 Steps = mongoSafeSteps,
                 Data = flow.Data,  // SIMPLIFIED: Direct assignment since it's already SafeObject
-                Events = mongoSafeEvents ?? new List<FlowEvent>(),
+                Events = flow.Events,
                 LastError = flow.LastError,
                 PausedAt = flow.PausedAt,
                 PauseReason = flow.PauseReason,
@@ -463,6 +466,13 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                 });
             }
 
+            RegisterExceptionType<InvalidOperationException>();
+            RegisterExceptionType<ArgumentNullException>();
+            RegisterExceptionType<ArgumentException>();
+            RegisterExceptionType<NullReferenceException>();
+            RegisterExceptionType<FlowExecutionException>();
+            RegisterExceptionType<FlowNotFoundException>();
+
             // Register FlowContext class map
             if (!BsonClassMap.IsClassMapRegistered(typeof(FlowContext)))
             {
@@ -512,6 +522,28 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
             }
 
             _logger.LogInformation("MongoDB serialization configured with SafeObject support");
+        }
+
+        private void RegisterExceptionType<TException>() where TException : Exception
+        {
+            if (!BsonClassMap.IsClassMapRegistered(typeof(TException)))
+            {
+                BsonClassMap.RegisterClassMap<TException>(cm =>
+                {
+                    cm.AutoMap();
+                    cm.SetIgnoreExtraElements(true);
+
+                    if (typeof(TException).GetProperty(nameof(Exception.TargetSite))?.DeclaringType == typeof(TException))
+                    {
+                        cm.UnmapProperty(e => e.TargetSite);
+                    }
+
+                    if (typeof(TException).GetProperty(nameof(Exception.Data))?.DeclaringType == typeof(TException))
+                    {
+                        cm.UnmapProperty(e => e.Data);
+                    }
+                });
+            }
         }
     }
 }

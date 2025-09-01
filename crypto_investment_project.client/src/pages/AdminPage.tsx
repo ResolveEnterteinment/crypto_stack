@@ -2,7 +2,7 @@
 import { useNavigate } from 'react-router-dom';
 import AdminLogsPanel from "../components/Admin/AdminLogsPanel";
 import WithdrawalManagementPanel from "../components/Admin/WithdrawalManagement";
-import FlowEngineAdminPanel from "../components/Admin/FlowEngineAdminPanel";
+import FlowEngineAdminPanel from "../components/Admin/Flow/FlowEngineAdminPanel";
 import AdminPaymentDashboard from "../components/Admin/AdminPaymentDashboard";
 import KycAdminPanel from "../components/KYC/KycAdminPanel";
 import KycAdminDashboard from "../components/Admin/KycAdminDashboard";

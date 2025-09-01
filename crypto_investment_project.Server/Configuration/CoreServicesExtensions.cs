@@ -31,6 +31,8 @@ using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace crypto_investment_project.Server.Configuration;
 
@@ -101,17 +103,20 @@ public static class CoreServicesExtensions
             typeof(FluentValidators).Assembly);
 
         // Configure SignalR
-        _ = services.AddSignalR(options =>
+        services.AddSignalR(options =>
         {
             options.EnableDetailedErrors = environment.IsDevelopment();
-            options.MaximumReceiveMessageSize = 102400; // 100 KB
+            options.MaximumReceiveMessageSize = 102400; // 100KB
             options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
             options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+            options.HandshakeTimeout = TimeSpan.FromSeconds(15);
         })
-            .AddJsonProtocol(options =>
-            {
-                options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
-            });
+        .AddJsonProtocol(options =>
+        {
+            options.PayloadSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+            options.PayloadSerializerOptions.WriteIndented = false;
+            options.PayloadSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        });
 
         // Add MediatR
         _ = services.AddMediatR(cfg =>

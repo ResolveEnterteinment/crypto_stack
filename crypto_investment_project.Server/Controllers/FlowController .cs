@@ -1,7 +1,9 @@
 using Application.Extensions;
 using Domain.Constants;
 using Domain.DTOs;
+using Domain.DTOs.Flow;
 using Infrastructure.Hubs;
+using Infrastructure.Services.Base;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
@@ -25,10 +27,9 @@ namespace Controllers
         private readonly IFlowEngineService _flowEngineService;
         private readonly IFlowExecutor _flowExecutor;
         private readonly IFlowPersistence _flowPersistence;
-        private readonly IFlowRecovery _flowRecovery;
-        private readonly IFlowAutoResumeService _autoResumeService;
         private readonly IHubContext<FlowHub> _hubContext;
         private readonly ILogger<FlowController> _logger;
+        private readonly IFlowNotificationService _notificationService;
 
         public FlowController(
             IFlowEngineService flowEngineService,
@@ -37,15 +38,15 @@ namespace Controllers
             IFlowRecovery flowRecovery,
             IFlowAutoResumeService autoResumeService,
             IHubContext<FlowHub> hubContext,
-            ILogger<FlowController> logger)
+            ILogger<FlowController> logger,
+            IFlowNotificationService notificationService)
         {
             _flowEngineService = flowEngineService ?? throw new ArgumentNullException(nameof(flowEngineService));
             _flowExecutor = flowExecutor ?? throw new ArgumentNullException(nameof(flowExecutor));
             _flowPersistence = flowPersistence ?? throw new ArgumentNullException(nameof(flowPersistence));
-            _flowRecovery = flowRecovery ?? throw new ArgumentNullException(nameof(flowRecovery));
-            _autoResumeService = autoResumeService ?? throw new ArgumentNullException(nameof(autoResumeService));
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _notificationService = notificationService;
         }
 
         #region Flow Query Endpoints
@@ -205,35 +206,26 @@ namespace Controllers
                 var flow = await _flowEngineService.GetFlowById(flowId);
                 if (flow == null)
                 {
-                    return ResultWrapper.NotFound("Flow", flowId.ToString())
-                        .ToActionResult(this);
+                    return ResultWrapper.NotFound("Flow", flowId.ToString()).ToActionResult(this);
                 }
 
                 if (flow.Status != FlowStatus.Running)
                 {
-                    return ResultWrapper.Failure(FailureReason.InvalidOperation, $"Flow is not running. Current status: {flow.Status}")
+                    return ResultWrapper.Failure(FailureReason.InvalidOperation,
+                        $"Flow cannot be paused. Current status: {flow.Status}")
                         .ToActionResult(this);
                 }
 
                 var pauseReason = request?.Reason ?? PauseReason.ManualIntervention;
                 var message = request?.Message ?? $"Manually paused by {User.Identity?.Name ?? "Admin"}";
 
-                var pasuseCondition = PauseCondition.Pause(pauseReason, message);
+                var pauseCondition = PauseCondition.Pause(pauseReason, message);
+                await _flowExecutor.PauseFlowAsync(flow, pauseCondition);
 
-                await _flowExecutor.PauseFlowAsync(flow, pasuseCondition);
+                // Use notification service instead of direct hub context
+                await _notificationService.NotifyFlowStatusChanged(flow);
 
-                // Notify clients via SignalR
-                await _hubContext.Clients.All.SendAsync("FlowStatusChanged", new
-                {
-                    flowId,
-                    status = FlowStatus.Paused,
-                    pauseReason,
-                    message,
-                    timestamp = DateTime.UtcNow
-                });
-
-                return ResultWrapper.Success("Flow paused successfully")
-                    .ToActionResult(this);
+                return ResultWrapper.Success("Flow paused successfully").ToActionResult(this);
             }
             catch (Exception ex)
             {
@@ -271,14 +263,8 @@ namespace Controllers
 
                 if (result.Error == null && result.Flow.Status != FlowStatus.Paused)
                 {
-                    // Notify clients via SignalR
-                    await _hubContext.Clients.All.SendAsync("FlowStatusChanged", new
-                    {
-                        flowId,
-                        status = FlowStatus.Running,
-                        message = "Flow resumed",
-                        timestamp = DateTime.UtcNow
-                    });
+                    // Use notification service
+                    await _notificationService.NotifyFlowStatusChanged(flow);
 
                     return ResultWrapper.Success(result, "Flow resumed successfully")
                         .ToActionResult(this);
@@ -323,14 +309,8 @@ namespace Controllers
 
                 if (result)
                 {
-                    // Notify clients via SignalR
-                    await _hubContext.Clients.All.SendAsync("FlowStatusChanged", new
-                    {
-                        flowId,
-                        status = FlowStatus.Cancelled,
-                        reason,
-                        timestamp = DateTime.UtcNow
-                    });
+                    // Use notification service
+                    await _notificationService.NotifyFlowStatusChanged(flow);
 
                     return ResultWrapper.Success(result, "Flow cancelled successfully")
                         .ToActionResult(this);
@@ -375,7 +355,7 @@ namespace Controllers
                 flow.Status = FlowStatus.Completed;
                 flow.Events.Add(new FlowEvent
                 {
-                    FlowId = flowId.ToString(),
+                    FlowId = flowId,
                     EventType = "FlowResolved",
                     Description = $"Flow resolved by {resolvedBy}: {resolution}",
                     Data = new Dictionary<string, object>
@@ -388,15 +368,8 @@ namespace Controllers
 
                 await _flowPersistence.SaveFlowStateAsync(flow);
 
-                // Notify clients via SignalR
-                await _hubContext.Clients.All.SendAsync("FlowStatusChanged", new
-                {
-                    flowId,
-                    status = FlowStatus.Completed,
-                    resolution,
-                    resolvedBy,
-                    timestamp = DateTime.UtcNow
-                });
+                // Use notification service
+                await _notificationService.NotifyFlowStatusChanged(flow);
 
                 return Ok(new { success = true, message = "Flow resolved successfully" });
             }
@@ -424,9 +397,11 @@ namespace Controllers
                     return ResultWrapper.NotFound("Flow", flowId.ToString()).ToActionResult(this);
                 }
 
-                if (flow.Status != FlowStatus.Failed)
+                if (!(flow.Status == FlowStatus.Paused || flow.Status == FlowStatus.Failed))
                 {
-                    return BadRequest(new { error = $"Flow is not failed. Current status: {flow.Status}" });
+                    return ResultWrapper.Failure(FailureReason.InvalidOperation,
+                        $"Flow is not failed. Current status: {flow.Status}")
+                        .ToActionResult(this);
                 }
 
                 // Reset the failed step and restart
@@ -442,10 +417,15 @@ namespace Controllers
 
                 if (result.Error == null && result.Flow.Status != FlowStatus.Paused)
                 {
-                    return Ok(new { success = true, message = "Flow retry initiated successfully" });
+                    // Use notification service
+                    await _notificationService.NotifyFlowStatusChanged(flow);
+
+                    return ResultWrapper.Success("Flow retry initiated successfully")
+                        .ToActionResult(this);
                 }
 
-                return BadRequest(new { error = "Failed to retry flow", message = result.Message });
+                return ResultWrapper.Failure(FailureReason.Unknown, "Failed to retry flow")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
@@ -652,25 +632,25 @@ namespace Controllers
 
         #region Helper Methods
 
-        private FlowSummaryDto MapToFlowSummaryDto(FlowSummary flow)
+        private FlowSummaryDto MapToFlowSummaryDto(FlowSummary flowSummary)
         {
             return new FlowSummaryDto
             {
-                FlowId = flow.FlowId,
-                FlowType = flow.FlowType,
-                Status = flow.Status.ToString(),
-                UserId = flow.UserId,
-                CorrelationId = flow.CorrelationId,
-                CreatedAt = flow.CreatedAt,
-                StartedAt = flow.StartedAt,
-                CompletedAt = flow.CompletedAt,
-                CurrentStepName = flow.CurrentStepName,
-                PauseReason = flow.PauseReason?.ToString(),
-                ErrorMessage = flow.ErrorMessage,
-                Duration = flow.Duration?.TotalSeconds,
+                FlowId = flowSummary.FlowId,
+                FlowType = flowSummary.FlowType,
+                Status = flowSummary.Status.ToString(),
+                UserId = flowSummary.UserId,
+                CorrelationId = flowSummary.CorrelationId,
+                CreatedAt = flowSummary.CreatedAt,
+                StartedAt = flowSummary.StartedAt,
+                CompletedAt = flowSummary.CompletedAt,
+                CurrentStepName = flowSummary.CurrentStepName,
+                PauseReason = flowSummary.PauseReason?.ToString(),
+                ErrorMessage = flowSummary.ErrorMessage,
+                Duration = flowSummary.Duration?.TotalSeconds,
                 // Additional computed fields for the admin panel
-                CurrentStepIndex = 0, // Would need to be fetched from full flow data
-                TotalSteps = 0 // Would need to be fetched from full flow data
+                CurrentStepIndex = flowSummary.CurrentStepIndex,
+                TotalSteps = flowSummary.TotalSteps
             };
         }
 
@@ -708,16 +688,48 @@ namespace Controllers
                     {
                         IsSuccess = step.Result.IsSuccess,
                         Message = step.Result.Message,
-                        Data = step.Result.Data?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Value)
+                        Data = step.Result.Data.FromSafe(),
                     } : null,
                     Branches = step.Branches?.Select(b => new BranchDto
                     {
-                        Steps = b.Steps?.Select(s => s.Name).ToList() ?? new List<string>(),
+                        Steps = b.Steps.Select(s => new SubStepDto
+                        {
+                            Name = s.Name,
+                            Status = s.Status.ToString(),
+                            StepDependencies = s.StepDependencies,
+                            DataDependencies = s.DataDependencies?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Name),
+                            MaxRetries = s.MaxRetries,
+                            RetryDelay = s.RetryDelay.ToString(),
+                            Timeout = s.Timeout?.ToString(),
+                            IsCritical = s.IsCritical,
+                            IsIdempotent = s.IsIdempotent,
+                            CanRunInParallel = s.CanRunInParallel,
+                            Result = s.Result != null ? new StepResultDto
+                            {
+                                IsSuccess = s.Result.IsSuccess,
+                                Message = s.Result.Message,
+                                Data = s.Result.Data.FromSafe(),
+                            } : null,
+                            Priority = s.Priority,
+                            SourceData = s.SourceData,
+                            Index = s.Index,
+                            Metadata = s.Metadata.FromSafe(),
+                            EstimatedDuration = s.EstimatedDuration,
+                            ResourceGroup = s.ResourceGroup
+                        }).ToList(),
                         IsDefault = b.IsDefault,
                         Condition = b.Condition?.Method.Name ?? "Unknown"
-                    }).ToList()
+                    }).ToList() ?? []
                 }).ToList(),
-                Events = flow.Events,
+                Events = flow.Events.Select(e => new FlowEventDto
+                {
+                    EventId = e.EventId,
+                    FlowId = e.FlowId,
+                    EventType = e.EventType,
+                    Description = e.Description,
+                    Timestamp = e.Timestamp,
+                    Data = e.Data.FromSafe()
+                }).ToList(),
                 Data = flow.Data?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Value),
                 TotalSteps = flow.Steps.Count
             };
@@ -782,91 +794,19 @@ namespace Controllers
 
     #region DTOs
 
-    public class FlowSummaryDto
-    {
-        public Guid FlowId { get; set; }
-        public string FlowType { get; set; }
-        public string Status { get; set; }
-        public string UserId { get; set; }
-        public string CorrelationId { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public DateTime? StartedAt { get; set; }
-        public DateTime? CompletedAt { get; set; }
-        public string CurrentStepName { get; set; }
-        public string PauseReason { get; set; }
-        public string ErrorMessage { get; set; }
-        public double? Duration { get; set; }
-        public int CurrentStepIndex { get; set; }
-        public int TotalSteps { get; set; }
-    }
+    
 
-    public class FlowDetailDto
-    {
-        public Guid FlowId { get; set; }
-        public string FlowType { get; set; }
-        public string Status { get; set; }
-        public string UserId { get; set; }
-        public string CorrelationId { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public DateTime? StartedAt { get; set; }
-        public DateTime? CompletedAt { get; set; }
-        public DateTime? PausedAt { get; set; }
-        public string CurrentStepName { get; set; }
-        public int CurrentStepIndex { get; set; }
-        public string PauseReason { get; set; }
-        public string PauseMessage { get; set; }
-        public string LastError { get; set; }
-        public List<StepDto> Steps { get; set; } = [];
-        public List<FlowEvent> Events { get; set; } = [];
-        public Dictionary<string, object> Data { get; set; } = [];
-        public int TotalSteps { get; set; }
-    }
+    
 
-    public class StepDto
-    {
-        public string Name { get; set; }
-        public string Status { get; set; }
-        public List<string> StepDependencies { get; set; } = [];
-        public Dictionary<string, string> DataDependencies { get; set; } = [];
-        public int MaxRetries { get; set; }
-        public string RetryDelay { get; set; }
-        public string Timeout { get; set; }
-        public bool IsCritical { get; set; }
-        public bool IsIdempotent { get; set; }
-        public bool CanRunInParallel { get; set; }
-        public StepResultDto? Result { get; set; }
-        public List<BranchDto> Branches { get; set; } = [];
-    }
+    
 
-    public class StepResultDto
-    {
-        public bool IsSuccess { get; set; }
-        public string Message { get; set; }
-        public Dictionary<string, object> Data { get; set; } = [];
-    }
+    
 
-    public class BranchDto
-    {
-        public bool IsDefault { get; set; } = false;
-        public List<string> Steps { get; set; } = [];
-        public string Target { get; set; }
-        public string Condition { get; set; }
-    }
+    
 
-    public class FlowStatisticsDto
-    {
-        public string Period { get; set; }
-        public int Total { get; set; }
-        public int Running { get; set; }
-        public int Completed { get; set; }
-        public int Failed { get; set; }
-        public int Paused { get; set; }
-        public int Cancelled { get; set; }
-        public double AverageDuration { get; set; }
-        public double SuccessRate { get; set; }
-        public Dictionary<string, int> FlowsByType { get; set; } = [];
-        public Dictionary<string, int> PauseReasons { get; set; } = [];
-    }
+    
+
+    
 
     public class PauseRequestDto
     {
@@ -911,19 +851,9 @@ namespace Controllers
         public string Message { get; set; }
     }
 
-    public class RecoveryResultDto
-    {
-        public int RecoveredCount { get; set; }
-        public int FailedCount { get; set; }
-        public List<Guid> RecoveredFlows { get; set; } = [];
-        public List<FailedRecoveryDto> FailedFlows { get; set; } = [];
-    }
+    
 
-    public class FailedRecoveryDto
-    {
-        public Guid FlowId { get; set; }
-        public string Error { get; set; }
-    }
+    
 
     #endregion
 }

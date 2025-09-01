@@ -5,6 +5,7 @@ using Infrastructure.Services.FlowEngine.Engine;
 using Infrastructure.Services.FlowEngine.Middleware;
 using Infrastructure.Services.FlowEngine.Services.Events;
 using Infrastructure.Services.FlowEngine.Services.Metrics;
+using Infrastructure.Services.FlowEngine.Services.Notification;
 using Infrastructure.Services.FlowEngine.Services.PauseResume;
 using Infrastructure.Services.FlowEngine.Services.Persistence;
 using Infrastructure.Services.FlowEngine.Services.Recovery;
@@ -57,6 +58,7 @@ namespace Infrastructure.Services.FlowEngine.Extensions
             services.AddSingleton<IFlowRuntimeStore, FlowRuntimeStore>();
             services.AddScoped<IFlowExecutor, FlowExecutor>();
             services.AddScoped<IFlowEngineService, FlowEngineService>();
+            services.AddScoped<IFlowNotificationService, FlowNotificationService>();
             services.AddScoped<IFlowValidation, FlowValidationService>();
             services.AddScoped<IFlowSecurity, FlowSecurityService>();
             services.AddScoped<IFlowRecovery, FlowRecoveryService>();

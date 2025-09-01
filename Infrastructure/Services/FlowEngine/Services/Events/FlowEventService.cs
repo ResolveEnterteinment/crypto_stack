@@ -1,5 +1,4 @@
-﻿using Infrastructure.Services.FlowEngine.Core.Enums;
-using Infrastructure.Services.FlowEngine.Core.Interfaces;
+﻿using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 

@@ -17,6 +17,8 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
         public DateTime? CompletedAt { get; set; }
         public DateTime? LastUpdatedAt { get; set; }
         public string CurrentStepName { get; set; }
+        public int CurrentStepIndex { get; set; }
+        public int TotalSteps { get; set; }
         public PauseReason? PauseReason { get; set; }
         public string ErrorMessage { get; set; }
         public TimeSpan? Duration => CompletedAt.HasValue ? CompletedAt - StartedAt : null;

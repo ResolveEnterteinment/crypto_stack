@@ -6,6 +6,7 @@ const FLOW_HUB = 'flow';
 export class FlowSignalRService {
     private hubName = FLOW_HUB;
     private onFlowStatusChanged?: (update: FlowDetailDto) => void;
+    private onFlowStateChanged?: (update: FlowDetailDto) => void;
     private onBatchOperationCompleted?: (result: BatchOperationResultDto) => void;
     private onError?: (error: string) => void;
     private unsubscribeHandlers: (() => void)[] = [];
@@ -35,6 +36,17 @@ export class FlowSignalRService {
             }
         );
         this.unsubscribeHandlers.push(flowStatusUnsubscribe);
+
+        // Flow state changed event
+        const flowStateUnsubscribe = signalRManager.on(
+            this.hubName,
+            "FlowStateChanged",
+            (update: FlowDetailDto) => {
+                console.log("Received flow state update:", update);
+                this.onFlowStateChanged?.(update);
+            }
+        );
+        this.unsubscribeHandlers.push(flowStateUnsubscribe);
 
         // Batch operation completed event
         const batchOpUnsubscribe = signalRManager.on(
@@ -130,6 +142,10 @@ export class FlowSignalRService {
         this.onFlowStatusChanged = handler;
     }
 
+    setFlowStateChangedHandler(handler: (update: FlowDetailDto) => void): void {
+        this.onFlowStateChanged = handler;
+    }
+
     setBatchOperationCompletedHandler(handler: (result: BatchOperationResultDto) => void): void {
         this.onBatchOperationCompleted = handler;
     }
@@ -172,6 +188,7 @@ export class FlowSignalRService {
 export async function connectToFlowHub(
     flowId: string,
     onFlowStatusChanged: (update: FlowDetailDto) => void,
+    onFlowStateChanged: (update: FlowDetailDto) => void,
     onBatchOperationCompleted?: (result: BatchOperationResultDto) => void,
     onError?: (error: string) => void,
     config: SignalRConnectionConfig = {}
@@ -185,6 +202,7 @@ export async function connectToFlowHub(
     const service = new FlowSignalRService();
 
     service.setFlowStatusChangedHandler(onFlowStatusChanged);
+    service.setFlowStateChangedHandler(onFlowStateChanged);
     if (onBatchOperationCompleted) {
         service.setBatchOperationCompletedHandler(onBatchOperationCompleted);
     }

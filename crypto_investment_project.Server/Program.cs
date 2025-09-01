@@ -6,6 +6,7 @@ using HealthChecks.UI.Client;
 using Infrastructure.Hubs;
 using Infrastructure.Services.FlowEngine.Extensions;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Http.Connections;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
@@ -33,7 +34,7 @@ builder.Services
     .AddRateLimitingPolicies(builder.Environment)
     .AddApiVersioningSupport()
     .AddHealthChecksServices(builder.Configuration)
-    .ConfigureCorsPolicy(builder.Environment, builder.Configuration)
+    .ConfigureCorsPolicy(builder.Configuration)
     .AddSwaggerServices()
     .AddHostedServices(builder.Environment)
     .AddFlowEngine(builder.Configuration);
@@ -69,7 +70,7 @@ if (app.Environment.IsDevelopment())
 }
 
 // Configure web sockets for SignalR
-app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
+app.UseWebSockets(new Microsoft.AspNetCore.Builder.WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 
 // Add security headers
 app.UseSecurityHeaders();
@@ -122,7 +123,10 @@ app.MapHealthChecks("/health/live", new HealthCheckOptions
 // Map SignalR hubs
 app.MapHub<NotificationHub>("/hubs/notificationHub");
 app.MapHub<DashboardHub>("/hubs/dashboardHub");
-app.MapHub<FlowHub>("/hubs/flowHub");
+app.MapHub<FlowHub>("/hubs/flowHub", options =>
+{
+    options.Transports = HttpTransportType.WebSockets | HttpTransportType.ServerSentEvents;
+});
 Console.WriteLine("✅ SignalR hubs configured");
 
 // Map diagnostic endpoint

@@ -99,6 +99,16 @@ public static class RateLimitingExtensions
                         Window = TimeSpan.FromMinutes(10)
                     }));
 
+            options.AddPolicy("SignalRPolicy", context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+                        factory: partition => new FixedWindowRateLimiterOptions
+                        {
+                            AutoReplenishment = true,
+                            PermitLimit = 100,
+                            Window = TimeSpan.FromMinutes(1)
+                        }));
+
             // Configure on-rejected behavior
             options.OnRejected = async (context, token) =>
             {

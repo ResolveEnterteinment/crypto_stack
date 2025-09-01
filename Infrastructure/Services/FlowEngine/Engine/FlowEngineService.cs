@@ -351,22 +351,31 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                     if(step.Branches != null && step.Branches.Count > 0)
                     {
+
                         for (var i = 0; i < step.Branches.Count; i++)
                         {
                             var branch = step.Branches[i];
-                            var targetBranch = tagetStep.Branches.ElementAt(i);
-                            if (targetBranch == null) throw new FlowExecutionException("Failed to copy branch step state. Branch step not found.");
+
+                            if (tagetStep.DynamicBranching != null) // Step has dynamic branching configured. So branches can only be added at runtime. If step is already completed, restored flows will lack dynamic branch steps. Must be manually added.
+                            {
+                                // Dynamic branching - add new branch
+                                tagetStep.Branches.Add(branch);
+                            }
+
+                            var targetBranch = tagetStep.Branches.ElementAt(i) ?? 
+                                throw new FlowExecutionException("Failed to copy branch step state. Branch step not found.");
+
                             foreach (var branchStep in branch.Steps)
                             {
-                                var targetBranchStep = targetBranch.Steps.Find(s => s.Name == branchStep.Name);
-                                if (targetBranchStep == null) throw new FlowExecutionException("Failed to copy branch step state. Branch step not found.");
+                                var targetBranchStep = targetBranch.Steps.Find(s => s.Name == branchStep.Name) ?? 
+                                    throw new FlowExecutionException("Failed to copy branch step state. Branch step not found.");
 
                                 targetBranchStep.Status = branchStep.Status;
+
                                 if (branchStep.Result != null) targetBranchStep.Result = branchStep.Result;
                             }
                         }
                     }
-
                 }
             }
         }

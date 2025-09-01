@@ -82,6 +82,15 @@ export interface StepDto {
     branches?: BranchDto[];
 }
 
+export interface SubStepDto extends StepDto {
+    priority: number;
+    sourceData: object;
+    index: number;
+    metaData: Record<string, object>;
+    estimatedDuration: string;
+    resourceGroup: string;
+}
+
 export interface StepResultDto {
     isSuccess: boolean;
     message: string;
@@ -89,7 +98,7 @@ export interface StepResultDto {
 }
 
 export interface BranchDto {
-    steps: string[];
+    steps: SubStepDto[];
     isDefault: boolean;
     condition: string;
 }
@@ -170,6 +179,10 @@ export interface RecoveryResultDto {
     recoveredFlows: string[];
     failedFlows: Array<{ flowId: string; error: string }>;
 }
+
+// Define proper types for status configs
+export type FlowStatusKey = 'Initializing' | 'Ready' | 'Running' | 'Paused' | 'Completed' | 'Failed' | 'Cancelled';
+export type StepStatusKey = 'Pending' | 'InProgress' | 'Completed' | 'Failed' | 'Skipped' | 'Paused';
 
 // Main FlowEngine API Service
 class FlowService {

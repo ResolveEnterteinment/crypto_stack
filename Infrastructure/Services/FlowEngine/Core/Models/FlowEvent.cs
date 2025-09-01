@@ -4,8 +4,8 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
 {
     public class FlowEvent
     {
-        public string EventId { get; set; } = Guid.NewGuid().ToString();
-        public string FlowId { get; set; }
+        public Guid EventId { get; set; } = Guid.NewGuid();
+        public Guid FlowId { get; set; }
         public string EventType { get; set; }
         public string Description { get; set; }
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;

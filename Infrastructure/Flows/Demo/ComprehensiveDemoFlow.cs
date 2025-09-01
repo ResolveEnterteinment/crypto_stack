@@ -185,8 +185,8 @@ namespace Infrastructure.Flows.Demo
                     }
 
                     return StepResult.Success("No approval required");
-                });
-                //.Build();
+                })
+                .Build();
 
             // Step 5: Resource-intensive step with load balancing
             _builder.Step("PerformComplexCalculation")
