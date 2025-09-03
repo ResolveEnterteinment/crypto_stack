@@ -29,5 +29,9 @@ namespace Infrastructure.Services.FlowEngine.Core.Interfaces
         Task<PagedResult<FlowSummary>> GetPausedFlowSummariesAsync(FlowQuery query = null);
         Task<bool> SetResumeConditionAsync(Guid flowId, ResumeCondition condition);
         Task PublishEventAsync(string eventType, object eventData, string correlationId = null);
+
+        // NEW: Health and Statistics methods for health checks
+        Task<FlowEngineHealth> GetHealth();
+        Task<FlowEngineStatistics> GetStatistics(TimeSpan timeWindow);
     }
 }

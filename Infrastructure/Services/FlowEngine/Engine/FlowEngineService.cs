@@ -43,7 +43,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             try
             {
                 _logger.LogInformation("Starting flow runtime objects restoration...");
-                
+
                 // Wait a bit to ensure all services are initialized
                 // await Task.Delay(TimeSpan.FromSeconds(5));
 
@@ -127,7 +127,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                     CopyFlowState(flowDoc, flow);
 
-                    if(flow.Status == FlowStatus.Paused)
+                    if (flow.Status == FlowStatus.Paused)
                     {
                         var pauseStep = flow.Steps[flow.CurrentStepIndex];
 
@@ -224,7 +224,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 }
                 _runtimeStore.Flows.Add(flowDoc.FlowId, flow);
                 _logger.LogInformation("Restored flow {FlowType} with ID {FlowId}", flow.GetType().Name, flow.FlowId);
-                
+
                 return flow;
             }
             catch (Exception ex)
@@ -262,7 +262,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             where TFlow : FlowDefinition
         {
             var flowId = Guid.NewGuid();
-            
+
             // ✅ Get flow from DI container instead of new()
             var flow = _serviceProvider.GetRequiredService<TFlow>();
 
@@ -303,7 +303,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             Guid flowId,
             CancellationToken cancellationToken = default)
         {
-            if(!_runtimeStore.Flows.TryGetValue(flowId, out var flow))
+            if (!_runtimeStore.Flows.TryGetValue(flowId, out var flow))
             {
                 throw new FlowNotFoundException($"Flow {flowId} not found in runtime store");
             }
@@ -349,7 +349,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     tagetStep.Status = step.Status;
                     if (step.Result != null) tagetStep.Result = step.Result;
 
-                    if(step.Branches != null && step.Branches.Count > 0)
+                    if (step.Branches != null && step.Branches.Count > 0)
                     {
 
                         for (var i = 0; i < step.Branches.Count; i++)
@@ -362,12 +362,12 @@ namespace Infrastructure.Services.FlowEngine.Engine
                                 tagetStep.Branches.Add(branch);
                             }
 
-                            var targetBranch = tagetStep.Branches.ElementAt(i) ?? 
+                            var targetBranch = tagetStep.Branches.ElementAt(i) ??
                                 throw new FlowExecutionException("Failed to copy branch step state. Branch step not found.");
 
                             foreach (var branchStep in branch.Steps)
                             {
-                                var targetBranchStep = targetBranch.Steps.Find(s => s.Name == branchStep.Name) ?? 
+                                var targetBranchStep = targetBranch.Steps.Find(s => s.Name == branchStep.Name) ??
                                     throw new FlowExecutionException("Failed to copy branch step state. Branch step not found.");
 
                                 targetBranchStep.Status = branchStep.Status;
@@ -446,7 +446,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
         public async Task<bool> ResumeManuallyAsync(Guid flowId, string userId, string reason = null)
         {
             _logger.LogInformation("Manual resume requested for flow {FlowId} by user {UserId}", flowId, userId);
-            var resumeResult=  await ResumeRuntimeAsync(flowId);
+            var resumeResult = await ResumeRuntimeAsync(flowId);
             return resumeResult.Status == FlowStatus.Running;
         }
 
@@ -480,5 +480,146 @@ namespace Infrastructure.Services.FlowEngine.Engine
             await eventService.PublishAsync(eventType, eventData, correlationId);
         }
 
+        // NEW: Health and Statistics methods for health checks
+        public async Task<FlowEngineHealth> GetHealth()
+        {
+            try
+            {
+                var currentTime = DateTime.UtcNow;
+
+                // Get runtime flow counts
+                var runtimeFlows = _runtimeStore.Flows.Values;
+                var runningCount = runtimeFlows.Count(f => f.Status == FlowStatus.Running);
+                var pausedCount = runtimeFlows.Count(f => f.Status == FlowStatus.Paused);
+
+                // Get recent failures (last 15 minutes)
+                var recentFailureQuery = new FlowQuery
+                {
+                    Status = FlowStatus.Failed,
+                    CreatedAfter = currentTime.AddMinutes(-15),
+                    PageSize = 1000
+                };
+
+                var recentFailures = await _persistence.QueryFlowsAsync(recentFailureQuery);
+                var recentFailuresCount = recentFailures.TotalCount;
+
+                // Determine health status
+                var isHealthy = recentFailuresCount < 10 && pausedCount < 100; // Thresholds for health
+
+                var status = isHealthy ? "Healthy" :
+                            (recentFailuresCount >= 10 ? "Degraded - High Failure Rate" : "Degraded - Too Many Paused Flows");
+
+                return new FlowEngineHealth
+                {
+                    RunningFlowsCount = runningCount,
+                    PausedFlowsCount = pausedCount,
+                    RecentFailuresCount = recentFailuresCount,
+                    IsHealthy = isHealthy,
+                    CheckedAt = currentTime,
+                    Status = status,
+                    AdditionalInfo = new Dictionary<string, object>
+                    {
+                        ["total_runtime_flows"] = runtimeFlows.Count(),
+                        ["failed_flows_threshold"] = 10,
+                        ["paused_flows_threshold"] = 100
+                    }
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting FlowEngine health information");
+
+                return new FlowEngineHealth
+                {
+                    RunningFlowsCount = 0,
+                    PausedFlowsCount = 0,
+                    RecentFailuresCount = 0,
+                    IsHealthy = false,
+                    CheckedAt = DateTime.UtcNow,
+                    Status = "Unhealthy - Error retrieving health data",
+                    AdditionalInfo = new Dictionary<string, object>
+                    {
+                        ["error"] = ex.Message
+                    }
+                };
+            }
+        }
+
+        public async Task<FlowEngineStatistics> GetStatistics(TimeSpan timeWindow)
+        {
+            try
+            {
+                var startTime = DateTime.UtcNow.Subtract(timeWindow);
+
+                var query = new FlowQuery
+                {
+                    CreatedAfter = startTime,
+                    PageSize = 10000 // Large page size to get comprehensive statistics
+                };
+
+                var flows = await _persistence.QueryFlowsAsync(query);
+
+                var totalFlows = flows.TotalCount;
+                var completedFlows = flows.Items.Count(f => f.Status == FlowStatus.Completed);
+                var failedFlows = flows.Items.Count(f => f.Status == FlowStatus.Failed);
+                var runningFlows = flows.Items.Count(f => f.Status == FlowStatus.Running);
+                var pausedFlows = flows.Items.Count(f => f.Status == FlowStatus.Paused);
+                var cancelledFlows = flows.Items.Count(f => f.Status == FlowStatus.Cancelled);
+
+                var successRate = totalFlows > 0 ? (double)completedFlows / totalFlows * 100 : 100.0;
+
+                // Calculate average execution time for completed flows
+                var averageExecutionTime = flows.Items
+                    .Where(f => f.Duration.HasValue)
+                    .Select(f => f.Duration.Value.TotalSeconds)
+                    .DefaultIfEmpty(0)
+                    .Average();
+
+                // Group flows by type
+                var flowsByType = flows.Items
+                    .GroupBy(f => f.FlowType)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                // Group failures by error message (simplified failure reason)
+                var failuresByReason = flows.Items
+                    .Where(f => f.Status == FlowStatus.Failed && !string.IsNullOrEmpty(f.ErrorMessage))
+                    .GroupBy(f => f.ErrorMessage?.Split('\n')[0] ?? "Unknown Error") // Take first line of error
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                return new FlowEngineStatistics
+                {
+                    TotalFlows = totalFlows,
+                    CompletedFlows = completedFlows,
+                    FailedFlows = failedFlows,
+                    RunningFlows = runningFlows,
+                    PausedFlows = pausedFlows,
+                    CancelledFlows = cancelledFlows,
+                    SuccessRate = successRate,
+                    Period = timeWindow,
+                    FlowsByType = flowsByType,
+                    FailuresByReason = failuresByReason,
+                    AverageExecutionTime = averageExecutionTime
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting FlowEngine statistics for time window {TimeWindow}", timeWindow);
+
+                return new FlowEngineStatistics
+                {
+                    TotalFlows = 0,
+                    CompletedFlows = 0,
+                    FailedFlows = 0,
+                    RunningFlows = 0,
+                    PausedFlows = 0,
+                    CancelledFlows = 0,
+                    SuccessRate = 0,
+                    Period = timeWindow,
+                    FlowsByType = new Dictionary<string, int>(),
+                    FailuresByReason = new Dictionary<string, int> { ["Error retrieving statistics"] = 1 },
+                    AverageExecutionTime = 0
+                };
+            }
+        }
     }
 }

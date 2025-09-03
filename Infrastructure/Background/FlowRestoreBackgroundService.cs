@@ -44,23 +44,6 @@ namespace Infrastructure.Background
                 _isInitialized = true;
             }
 
-            /*while (!stoppingToken.IsCancellationRequested)
-            {
-                try
-                {
-                    _logger.LogInformation("Flow restore background service is watching...");
-
-                    await autoResumeService.CheckAndResumeFlowsAsync();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error");
-                }
-
-                // Wait for the next check interval
-                await Task.Delay(_checkInterval, stoppingToken);
-            }
-            */
             _logger.LogInformation("Flow restore background service is stopping");
         }
     }

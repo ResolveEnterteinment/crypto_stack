@@ -1,5 +1,5 @@
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
-using Infrastructure.Services.FlowEngine.Extensions;
+using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 
@@ -29,8 +29,8 @@ namespace Infrastructure.HealthChecks
             try
             {
                 // Get FlowEngine health information using the extension method
-                var flowHealth = await FlowEngineExtensions.GetHealth(typeof(FlowEngineExtensions));
-                var flowStats = await FlowEngineExtensions.GetStatistics(typeof(FlowEngineExtensions), TimeSpan.FromHours(24));
+                var flowHealth = await _flowEngineService.GetHealth();
+                var flowStats = await _flowEngineService.GetStatistics(TimeSpan.FromHours(24));
 
                 // Create detailed status data
                 var data = new Dictionary<string, object>
