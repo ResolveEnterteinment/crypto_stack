@@ -55,6 +55,38 @@ import type {
 import flowService from '../../../services/flowService';
 import FlowStep from './FlowStep';
 
+const updateStyles = `
+    <style>
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.5);
+                opacity: 0.7;
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+        
+        .flow-row-updated {
+            animation: highlight 2s ease-out;
+        }
+        
+        @keyframes highlight {
+            0% {
+                background-color: #e6f7ff;
+            }
+            100% {
+                background-color: transparent;
+            }
+        }
+    </style>
+`;
+
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
 const { TabPane } = Tabs;
@@ -444,6 +476,16 @@ export default function FlowEngineAdminPanel() {
         //const interval = setInterval(fetchFlows, 5000); // Refresh every 5 seconds
         //return () => clearInterval(interval);
     }, [fetchFlows]);
+
+    useEffect(() => {
+        const styleElement = document.createElement('style');
+        styleElement.innerHTML = updateStyles.replace('<style>', '').replace('</style>', '');
+        document.head.appendChild(styleElement);
+
+        return () => {
+            document.head.removeChild(styleElement);
+        };
+    }, []);
 
     // Toggle row expansion
     const toggleRowExpansion = async (flowId: string) => {

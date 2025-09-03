@@ -6,16 +6,14 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
 {
     public class FlowEventService : IFlowEventService
     {
-        private readonly IServiceProvider _serviceProvider;
         private readonly IFlowEngineService _flowEngineService;
         private readonly ILogger<FlowEventService> _logger;
-        private readonly Dictionary<string, List<Func<object, Task>>> _eventHandlers = new();
+        private readonly Dictionary<string, List<Func<object, Task>>> _eventHandlers = [];
 
-        public FlowEventService(IServiceProvider serviceProvider)
+        public FlowEventService(IFlowEngineService flowEngineService, ILogger<FlowEventService> logger)
         {
-            _serviceProvider = serviceProvider;
-            _flowEngineService = serviceProvider.GetRequiredService<IFlowEngineService>();
-            _logger = serviceProvider.GetRequiredService<ILogger<FlowEventService>>();
+            _flowEngineService = flowEngineService ?? throw new ArgumentNullException(nameof(flowEngineService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task PublishAsync(string eventType, object eventData, string correlationId = null)
@@ -33,11 +31,11 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
             }
         }
 
-        public async Task SubscribeAsync(string eventType, Func<object, Task> handler)
+        public void SubscribeAsync(string eventType, Func<object, Task> handler)
         {
             if (!_eventHandlers.ContainsKey(eventType))
             {
-                _eventHandlers[eventType] = new List<Func<object, Task>>();
+                _eventHandlers[eventType] = [];
             }
             _eventHandlers[eventType].Add(handler);
         }
@@ -51,7 +49,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
 
             foreach (var flow in pausedFlows)
             {
-                if (flow.ActiveResumeConfig?.EventTriggers?.Any() == true)
+                if (flow.ActiveResumeConfig != null && flow.ActiveResumeConfig.EventTriggers?.Count != 0)
                 {
                     foreach (var trigger in flow.ActiveResumeConfig.EventTriggers)
                     {
