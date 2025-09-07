@@ -49,15 +49,7 @@ namespace Controllers
                     userId ?? "demo-user",
                     $"demo-{Guid.NewGuid()}");
 
-                return Ok(new
-                {
-                    FlowId = result.Flow.FlowId,
-                    Status = result.Status.ToString(),
-                    Message = result.Message,
-                    CorrelationId = result.Flow.CorrelationId,
-                    StartedAt = result.Flow.StartedAt,
-                    CurrentStep = result.Flow.CurrentStepName
-                });
+                return Ok(result);
             }
             catch (Exception ex)
             {

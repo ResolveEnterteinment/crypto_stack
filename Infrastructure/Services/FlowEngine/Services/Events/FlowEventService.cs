@@ -49,9 +49,9 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
 
             foreach (var flow in pausedFlows)
             {
-                if (flow.ActiveResumeConfig != null && flow.ActiveResumeConfig.EventTriggers?.Count != 0)
+                if (flow.Definition.ActiveResumeConfig != null && flow.Definition.ActiveResumeConfig.EventTriggers?.Count != 0)
                 {
-                    foreach (var trigger in flow.ActiveResumeConfig.EventTriggers)
+                    foreach (var trigger in flow.Definition.ActiveResumeConfig.EventTriggers)
                     {
                         if (trigger.EventType == eventType)
                         {
@@ -59,9 +59,8 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
 
                             if (shouldResume)
                             {
-                                _logger.LogInformation("Resuming flow {FlowId} due to event {EventType}", flow.FlowId, eventType);
-                                await _flowEngineService.ResumeRuntimeAsync(flow.FlowId);
-                               // await persistence.ResumeFlowAsync(flow.FlowId, ResumeReason.Event, "system", $"Event: {eventType}");
+                                _logger.LogInformation("Resuming flow {FlowId} due to event {EventType}", flow.Id, eventType);
+                                await _flowEngineService.ResumeRuntimeAsync(flow.Id);
                             }
                         }
                     }

@@ -10,11 +10,11 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
         public string Name { get; set; } = "Unnamed Step";
         public StepStatus Status { get; set; } = StepStatus.Pending;
         [BsonIgnore]
-        public Func<FlowContext, Task<StepResult>>? ExecuteAsync { get; set; }
+        public Func<FlowExecutionContext, Task<StepResult>>? ExecuteAsync { get; set; }
         public List<string> StepDependencies { get; set; } = [];
         public Dictionary<string, Type> DataDependencies { get; internal set; } = [];
         [BsonIgnore]
-        public Func<FlowContext, bool>? Condition { get; set; }
+        public Func<FlowExecutionContext, bool>? Condition { get; set; }
         public StepResult? Result {  get; set; }
         public bool CanRunInParallel { get; set; }
         public int MaxRetries { get; set; } = 0;
@@ -33,7 +33,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
 
         // NEW: Pause/Resume capabilities
         [BsonIgnore]
-        public Func<FlowContext, PauseCondition>? PauseCondition { get; set; }
+        public Func<FlowExecutionContext, PauseCondition>? PauseCondition { get; set; }
         [BsonIgnore]
         public ResumeConfig? ResumeConfig { get; set; }
     }

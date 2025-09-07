@@ -50,7 +50,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
         public int CurrentStepIndex { get; set; }
 
         [BsonElement("steps")]
-        public List<StepData> Steps { get; set; } = new List<StepData>();
+        public List<StepState> Steps { get; set; } = new List<StepState>();
 
         // CHANGED: Use Dictionary<string, SafeObject> instead of Dictionary<string, object>
         [BsonElement("data")]

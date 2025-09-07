@@ -1,6 +1,6 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Models;
 
-namespace Infrastructure.Services.FlowEngine.Definition.Builders
+namespace Infrastructure.Services.FlowEngine.Core.Builders
 {
     /// <summary>
     /// Builder for sub-branching logic
@@ -17,7 +17,7 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// <summary>
         /// Add a conditional branch
         /// </summary>
-        public FlowBranchBuilder When(Func<FlowContext, bool> condition, Action<BranchStepBuilder> defineSteps)
+        public FlowBranchBuilder When(Func<FlowExecutionContext, bool> condition, Action<BranchStepBuilder> defineSteps)
         {
             var branch = new FlowBranch { Condition = condition };
             var builder = new BranchStepBuilder(branch);

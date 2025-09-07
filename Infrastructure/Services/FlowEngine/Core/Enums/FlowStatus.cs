@@ -8,6 +8,7 @@
         Paused,          // NEW: Flow is paused waiting for condition/event/manual intervention
         Completed,
         Failed,
-        Cancelled
+        Cancelled,
+        Resolved
     }
 }

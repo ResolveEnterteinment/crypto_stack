@@ -1,5 +1,6 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
+using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.Extensions.Logging;
 
 namespace Infrastructure.Services.FlowEngine.Services.PauseResume
@@ -42,9 +43,9 @@ namespace Infrastructure.Services.FlowEngine.Services.PauseResume
                     {
                         try
                         {
-                            await _flowExecutor.ResumeFlowAsync(flow, "Auto-resume condition met");
+                            await flow.ResumeAsync("Auto-resume condition met");
                             resumedCount++;
-                            _logger.LogInformation("Auto-resumed flow {FlowId}", flow.FlowId);
+                            _logger.LogInformation("Auto-resumed flow {FlowId}", flow.Id);
                         }
                         catch (Exception ex)
                         {
@@ -62,15 +63,15 @@ namespace Infrastructure.Services.FlowEngine.Services.PauseResume
             return resumedCount;
         }
 
-        private async Task<bool> ShouldResumeFlow(FlowDefinition flow)
+        private async Task<bool> ShouldResumeFlow(Flow flow)
         {
-            var resumeConfig = flow.ActiveResumeConfig; // ActiveResumeConfig returns null! 
+            var resumeConfig = flow.Definition.ActiveResumeConfig; // ActiveResumeConfig returns null! 
             if (resumeConfig == null) return false;
 
             // Check timeout condition
-            if (resumeConfig.TimeoutDuration.HasValue && flow.PausedAt.HasValue)
+            if (resumeConfig.TimeoutDuration.HasValue && flow.State.PausedAt.HasValue)
             {
-                var timeoutAt = flow.PausedAt.Value.Add(resumeConfig.TimeoutDuration.Value);
+                var timeoutAt = flow.State.PausedAt.Value.Add(resumeConfig.TimeoutDuration.Value);
                 if (DateTime.UtcNow >= timeoutAt)
                 {
                     return resumeConfig.ResumeOnTimeout;
@@ -82,9 +83,12 @@ namespace Infrastructure.Services.FlowEngine.Services.PauseResume
             {
                 try
                 {
-                    var context = new FlowContext
+                    var context = new FlowExecutionContext
                     {
                         Flow = flow,
+                        Definition = flow.Definition,
+                        State = flow.State,
+                        CurrentStep = flow.Definition.Steps[flow.State.CurrentStepIndex],
                         Services = _serviceProvider
                     };
 
@@ -92,7 +96,7 @@ namespace Infrastructure.Services.FlowEngine.Services.PauseResume
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Error checking auto-resume condition for flow {FlowId}", flow.FlowId);
+                    _logger.LogWarning(ex, "Error checking auto-resume condition for flow {FlowId}", flow.Id);
                     return false;
                 }
             }

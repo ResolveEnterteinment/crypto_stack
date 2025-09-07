@@ -1,13 +1,8 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Enums;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Infrastructure.Services.FlowEngine.Core.Models
 {
-    public class StepData
+    public class StepState
     {
         public string Name { get; set; }
         public StepStatus Status { get; set; }
@@ -25,14 +20,15 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
         public int? MaxJumps { get; set; } = null;
         public int CurrentJumps { get; set; } = 0;
 
-        public StepData() { }
-
-        public StepData(FlowStep step)
+        public StepState(FlowStep step)
         {
             Name = step.Name;
-            StepDependencies = step.StepDependencies;
-            DataDependencies = step.DataDependencies?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.FullName);
-            Branches = step.Branches;
+            StepDependencies = step.StepDependencies ?? new List<string>();
+            DataDependencies = step.DataDependencies?
+                .Where(kvp => kvp.Value != null)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.FullName!)
+                ?? [];
+            Branches = step.Branches ?? [];
             Result = step.Result;
             MaxRetries = step.MaxRetries;
             RetryDelay = step.RetryDelay;

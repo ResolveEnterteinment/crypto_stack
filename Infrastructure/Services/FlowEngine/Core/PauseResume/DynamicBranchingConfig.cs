@@ -8,7 +8,7 @@ namespace Infrastructure.Services.FlowEngine.Core.PauseResume
     /// </summary>
     public class DynamicBranchingConfig
     {
-        public Func<FlowContext, IEnumerable<object>> DataSelector { get; set; }
+        public Func<FlowExecutionContext, IEnumerable<object>> DataSelector { get; set; }
         public Func<object, int, FlowSubStep> StepFactory { get; set; }
         public ExecutionStrategy ExecutionStrategy { get; set; } = ExecutionStrategy.Parallel;
         public int MaxConcurrency { get; set; } = 10;

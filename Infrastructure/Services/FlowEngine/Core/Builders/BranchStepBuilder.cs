@@ -1,6 +1,6 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Models;
 
-namespace Infrastructure.Services.FlowEngine.Definition.Builders
+namespace Infrastructure.Services.FlowEngine.Core.Builders
 {
     /// <summary>
     /// Builder for sub-steps within branches

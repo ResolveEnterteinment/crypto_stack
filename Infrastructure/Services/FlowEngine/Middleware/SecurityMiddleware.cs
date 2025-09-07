@@ -17,28 +17,28 @@ namespace Infrastructure.Services.FlowEngine.Middleware
             _logger = logger;
         }
 
-        public async Task InvokeAsync(FlowContext context, Func<Task> next)
+        public async Task InvokeAsync(FlowExecutionContext context, Func<Task> next)
         {
             // Validate user authorization
-            if (!await _security.ValidateUserAccessAsync(context.Flow.UserId, context.Flow.GetType()))
+            if (!await _security.ValidateUserAccessAsync(context.Flow.State.UserId, context.Flow.GetType()))
             {
                 _logger.LogWarning("Unauthorized access attempt for flow {FlowId} by user {UserId}", 
-                    context.Flow.FlowId, context.Flow.UserId);
-                throw new UnauthorizedAccessException($"User {context.Flow.UserId} not authorized for this flow");
+                    context.Flow.State.FlowId, context.Flow.State.UserId);
+                throw new UnauthorizedAccessException($"User {context.Flow.State.UserId} not authorized for this flow");
             }
 
             // Validate step permissions
             if (context.CurrentStep != null && 
-                !await _security.ValidateStepAccessAsync(context.Flow.UserId, context.CurrentStep.Name))
+                !await _security.ValidateStepAccessAsync(context.Flow.State.UserId, context.CurrentStep.Name))
             {
                 _logger.LogWarning("Unauthorized step access attempt for step {StepName} by user {UserId}", 
-                    context.CurrentStep.Name, context.Flow.UserId);
+                    context.CurrentStep.Name, context.Flow.State.UserId);
                 throw new UnauthorizedAccessException($"User not authorized for step {context.CurrentStep.Name}");
             }
 
             // Log security event
             _logger.LogInformation("Security validation passed for flow {FlowId}, step {StepName}", 
-                context.Flow.FlowId, context.CurrentStep?.Name ?? "N/A");
+                context.Flow.State.FlowId, context.CurrentStep?.Name ?? "N/A");
 
             await next();
         }

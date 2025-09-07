@@ -1,10 +1,12 @@
-﻿using Infrastructure.Hubs;
-using Infrastructure.Services.FlowEngine.Core.Models;
+﻿using Domain.DTOs.Flow;
+using Infrastructure.Hubs;
+using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
+using Infrastructure.Services.FlowEngine.Core.Models;
+using Infrastructure.Services.FlowEngine.Engine;
+using Infrastructure.Utilities;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
-using Domain.DTOs.Flow;
-using Infrastructure.Utilities;
 namespace Infrastructure.Services.FlowEngine.Services.Notification
 {
     public class FlowNotificationService : IFlowNotificationService
@@ -20,7 +22,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task NotifyFlowStatusChanged(FlowDefinition flow)
+        public async Task NotifyFlowStatusChanged(Flow flow)
         {
             try
             {
@@ -34,7 +36,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                 var flowDetailDto = MapToFlowDetailDto(flow);
 
                 // Send to specific flow group
-                await _hubContext.Clients.Group($"flow-{flow.FlowId}")
+                await _hubContext.Clients.Group($"flow-{flow.Id}")
                     .SendAsync("FlowStatusChanged", flowDetailDto);
 
                 // Also send to admin group for dashboard updates
@@ -42,15 +44,15 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                     .SendAsync("FlowStatusChanged", flowDetailDto);
 
                 _logger.LogDebug("Sent flow status update for flow {FlowId} with status {Status}",
-                    flow.FlowId, flow.Status);
+                    flow.Id, flow.Status);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error sending flow status notification for flow {FlowId}", flow?.FlowId);
+                _logger.LogError(ex, "Error sending flow status notification for flow {FlowId}", flow?.Id);
             }
         }
 
-        public async Task NotifyStepStatusChanged(FlowDefinition flow, FlowStep step)
+        public async Task NotifyStepStatusChanged(Flow flow, FlowStep step)
         {
             try
             {
@@ -70,15 +72,15 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                 var flowDetailDto = MapToFlowDetailDto(flow);
 
                 // Send detailed update to subscribed clients
-                await _hubContext.Clients.Group($"flow-{flow.FlowId}")
+                await _hubContext.Clients.Group($"flow-{flow.Id}")
                     .SendAsync("FlowStatusChanged", flowDetailDto);
 
                 _logger.LogDebug("Sent step status update for flow {FlowId}, step {StepName}",
-                    flow.FlowId, step.Name);
+                    flow.Id, step.Name);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error sending step status notification for flow {FlowId}", flow?.FlowId);
+                _logger.LogError(ex, "Error sending step status notification for flow {FlowId}", flow?.Id);
             }
         }
 
@@ -97,7 +99,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
             }
         }
 
-        private FlowDetailDto MapToFlowDetailDto(FlowDefinition flow)
+        private FlowDetailDto MapToFlowDetailDto(Flow flow)
         {
             // Add comprehensive null checks
             if (flow == null)
@@ -110,21 +112,21 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
             // You can use AutoMapper or manual mapping here
             return new FlowDetailDto
             {
-                FlowId = flow.FlowId,
-                FlowType = flow.GetType().Name,
-                Status = flow.Status.ToString(),
-                UserId = flow.UserId,
-                CorrelationId = flow.CorrelationId,
-                CreatedAt = flow.CreatedAt,
-                StartedAt = flow.StartedAt,
-                CompletedAt = flow.CompletedAt,
-                PausedAt = flow.PausedAt,
-                CurrentStepName = flow.CurrentStepName,
-                CurrentStepIndex = flow.CurrentStepIndex,
-                PauseReason = flow.PauseReason?.ToString(),
-                PauseMessage = flow.PauseMessage,
-                LastError = flow.LastError?.Message,
-                Steps = flow.Steps?.Select(s => new StepDto
+                FlowId = flow.State.FlowId,
+                FlowType = flow.GetType().FullName,
+                Status = flow.State.Status.ToString(),
+                UserId = flow.State.UserId,
+                CorrelationId = flow.State.CorrelationId,
+                CreatedAt = flow.State.CreatedAt,
+                StartedAt = flow.State.StartedAt,
+                CompletedAt = flow.State.CompletedAt,
+                PausedAt = flow.State.PausedAt,
+                CurrentStepName = flow.State.CurrentStepName,
+                CurrentStepIndex = flow.State.CurrentStepIndex,
+                PauseReason = flow.State.PauseReason?.ToString(),
+                PauseMessage = flow.State.PauseMessage,
+                LastError = flow.State.LastError?.Message,
+                Steps = flow.Definition.Steps?.Select(s => new StepDto
                 {
                     Name = s?.Name ?? "Unknown Step",
                     Status = s?.Status.ToString() ?? "Unknown",
@@ -180,17 +182,17 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                         }).ToList() ?? []
                     }).ToList() ?? []
                 }).ToList() ?? [],
-                Events = flow.Events?.Select(e => new FlowEventDto
+                Events = flow.State.Events?.Select(e => new FlowEventDto
                 {
                     EventId = e?.EventId ?? Guid.Empty,
-                    FlowId = e?.FlowId ?? flow.FlowId,
+                    FlowId = e?.FlowId ?? flow.Id,
                     EventType = e?.EventType ?? "Unknown",
                     Description = e?.Description ?? "No description",
                     Timestamp = e?.Timestamp ?? DateTime.UtcNow,
                     Data = e?.Data?.FromSafe() ?? new Dictionary<string, object>()
                 }).ToList() ?? [],
-                Data = flow.Data?.FromSafe() ?? new Dictionary<string, object>(),
-                TotalSteps = flow.Steps?.Count ?? 0
+                Data = flow.State.Data?.FromSafe() ?? new Dictionary<string, object>(),
+                TotalSteps = flow.Definition.Steps?.Count ?? 0
             };
         }
     }

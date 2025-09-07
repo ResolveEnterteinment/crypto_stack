@@ -8,19 +8,16 @@ using Infrastructure.Utilities;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
-using MongoDB.Bson.Serialization.Attributes;
-using MongoDB.Bson.Serialization.Conventions;
 using MongoDB.Bson.Serialization.Options;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
-using System.Text.Json;
 
 namespace Infrastructure.Services.FlowEngine.Services.Persistence
 {
     public class MongoFlowPersistence : IFlowPersistence
     {
         private readonly IMongoDatabase _database;
-        private readonly IMongoCollection<FlowDocument> _flowsCollection;
+        private readonly IMongoCollection<FlowState> _flowsCollection;
         private readonly IMongoCollection<ResumeConditionDocument> _resumeConditionsCollection;
         private readonly ILogger<MongoFlowPersistence> _logger;
         private readonly IServiceProvider _serviceProvider;
@@ -38,7 +35,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
 
             var client = new MongoClient(config.ConnectionString);
             _database = client.GetDatabase(config.DatabaseName ?? "FlowEngine");
-            _flowsCollection = _database.GetCollection<FlowDocument>("flows");
+            _flowsCollection = _database.GetCollection<FlowState>("flows");
             _resumeConditionsCollection = _database.GetCollection<ResumeConditionDocument>("resumeConditions");
 
             // Configure MongoDB serialization for polymorphic types
@@ -48,33 +45,21 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
             CreateIndexesAsync().ConfigureAwait(false);
         }
 
-        public async Task<FlowStatus> GetFlowStatusAsync(Guid flowId)
+        public async Task<FlowState> GetByFlowId(Guid flowId)
         {
-            var filter = Builders<FlowDocument>.Filter.Eq(x => x.FlowId, flowId);
-            var projection = Builders<FlowDocument>.Projection.Include(x => x.Status);
-
-            var result = await _flowsCollection.Find(filter)
-                .Project<FlowDocument>(projection)
-                .FirstOrDefaultAsync();
-
-            return result?.Status ?? FlowStatus.Failed;
-        }
-
-        public async Task<FlowDocument> GetByFlowId(Guid flowId)
-        {
-            var filter = Builders<FlowDocument>.Filter.Eq(x => x.FlowId, flowId);
+            var filter = Builders<FlowState>.Filter.Eq(x => x.FlowId, flowId);
             return await _flowsCollection.Find(filter).FirstOrDefaultAsync();
         }
 
         public async Task<FlowTimeline> GetFlowTimelineAsync(Guid flowId)
         {
-            var filter = Builders<FlowDocument>.Filter.Eq(x => x.FlowId, flowId);
-            var projection = Builders<FlowDocument>.Projection
+            var filter = Builders<FlowState>.Filter.Eq(x => x.FlowId, flowId);
+            var projection = Builders<FlowState>.Projection
                 .Include(x => x.FlowId)
                 .Include(x => x.Events);
 
             var flowDoc = await _flowsCollection.Find(filter)
-                .Project<FlowDocument>(projection)
+                .Project<FlowState>(projection)
                 .FirstOrDefaultAsync();
 
             if (flowDoc == null)
@@ -98,7 +83,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
 
         public async Task<PagedResult<FlowSummary>> QueryFlowsAsync(FlowQuery query)
         {
-            var filterBuilder = Builders<FlowDocument>.Filter;
+            var filterBuilder = Builders<FlowState>.Filter;
             var filter = filterBuilder.Empty;
 
             // Apply filters
@@ -128,28 +113,28 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
 
             // Get paged results
             var skip = (query.PageNumber - 1) * query.PageSize;
-            var flows = await _flowsCollection.Find(filter)
+            var flowStates = await _flowsCollection.Find(filter)
                 .Skip(skip)
                 .Limit(query.PageSize)
                 .SortByDescending(x => x.CreatedAt)
                 .ToListAsync();
 
-            var summaries = flows.Select(f => new FlowSummary
+            var summaries = flowStates.Select(state => new FlowSummary
             {
-                FlowId = f.FlowId,
-                FlowType = f.FlowType,
-                Status = f.Status,
-                UserId = f.UserId,
-                CorrelationId = f.CorrelationId,
-                CreatedAt = f.CreatedAt,
-                StartedAt = f.StartedAt,
-                CompletedAt = f.CompletedAt,
-                LastUpdatedAt = f.UpdatedAt,
-                CurrentStepName = f.CurrentStepName,
-                CurrentStepIndex = f.Steps.IndexOf(f.Steps.First(s => s.Name == f.CurrentStepName)) + 1,
-                TotalSteps = f.Steps.Count,
-                PauseReason = f.PauseReason,
-                ErrorMessage = f.LastError?.Message
+                FlowId = state.FlowId,
+                FlowType = state.FlowType,
+                Status = state.Status,
+                UserId = state.UserId,
+                CorrelationId = state.CorrelationId,
+                CreatedAt = state.CreatedAt,
+                StartedAt = state.StartedAt,
+                CompletedAt = state.CompletedAt,
+                LastUpdatedAt = state.LastUpdatedAt,
+                CurrentStepName = state.CurrentStepName,
+                CurrentStepIndex = state.CurrentStepIndex,
+                TotalSteps = state.Steps.Count,
+                PauseReason = state.PauseReason,
+                ErrorMessage = state.LastError?.Message
             }).ToList();
 
             return new PagedResult<FlowSummary>
@@ -161,113 +146,35 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
             };
         }
 
-        public async Task<List<FlowDocument>> GetRuntimeFlows()
+        public async Task<List<FlowState>> GetFlowsByStatusesAsync(FlowStatus[] flowStatuses)
         {
-            return await GetFlowsByStatusesAsync(new[] { FlowStatus.Running, FlowStatus.Paused });
-        }
-
-        public async Task<List<FlowDocument>> GetFlowsByStatusesAsync(FlowStatus[] flowStatuses)
-        {
-            var filter = Builders<FlowDocument>.Filter.In(x => x.Status, flowStatuses);
+            var filter = Builders<FlowState>.Filter.In(x => x.Status, flowStatuses);
             var flowDocs = await _flowsCollection.Find(filter).ToListAsync();
 
             return flowDocs;
         }
 
-
-        public async Task<int> CleanupCompletedFlowsAsync(TimeSpan olderThan)
-        {
-            var cutoffDate = DateTime.UtcNow - olderThan;
-            var filter = Builders<FlowDocument>.Filter.And(
-                Builders<FlowDocument>.Filter.In(x => x.Status, new[] { FlowStatus.Completed, FlowStatus.Failed, FlowStatus.Cancelled }),
-                Builders<FlowDocument>.Filter.Lt(x => x.CompletedAt, cutoffDate)
-            );
-
-            var result = await _flowsCollection.DeleteManyAsync(filter);
-            _logger.LogInformation("Cleaned up {Count} completed flows older than {CutoffDate}", result.DeletedCount, cutoffDate);
-
-            return (int)result.DeletedCount;
-        }
-
-        public async Task<bool> CancelFlowAsync(Guid flowId, string reason)
+        public async Task SaveFlowStateAsync(FlowState state)
         {
             try
             {
-                var filter = Builders<FlowDocument>.Filter.Eq(x => x.FlowId, flowId);
+                var filter = Builders<FlowState>.Filter.Eq(x => x.FlowId, state.FlowId);
 
-                // Create a MongoDB-safe FlowEvent using SafeObject
-                var cancelEvent = new FlowEvent
-                {
-                    EventId = Guid.NewGuid(),
-                    FlowId = flowId,
-                    EventType = "FlowCancelled",
-                    Description = reason ?? "Flow cancelled",
-                    Timestamp = DateTime.UtcNow,
-                    Data = new Dictionary<string, object> { { "reason", reason ?? "Unknown" } }.ToSafe(_logger)
-                };
+                // Check if document already exists to preserve the _id
+                var existingState = await _flowsCollection.Find(filter)
+                    .FirstOrDefaultAsync();
 
-                var update = Builders<FlowDocument>.Update
-                    .Set(x => x.Status, FlowStatus.Cancelled)
-                    .Set(x => x.CompletedAt, DateTime.UtcNow)
-                    .Push(x => x.Events, cancelEvent);
+                state.LastUpdatedAt = DateTime.UtcNow;
+                state.Id = existingState != null ? existingState.Id : Guid.NewGuid();
 
-                var result = await _flowsCollection.UpdateOneAsync(filter, update);
-                return result.ModifiedCount > 0;
+                await _flowsCollection.ReplaceOneAsync(filter, state, new ReplaceOptions { IsUpsert = true });
+
+                _logger.LogDebug("Saved flow state for {FlowId} with status {Status}", state.FlowId, state.Status);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to cancel flow {FlowId}", flowId);
-                return false;
-            }
-        }
-
-        public async Task<bool> ResumeFlowAsync(Guid flowId, ResumeReason reason, string resumedBy, string message = null)
-        {
-            try
-            {
-                var filter = Builders<FlowDocument>.Filter.And(
-                    Builders<FlowDocument>.Filter.Eq(x => x.FlowId, flowId),
-                    Builders<FlowDocument>.Filter.Eq(x => x.Status, FlowStatus.Paused)
-                );
-
-                // Create a MongoDB-safe FlowEvent using SafeObject
-                var resumeEvent = new FlowEvent
-                {
-                    EventId = Guid.NewGuid(),
-                    FlowId = flowId,
-                    EventType = "FlowResumed",
-                    Description = message ?? $"Flow resumed by {resumedBy} (reason: {reason})",
-                    Timestamp = DateTime.UtcNow,
-                    Data = new Dictionary<string, object>
-                    {
-                        { "resumeReason", reason.ToString() },
-                        { "resumedBy", resumedBy }
-                    }.ToSafe(_logger)
-                };
-
-                var update = Builders<FlowDocument>.Update
-                    .Set(x => x.Status, FlowStatus.Running)
-                    .Unset(x => x.PausedAt)
-                    .Unset(x => x.PauseReason)
-                    .Unset(x => x.PauseMessage)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                    .Push(x => x.Events, resumeEvent);
-
-                var result = await _flowsCollection.UpdateOneAsync(filter, update);
-
-                if (result.ModifiedCount > 0)
-                {
-                    // Remove any resume conditions for this flow
-                    await _resumeConditionsCollection.DeleteManyAsync(
-                        Builders<ResumeConditionDocument>.Filter.Eq(x => x.FlowId, flowId));
-                }
-
-                return result.ModifiedCount > 0;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to resume flow {FlowId}", flowId);
-                return false;
+                _logger.LogError(ex, "Failed to save flow state for {FlowId}", state.FlowId);
+                throw;
             }
         }
 
@@ -306,86 +213,35 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
             }
         }
 
-        public async Task SaveFlowStateAsync(FlowDefinition flow)
+        public async Task<int> CleanupCompletedFlowsAsync(TimeSpan olderThan)
         {
-            try
-            {
-                var filter = Builders<FlowDocument>.Filter.Eq(x => x.FlowId, flow.FlowId);
+            var cutoffDate = DateTime.UtcNow - olderThan;
+            var filter = Builders<FlowState>.Filter.And(
+                Builders<FlowState>.Filter.In(x => x.Status, [FlowStatus.Completed, FlowStatus.Failed, FlowStatus.Cancelled]),
+                Builders<FlowState>.Filter.Lt(x => x.CompletedAt, cutoffDate)
+            );
 
-                // Check if document already exists to preserve the _id
-                var existingDocument = await _flowsCollection.Find(filter)
-                    .FirstOrDefaultAsync();
+            var result = await _flowsCollection.DeleteManyAsync(filter);
+            _logger.LogInformation("Cleaned up {Count} completed flows older than {CutoffDate}", result.DeletedCount, cutoffDate);
 
-                var document = SerializeFlow(flow);
-                document.UpdatedAt = DateTime.UtcNow;
-                document.Id = existingDocument != null ? existingDocument.Id : Guid.NewGuid();
-
-                await _flowsCollection.ReplaceOneAsync(filter, document, new ReplaceOptions { IsUpsert = true });
-
-                _logger.LogDebug("Saved flow state for {FlowId} with status {Status}", flow.FlowId, flow.Status);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to save flow state for {FlowId}", flow.FlowId);
-                throw;
-            }
-        }
-
-        private FlowDocument SerializeFlow(FlowDefinition flow)
-        {
-            // Enhanced step serialization with safe handling of all complex data
-            var mongoSafeSteps = flow.Steps?.Select(s => new StepData(s)).ToList();
-
-            // Safely serialize Events using SafeObject
-            var mongoSafeEvents = flow.Events?.Select(e => new FlowEvent
-            {
-                EventId = e.EventId,
-                FlowId = e.FlowId,
-                EventType = e.EventType,
-                Description = e.Description,
-                Timestamp = e.Timestamp,
-                Data = e.Data  // Convert to SafeObject
-            }).ToList();
-
-            return new FlowDocument
-            {
-                FlowId = flow.FlowId,
-                FlowType = flow.GetType().FullName,
-                UserId = flow.UserId,
-                CorrelationId = flow.CorrelationId,
-                CreatedAt = flow.CreatedAt,
-                StartedAt = flow.StartedAt,
-                CompletedAt = flow.CompletedAt,
-                Status = flow.Status,
-                CurrentStepName = flow.CurrentStepName,
-                CurrentStepIndex = flow.CurrentStepIndex,
-                Steps = mongoSafeSteps,
-                Data = flow.Data,  // SIMPLIFIED: Direct assignment since it's already SafeObject
-                Events = flow.Events,
-                LastError = flow.LastError,
-                PausedAt = flow.PausedAt,
-                PauseReason = flow.PauseReason,
-                PauseMessage = flow.PauseMessage,
-                PauseData = flow.PauseData,  // SIMPLIFIED: Direct assignment since it's already SafeObject
-                UpdatedAt = DateTime.UtcNow
-            };
+            return (int)result.DeletedCount;
         }
 
         private async Task CreateIndexesAsync()
         {
             try
             {
-                var indexKeys = Builders<FlowDocument>.IndexKeys;
+                var indexKeys = Builders<FlowState>.IndexKeys;
 
                 var indexes = new[]
                 {
-                    new CreateIndexModel<FlowDocument>(indexKeys.Ascending(x => x.FlowId)),
-                    new CreateIndexModel<FlowDocument>(indexKeys.Ascending(x => x.Status)),
-                    new CreateIndexModel<FlowDocument>(indexKeys.Ascending(x => x.UserId)),
-                    new CreateIndexModel<FlowDocument>(indexKeys.Ascending(x => x.CorrelationId)),
-                    new CreateIndexModel<FlowDocument>(indexKeys.Ascending(x => x.CreatedAt)),
-                    new CreateIndexModel<FlowDocument>(indexKeys.Ascending(x => x.FlowType)),
-                    new CreateIndexModel<FlowDocument>(
+                    new CreateIndexModel<FlowState>(indexKeys.Ascending(x => x.FlowId)),
+                    new CreateIndexModel<FlowState>(indexKeys.Ascending(x => x.Status)),
+                    new CreateIndexModel<FlowState>(indexKeys.Ascending(x => x.UserId)),
+                    new CreateIndexModel<FlowState>(indexKeys.Ascending(x => x.CorrelationId)),
+                    new CreateIndexModel<FlowState>(indexKeys.Ascending(x => x.CreatedAt)),
+                    new CreateIndexModel<FlowState>(indexKeys.Ascending(x => x.FlowType)),
+                    new CreateIndexModel<FlowState>(
                         indexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt))
                 };
 
@@ -474,9 +330,9 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
             RegisterExceptionType<FlowNotFoundException>();
 
             // Register FlowContext class map
-            if (!BsonClassMap.IsClassMapRegistered(typeof(FlowContext)))
+            if (!BsonClassMap.IsClassMapRegistered(typeof(FlowExecutionContext)))
             {
-                BsonClassMap.RegisterClassMap<FlowContext>(cm =>
+                BsonClassMap.RegisterClassMap<FlowExecutionContext>(cm =>
                 {
                     cm.AutoMap();
                     cm.SetIgnoreExtraElements(true);

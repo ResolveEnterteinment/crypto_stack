@@ -6,9 +6,10 @@ using Domain.Exceptions;
 using Domain.Models.Payment;
 using Domain.Models.Subscription;
 using Infrastructure.Flows.Exchange;
+using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Models;
-using Infrastructure.Services.FlowEngine.Definition.Builders;
+using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 
@@ -102,7 +103,7 @@ namespace Infrastructure.Flows.Payment
                 .RequiresData<InvoiceRequest>("InvoiceRequest")
                 .Execute(async context =>
                 {
-                    var invoice = GetData<InvoiceRequest>("InvoiceRequest");
+                    var invoice = context.GetData<InvoiceRequest>("InvoiceRequest");
 
                     ValidateInvoiceRequest(invoice);
 
@@ -150,7 +151,7 @@ namespace Infrastructure.Flows.Payment
                 .RequiresData<PaymentData>("Payment")
                 .Execute(async context =>
                 {
-                    var paymentData = GetData<PaymentData>("Payment");
+                    var paymentData = context.GetData<PaymentData>("Payment");
                     // Update status to processing
                     var insertWr = await _paymentService.InsertAsync(paymentData);
 

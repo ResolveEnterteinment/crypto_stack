@@ -4,9 +4,8 @@ using Domain.Constants;
 using Domain.Exceptions;
 using Domain.Models.Payment;
 using Domain.Models.Subscription;
-using Infrastructure.Services.Base;
+using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Models;
-using Infrastructure.Services.FlowEngine.Definition.Builders;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver.Linq;
 

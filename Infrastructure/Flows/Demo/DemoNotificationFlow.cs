@@ -1,6 +1,7 @@
 using Application.Interfaces;
+using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Models;
-using Infrastructure.Services.FlowEngine.Definition.Builders;
+using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.AspNetCore.Identity.UI.Services;
 using Microsoft.Extensions.Logging;
 
@@ -35,8 +36,8 @@ namespace Infrastructure.Flows.Demo
                     
                     await _notificationService.CreateAndSendNotificationAsync(new()
                     {
-                        UserId = context.Flow.UserId,
-                        Message = $"Your demo flow has completed successfully. Flow ID: {context.Flow.CorrelationId}"
+                        UserId = context.State.UserId,
+                        Message = $"Your demo flow has completed successfully. Flow ID: {context.State.CorrelationId}"
                     });
 
                     return StepResult.Success("Email notification sent");
@@ -48,7 +49,7 @@ namespace Infrastructure.Flows.Demo
                 .After("SendEmailNotification")
                 .Execute(async context =>
                 {
-                    _logger.LogInformation("Demo flow notification completed for user {UserId}", context.Flow.UserId);
+                    _logger.LogInformation("Demo flow notification completed for user {UserId}", context.State.UserId);
                     await Task.CompletedTask;
                     return StepResult.Success("Notification flow completed");
                 })

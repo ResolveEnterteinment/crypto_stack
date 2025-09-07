@@ -10,7 +10,7 @@ namespace Infrastructure.Services.FlowEngine.Middleware
 {
     public class TimeoutMiddleware : IFlowMiddleware
     {
-        public async Task InvokeAsync(FlowContext context, Func<Task> next)
+        public async Task InvokeAsync(FlowExecutionContext context, Func<Task> next)
         {
             // Timeout handling implementation
             await next();

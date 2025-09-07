@@ -1,7 +1,8 @@
+using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
-using Infrastructure.Services.FlowEngine.Definition.Builders;
+using Infrastructure.Services.FlowEngine.Engine;
 using Infrastructure.Services.FlowEngine.Middleware;
 using Microsoft.Extensions.Logging;
 
@@ -50,7 +51,7 @@ namespace Infrastructure.Flows.Demo
                 .Execute(async context =>
                 {
                     var request = context.GetData<DemoRequest>("Request");
-                    _logger.LogInformation("Starting comprehensive demo for user {UserId}", context.Flow.UserId);
+                    _logger.LogInformation("Starting comprehensive demo for user {UserId}", context.State.UserId);
 
                     // Simulate initialization
                     await Task.Delay(100, context.CancellationToken);
@@ -140,7 +141,7 @@ namespace Infrastructure.Flows.Demo
                             "Waiting for manual approval",
                             new Dictionary<string, object>
                             {
-                                ["RequesterUserId"] = context.Flow.UserId,
+                                ["RequesterUserId"] = context.State.UserId,
                                 ["ApprovalRequestId"] = Guid.NewGuid(),
                                 ["ApprovalType"] = "Demo Workflow Approval"
                             });
@@ -160,7 +161,7 @@ namespace Infrastructure.Flows.Demo
                     resume.WhenCondition(async context =>
                     {
                         // Auto-approve after 5 minutes for demo purposes
-                        var pausedAt = context.Flow.PausedAt;
+                        var pausedAt = context.State.PausedAt;
 
                         return pausedAt.HasValue &&
                                DateTime.UtcNow.Subtract(pausedAt.Value) > TimeSpan.FromMinutes(1);
@@ -293,8 +294,8 @@ namespace Infrastructure.Flows.Demo
                     
                     var notificationData = new
                     {
-                        FlowId = context.Flow.FlowId,
-                        UserId = context.Flow.UserId,
+                        FlowId = context.State.FlowId,
+                        UserId = context.State.UserId,
                         Status = "Completed",
                         CompletedAt = DateTime.UtcNow,
                         Summary = "Demo flow completed successfully"
@@ -318,11 +319,11 @@ namespace Infrastructure.Flows.Demo
 
                     var summary = new DemoFlowSummary
                     {
-                        FlowId = context.Flow.FlowId,
+                        FlowId = context.State.FlowId,
                         StartTime = context.GetData<DateTime>("StartTime"),
                         EndTime = DateTime.UtcNow,
                         ProcessedItems = context.GetData<List<string>>("ProcessingItems")?.Count ?? 0,
-                        TotalSteps = context.Flow.Steps.Count,
+                        TotalSteps = context.State.Steps.Count,
                         Status = "Completed Successfully"
                     };
 

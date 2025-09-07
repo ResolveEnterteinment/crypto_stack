@@ -38,7 +38,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Recovery
                     try
                     {
                         // Attempt to recover the flow
-                        await _persistence.ResumeFlowAsync(flowSummary.FlowId, ResumeReason.System, "system", "Auto-recovery");
+                        //await _persistence.ResumeFlowAsync(flowSummary.FlowId, ResumeReason.System, "system", "Auto-recovery");
                         result.RecoveredFlowIds.Add(flowSummary.FlowId);
                         result.FlowsRecovered++;
                     }

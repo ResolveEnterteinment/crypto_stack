@@ -91,12 +91,6 @@ namespace Infrastructure.Services.FlowEngine.Extensions
                 case PersistenceType.MongoDB:
                     services.AddScoped<IFlowPersistence, MongoFlowPersistence>();
                     break;
-                case PersistenceType.SqlServer:
-                    services.AddScoped<IFlowPersistence, SqlServerFlowPersistence>();
-                    break;
-                case PersistenceType.InMemory:
-                    services.AddSingleton<IFlowPersistence, InMemoryFlowPersistence>();
-                    break;
             }
 
             return services;

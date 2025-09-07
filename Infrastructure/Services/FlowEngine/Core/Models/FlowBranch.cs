@@ -6,7 +6,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
     public class FlowBranch
     {
         [BsonIgnore]
-        public Func<FlowContext, bool> Condition { get; set; }
+        public Func<FlowExecutionContext, bool> Condition { get; set; }
         public bool IsDefault { get; set; } = false;
         public List<FlowSubStep> Steps { get; set; } = new();
     }

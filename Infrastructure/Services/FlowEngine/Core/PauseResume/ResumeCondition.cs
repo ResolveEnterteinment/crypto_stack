@@ -8,7 +8,7 @@ namespace Infrastructure.Services.FlowEngine.Core.PauseResume
     public class ResumeCondition
     {
         public Guid FlowId { get; set; }
-        public Func<FlowContext, Task<bool>> Condition { get; set; }
+        public Func<FlowExecutionContext, Task<bool>> Condition { get; set; }
         public TimeSpan CheckInterval { get; set; } = TimeSpan.FromMinutes(5);
         public DateTime NextCheck { get; set; } = DateTime.UtcNow;
         public int MaxRetries { get; set; } = -1; // -1 = infinite

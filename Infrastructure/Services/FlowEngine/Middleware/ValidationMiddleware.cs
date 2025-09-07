@@ -16,14 +16,14 @@ namespace Infrastructure.Services.FlowEngine.Middleware
             _logger = logger;
         }
 
-        public async Task InvokeAsync(FlowContext context, Func<Task> next)
+        public async Task InvokeAsync(FlowExecutionContext context, Func<Task> next)
         {
             // Validate flow definition
             var flowValidation = await _validation.ValidateFlowAsync(context.Flow);
             if (!flowValidation.IsValid)
             {
                 var errors = string.Join(", ", flowValidation.Errors);
-                _logger.LogError("Flow validation failed for {FlowId}: {Errors}", context.Flow.FlowId, errors);
+                _logger.LogError("Flow validation failed for {FlowId}: {Errors}", context.Flow.State.FlowId, errors);
                 throw new FlowValidationException($"Flow validation failed: {errors}");
             }
 
@@ -35,7 +35,7 @@ namespace Infrastructure.Services.FlowEngine.Middleware
                 {
                     var errors = string.Join(", ", stepValidation.Errors);
                     _logger.LogError("Step validation failed for {StepName} in flow {FlowId}: {Errors}",
-                        context.CurrentStep.Name, context.Flow.FlowId, errors);
+                        context.CurrentStep.Name, context.Flow.State.FlowId, errors);
                     throw new FlowValidationException($"Step validation failed: {errors}");
                 }
             }

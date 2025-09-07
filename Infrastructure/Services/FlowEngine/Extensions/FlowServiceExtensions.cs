@@ -1,5 +1,5 @@
 using Infrastructure.Flows.Demo;
-using Infrastructure.Services.FlowEngine.Core.Models;
+using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Infrastructure.Services.FlowEngine.Extensions
@@ -35,7 +35,7 @@ namespace Infrastructure.Services.FlowEngine.Extensions
 
             // Get all registered flow types
             var flowDescriptors = services
-                .Where(sd => sd.ServiceType.IsSubclassOf(typeof(FlowDefinition)))
+                .Where(sd => sd.ServiceType.IsSubclassOf(typeof(Flow)))
                 .ToList();
 
             foreach (var descriptor in flowDescriptors)

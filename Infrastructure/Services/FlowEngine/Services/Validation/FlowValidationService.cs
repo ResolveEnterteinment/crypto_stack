@@ -1,5 +1,6 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
+using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.Extensions.Logging;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
@@ -18,40 +19,40 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
             _logger = logger;
         }
 
-        public async Task<FlowValidationResult> ValidateFlowAsync(FlowDefinition flow)
+        public async Task<FlowValidationResult> ValidateFlowAsync(Flow flow)
         {
             var result = new FlowValidationResult
             {
-                FlowId = flow.FlowId,
+                FlowId = flow.State.FlowId,
                 FlowType = flow.GetType().Name
             };
 
             try
             {
                 // Basic flow validation
-                if (flow.FlowId == Guid.Empty)
+                if (flow.State.FlowId == Guid.Empty)
                 {
                     result.Errors.Add("Flow ID cannot be empty");
                 }
 
-                if (string.IsNullOrEmpty(flow.UserId))
+                if (string.IsNullOrEmpty(flow.State.UserId))
                 {
                     result.Errors.Add("User ID cannot be empty");
                 }
 
-                if (flow.CreatedAt == default)
+                if (flow.State.CreatedAt == default)
                 {
                     result.Errors.Add("Created date must be set");
                 }
 
                 // Validate steps
-                if (flow.Steps == null || !flow.Steps.Any())
+                if (flow.Definition.Steps == null || !flow.Definition.Steps.Any())
                 {
                     result.Warnings.Add("Flow has no steps defined");
                 }
                 else
                 {
-                    foreach (var step in flow.Steps)
+                    foreach (var step in flow.Definition.Steps)
                     {
                         var stepValidation = await ValidateStepAsync(step, flow);
                         if (!stepValidation.IsValid)
@@ -70,9 +71,9 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                 }
 
                 // Validate flow data if present
-                if (flow.Data != null)
+                if (flow.State.Data != null)
                 {
-                    var dataValidation = await ValidateFlowDataAsync(flow.Data, flow.GetType());
+                    var dataValidation = await ValidateFlowDataAsync(flow.State.Data, flow.GetType());
                     if (!dataValidation.IsValid)
                     {
                         result.Errors.AddRange(dataValidation.Errors.Select(e => $"Flow data: {e}"));
@@ -90,14 +91,14 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error validating flow {FlowId}", flow.FlowId);
+                _logger.LogError(ex, "Error validating flow {FlowId}", flow.State.FlowId);
                 result.Errors.Add($"Validation error: {ex.Message}");
                 result.IsValid = false;
                 return result;
             }
         }
 
-        public async Task<StepValidationResult> ValidateStepAsync(FlowStep step, FlowDefinition flow)
+        public async Task<StepValidationResult> ValidateStepAsync(FlowStep step, Flow flow)
         {
             var result = new StepValidationResult
             {
@@ -134,7 +135,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                 {
                     foreach (var dependency in step.StepDependencies)
                     {
-                        if (!flow.Steps.Any(s => s.Name == dependency))
+                        if (!flow.Definition.Steps.Any(s => s.Name == dependency))
                         {
                             result.Errors.Add($"Dependency '{dependency}' not found in flow steps");
                         }
@@ -203,7 +204,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                 // Validate JumpTo step
                 if (!string.IsNullOrEmpty(step.JumpTo))
                 {
-                    if (!flow.Steps.Any(s => s.Name == step.JumpTo))
+                    if (!flow.Definition.Steps.Any(s => s.Name == step.JumpTo))
                     {
                         result.Errors.Add($"JumpTo step '{step.JumpTo}' not found in flow steps");
                     }
@@ -301,22 +302,22 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
             }
         }
 
-        public async Task<DependencyValidationResult> ValidateDependenciesAsync(FlowDefinition flow)
+        public async Task<DependencyValidationResult> ValidateDependenciesAsync(Flow flow)
         {
             var result = new DependencyValidationResult();
 
             try
             {
-                if (flow.Steps == null || !flow.Steps.Any())
+                if (flow.Definition.Steps == null || !flow.Definition.Steps.Any())
                 {
                     result.IsValid = true;
                     return result;
                 }
 
-                var stepNames = flow.Steps.Select(s => s.Name).ToHashSet();
+                var stepNames = flow.Definition.Steps.Select(s => s.Name).ToHashSet();
 
                 // Check for missing dependencies
-                foreach (var step in flow.Steps)
+                foreach (var step in flow.Definition.Steps)
                 {
                     if (step.StepDependencies?.Any() == true)
                     {
@@ -334,11 +335,11 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                 var visited = new HashSet<string>();
                 var recursionStack = new HashSet<string>();
 
-                foreach (var step in flow.Steps)
+                foreach (var step in flow.Definition.Steps)
                 {
                     if (!visited.Contains(step.Name))
                     {
-                        if (HasCircularDependency(step.Name, flow.Steps, visited, recursionStack))
+                        if (HasCircularDependency(step.Name, flow.Definition.Steps, visited, recursionStack))
                         {
                             result.CircularDependencies.Add($"Circular dependency detected involving step '{step.Name}'");
                         }
@@ -353,7 +354,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error validating dependencies for flow {FlowId}", flow.FlowId);
+                _logger.LogError(ex, "Error validating dependencies for flow {FlowId}", flow.State.FlowId);
                 result.Errors.Add($"Dependency validation error: {ex.Message}");
                 result.IsValid = false;
                 return result;

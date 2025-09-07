@@ -2,11 +2,8 @@
 using Infrastructure.Services.FlowEngine.Core.Exceptions;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
-using Infrastructure.Services.FlowEngine.Core.PauseResume;
-using Infrastructure.Services.FlowEngine.Services.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Infrastructure.Services.FlowEngine.Engine;
 
 namespace Infrastructure.Services.FlowEngine.Engine
 {
@@ -57,19 +54,10 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                 var restoreResult = await RestoreRuntimeFlows(flowsToRestore);
 
-                foreach (var flow in _runtimeStore.Flows.Values.Where(f => f.Status != FlowStatus.Paused))
+                foreach (var flow in _runtimeStore.Flows.Values.Where(f => f.State.Status != FlowStatus.Paused))
                 {
                     await _executor.ExecuteAsync(flow, CancellationToken.None);
                 }
-
-                // Step 2: Restore paused flows and their resume conditions
-                //_logger.LogInformation("Restoring paused flows runtime state...");
-                //await RestorePausedFlowsAsync();
-
-                // Step 3: Start auto-resume background service
-                //_logger.LogInformation("Starting auto-resume background service...");
-                //var autoResumeService = _serviceProvider.GetRequiredService<IFlowAutoResumeService>();
-                //await autoResumeService.StartBackgroundCheckingAsync();
 
                 _logger.LogInformation($"{restoreResult.FlowsRestored} flows out of {restoreResult.TotalFlowsChecked} restored successfully in {restoreResult.Duration.TotalSeconds} seconds. ");
             }
@@ -79,227 +67,114 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
         }
 
-        private Task<RestoreRuntimeResult> RestoreRuntimeFlows(List<FlowDocument> flowsToRestore)
+        private async Task<RestoreRuntimeResult> RestoreRuntimeFlows(List<FlowState> flowsStates)
         {
             var result = new RestoreRuntimeResult();
-            foreach (var flowDoc in flowsToRestore)
+            foreach (var flowState in flowsStates)
             {
                 result.TotalFlowsChecked++;
                 try
                 {
-                    // Create an instance of Type flowDoc.FlowType using DI
-                    var flowType = Type.GetType(flowDoc.FlowType);
-                    if (flowType == null)
-                    {
-                        result.FlowsFailed++;
-                        result.FailedFlowIds.Add(flowDoc.FlowId.ToString());
-                        _logger.LogWarning("Could not resolve flow type {FlowType} for flow {FlowId}", flowDoc.FlowType, flowDoc.FlowId);
-                        continue;
-                    }
-
-                    // Try to get from DI container first (recommended)
-                    FlowDefinition flow = null;
-                    try
-                    {
-                        flow = (FlowDefinition)_serviceProvider.GetRequiredService(flowType);
-
-                    }
-                    catch (InvalidOperationException)
-                    {
-                        // Fallback to Activator if not registered in DI
-                        _logger.LogWarning("Flow type {FlowType} not registered in DI container, using Activator fallback", flowType.Name);
-                        flow = (FlowDefinition)Activator.CreateInstance(flowType);
-                    }
+                    var flow = await Flow.FromStateAsync(flowState, _serviceProvider);
 
                     if (flow == null)
                     {
                         result.FlowsFailed++;
-                        result.FailedFlowIds.Add(flowDoc.FlowId.ToString());
-                        _logger.LogWarning("Failed to initiate flow {FlowType} using Activator fallback", flowDoc.FlowType);
+                        result.FailedFlowIds.Add(flowState.FlowId.ToString());
+                        _logger.LogWarning("Failed to restore flow {FlowId}", flowState.FlowId);
                         continue;
                     }
 
-                    // Initialize the flow to ensure steps are properly defined
-                    flow.Initialize();
-
-                    // Instead of deserializing directly, copy the state from the document
-                    // Populate the flow with persisted data
-
-                    CopyFlowState(flowDoc, flow);
-
-                    if (flow.Status == FlowStatus.Paused)
-                    {
-                        var pauseStep = flow.Steps[flow.CurrentStepIndex];
-
-                        var context = new FlowContext
-                        {
-                            Flow = flow,
-                            CurrentStep = pauseStep,
-                            CancellationToken = default,
-                            Services = _serviceProvider
-                        };
-
-                        var pauseCondition = pauseStep.PauseCondition(context);
-
-                        flow.ActiveResumeConfig = pauseCondition.ResumeConfig ?? pauseStep.ResumeConfig;
-
-                        _logger.LogDebug("Restored pause condition for flow {FlowId} at step {StepName}", flow.FlowId, pauseStep.Name);
-                    }
-                    _runtimeStore.Flows.Add(flowDoc.FlowId, flow);
-                    _logger.LogInformation("Restored flow {FlowType} with ID {FlowId}", flow.GetType().Name, flow.FlowId);
+                    _runtimeStore.Flows.Add(flowState.FlowId, flow);
+                    _logger.LogInformation("Restored flow {FlowType} with ID {FlowId}", flow.State.FlowType, flow.Id);
 
                     result.FlowsRestored++;
-                    result.RestoredFlowIds.Add(flowDoc.FlowId.ToString());
+                    result.RestoredFlowIds.Add(flowState.FlowId.ToString());
                 }
                 catch (Exception ex)
                 {
                     result.FlowsFailed++;
-                    result.FailedFlowIds.Add(flowDoc.FlowId.ToString());
-                    _logger.LogWarning(ex, "Failed to restore flow {FlowId}", flowDoc.FlowId);
+                    result.FailedFlowIds.Add(flowState.FlowId.ToString());
+                    _logger.LogWarning(ex, "Failed to restore flow {FlowId}", flowState.FlowId);
                 }
             }
 
             result.CompletedAt = DateTime.UtcNow;
             result.Duration = result.CompletedAt - result.StartedAt;
 
-            return Task.FromResult(result);
+            return result;
         }
 
-        private FlowDefinition? RestoreRuntimeFlow(FlowDocument flowDoc)
-        {
-            try
-            {
-                // Create an instance of Type flowDoc.FlowType using DI
-                var flowType = Type.GetType(flowDoc.FlowType);
-                if (flowType == null)
-                {
-                    _logger.LogWarning("Could not resolve flow type {FlowType} for flow {FlowId}", flowDoc.FlowType, flowDoc.FlowId);
-                    throw new FlowExecutionException($"Could not resolve flow type {flowDoc.FlowType} for flow {flowDoc.FlowId}");
-                }
-
-                // Try to get from DI container first (recommended)
-                FlowDefinition flow = null;
-                try
-                {
-                    flow = (FlowDefinition)_serviceProvider.GetRequiredService(flowType);
-                }
-                catch (InvalidOperationException)
-                {
-                    // Fallback to Activator if not registered in DI
-                    _logger.LogWarning("Flow type {FlowType} not registered in DI container, using Activator fallback", flowType.Name);
-                    flow = (FlowDefinition)Activator.CreateInstance(flowType);
-                }
-
-                if (flow == null)
-                {
-                    _logger.LogWarning("Failed to initiate flow {FlowType} using Activator fallback", flowDoc.FlowType);
-                    throw new FlowExecutionException($"Failed to initiate flow {flowDoc.FlowType} using Activator fallback");
-                }
-
-                // Initialize the flow to ensure steps are properly defined
-                flow.Initialize();
-
-                // Instead of deserializing directly, copy the state from the document
-                // Populate the flow with persisted data
-
-                CopyFlowState(flowDoc, flow);
-
-                if (flow.Status == FlowStatus.Paused)
-                {
-                    var pauseStep = flow.Steps[flow.CurrentStepIndex];
-
-                    var context = new FlowContext
-                    {
-                        Flow = flow,
-                        CurrentStep = pauseStep,
-                        CancellationToken = default,
-                        Services = _serviceProvider
-                    };
-
-                    var pauseCondition = pauseStep.PauseCondition(context);
-
-                    flow.ActiveResumeConfig = pauseCondition.ResumeConfig ?? pauseStep.ResumeConfig;
-
-                    _logger.LogDebug("Restored pause condition for flow {FlowId} at step {StepName}", flow.FlowId, pauseStep.Name);
-                }
-                _runtimeStore.Flows.Add(flowDoc.FlowId, flow);
-                _logger.LogInformation("Restored flow {FlowType} with ID {FlowId}", flow.GetType().Name, flow.FlowId);
-
-                return flow;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to restore flow {FlowId}", flowDoc.FlowId);
-                return null;
-            }
-        }
-        public async Task<FlowDefinition?> GetFlowById(Guid flowId)
+        public async Task<Flow?> GetFlowById(Guid flowId)
         {
             if (_runtimeStore.Flows.TryGetValue(flowId, out var flow))
             {
+                // Refresh the service context to ensure it uses current services
+                flow.RefreshServiceContext();
                 return flow;
             }
-            else
+
+            // Resolve from persistence using a fresh scope
+            using var scope = _serviceProvider.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var persistence = scope.ServiceProvider.GetRequiredService<IFlowPersistence>();
+
+            var flowDoc = await persistence.GetByFlowId(flowId);
+            if (flowDoc != null)
             {
-                //resolve from persistence
-                var flowDoc = await _persistence.GetByFlowId(flowId);
-                flow = RestoreRuntimeFlow(flowDoc);
+                flow = await Flow.FromStateAsync(flowDoc, _serviceProvider);
                 if (flow != null)
                 {
+                    // Cache the restored flow
+                    _runtimeStore.Flows[flowId] = flow;
                     return flow;
                 }
             }
 
-            _logger.LogError("Flow {FlowId} not found in runtime store", flowId);
+            _logger.LogError("Flow {FlowId} not found in runtime store or persistence", flowId);
             return null;
         }
 
-        public async Task<FlowResult<TFlow>> StartAsync<TFlow>(
+        public async Task<FlowExecutionResult> StartAsync<TFlow>(
             Dictionary<string, object>? initialData = null,
-            string userId = null,
-            string correlationId = null,
+            string? userId = null,
+            string? correlationId = null,
             CancellationToken cancellationToken = default)
             where TFlow : FlowDefinition
         {
-            var flowId = Guid.NewGuid();
+            /*
+            var flow = Flow.Create<TFlow>(_serviceProvider, initialData);
+            flow.State.UserId = userId ?? "system";
+            flow.State.CorrelationId = correlationId ?? Guid.NewGuid().ToString();
+            */
 
-            // ✅ Get flow from DI container instead of new()
-            var flow = _serviceProvider.GetRequiredService<TFlow>();
+            var flow = Flow.Builder(_serviceProvider)
+                .ForUser(userId)
+                .WithCorrelation(correlationId)
+                .WithData(initialData)
+                .Build<TFlow>();
 
-            // Initialize flow
-            flow.FlowId = flowId;
-            flow.UserId = userId ?? "system";
-            flow.CorrelationId = correlationId ?? Guid.NewGuid().ToString();
-            flow.CreatedAt = DateTime.UtcNow;
-            flow.Status = FlowStatus.Initializing;
+            _runtimeStore.Flows.Add(flow.Id, flow);
 
-            // Set initial data
-            if (initialData != null)
-            {
-                flow.SetInitialData(initialData);
-            }
-
-            _runtimeStore.Flows.Add(flowId, flow);
             _logger.LogInformation("Starting flow {FlowType} with ID {FlowId}",
-                typeof(TFlow).Name, flowId);
+                typeof(TFlow).Name, flow.Id);
 
             try
             {
                 var result = await _executor.ExecuteAsync(flow, cancellationToken);
 
                 _logger.LogInformation("Flow {FlowId} completed with status {Status}",
-                    flowId, result.Status);
+                    flow.Id, result.Status);
 
                 return result;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Flow {FlowId} failed with error", flowId);
+                _logger.LogError(ex, "Flow {FlowId} failed with error", flow.Id);
                 throw;
             }
         }
 
-        public async Task<FlowResult<FlowDefinition>> ResumeRuntimeAsync(
+        public async Task<FlowExecutionResult> ResumeRuntimeAsync(
             Guid flowId,
             CancellationToken cancellationToken = default)
         {
@@ -309,83 +184,17 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
 
             _logger.LogInformation("Resuming flow {FlowId} from step {CurrentStep}",
-                flowId, flow.CurrentStepName);
+                flowId, flow.State.CurrentStepName);
 
             return await _executor.ExecuteAsync(flow, cancellationToken);
         }
 
-        /// <summary>
-        /// Copy flow state from persisted instance to fresh DI instance
-        /// </summary>
-        private void CopyFlowState<TFlow>(FlowDocument source, TFlow target) where TFlow : FlowDefinition
-        {
-            target.FlowId = source.FlowId;
-            target.UserId = source.UserId;
-            target.CorrelationId = source.CorrelationId;
-            target.CreatedAt = source.CreatedAt;
-            target.StartedAt = source.StartedAt;
-            target.CompletedAt = source.CompletedAt;
-            target.Status = source.Status;
-            target.CurrentStepName = source.CurrentStepName;
-            target.CurrentStepIndex = source.CurrentStepIndex;
-            target.Data = source.Data ?? [];
-            target.Events = source.Events ?? new List<FlowEvent>();
-            target.LastError = source.LastError;
-
-            // Copy pause/resume state
-            target.PausedAt = source.PausedAt;
-            target.PauseReason = source.PauseReason;
-            target.PauseMessage = source.PauseMessage;
-            target.PauseData = source.PauseData ?? [];
-
-            // Fix for CS0272: Use the collection initializer to populate the Steps property
-            if (source.Steps != null)
-            {
-                foreach (var step in source.Steps)
-                {
-                    var tagetStep = target.Steps.Find(s => s.Name == step.Name);
-                    if (tagetStep == null) throw new FlowExecutionException("Failed to copy step state. Flow step not found.");
-
-                    tagetStep.Status = step.Status;
-                    if (step.Result != null) tagetStep.Result = step.Result;
-
-                    if (step.Branches != null && step.Branches.Count > 0)
-                    {
-
-                        for (var i = 0; i < step.Branches.Count; i++)
-                        {
-                            var branch = step.Branches[i];
-
-                            if (tagetStep.DynamicBranching != null) // Step has dynamic branching configured. So branches can only be added at runtime. If step is already completed, restored flows will lack dynamic branch steps. Must be manually added.
-                            {
-                                // Dynamic branching - add new branch
-                                tagetStep.Branches.Add(branch);
-                            }
-
-                            var targetBranch = tagetStep.Branches.ElementAt(i) ??
-                                throw new FlowExecutionException("Failed to copy branch step state. Branch step not found.");
-
-                            foreach (var branchStep in branch.Steps)
-                            {
-                                var targetBranchStep = targetBranch.Steps.Find(s => s.Name == branchStep.Name) ??
-                                    throw new FlowExecutionException("Failed to copy branch step state. Branch step not found.");
-
-                                targetBranchStep.Status = branchStep.Status;
-
-                                if (branchStep.Result != null) targetBranchStep.Result = branchStep.Result;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        public async Task FireAsync<TFlow>(
+        public Task FireAsync<TFlow>(
             Dictionary<string, object>? initialData = null,
-            string userId = null)
+            string? userId = null)
             where TFlow : FlowDefinition
         {
-            _ = Task.Run(async () =>
+            return Task.Run(async () =>
             {
                 try
                 {
@@ -398,28 +207,14 @@ namespace Infrastructure.Services.FlowEngine.Engine
             });
         }
 
-        public async Task<FlowResult<TTriggered>> TriggerAsync<TTriggered>(
-            FlowContext context,
-            Dictionary<string, object>? triggerData = null)
-            where TTriggered : FlowDefinition
-        {
-            var correlationId = $"{context.Flow.CorrelationId}:triggered:{typeof(TTriggered).Name}";
-
-            return await StartAsync<TTriggered>(
-                triggerData,
-                context.Flow.UserId,
-                correlationId,
-                context.CancellationToken);
-        }
-
         public FlowStatus? GetStatus(Guid flowId)
         {
-            return _runtimeStore.Flows.Values.FirstOrDefault(f => f.FlowId == flowId)?.Status;
+            return _runtimeStore.Flows.Values.FirstOrDefault(f => f.Id == flowId)?.Status;
         }
 
         public async Task<bool> CancelAsync(Guid flowId, string reason = null)
         {
-            return await _persistence.CancelFlowAsync(flowId, reason);
+            throw new NotImplementedException();
         }
 
         public async Task<FlowTimeline> GetTimelineAsync(Guid flowId)
@@ -453,26 +248,15 @@ namespace Infrastructure.Services.FlowEngine.Engine
         public async Task<bool> ResumeByEventAsync(Guid flowId, string eventType, object eventData = null)
         {
             _logger.LogInformation("Event-based resume for flow {FlowId} triggered by {EventType}", flowId, eventType);
-            return await _persistence.ResumeFlowAsync(flowId, ResumeReason.Event, $"system", $"Event: {eventType}");
+            throw new NotImplementedException("Event-based resume not implemented yet");
         }
 
-        public async Task<PagedResult<FlowSummary>> GetPausedFlowSummariesAsync(FlowQuery query = null)
-        {
-            query ??= new FlowQuery();
-            query.Status = FlowStatus.Paused;
-            return await _persistence.QueryFlowsAsync(query);
-        }
-
-        public List<FlowDefinition> GetPausedFlowsAsync()
+        public List<Flow> GetPausedFlowsAsync()
         {
             var pausedFlows = _runtimeStore.Flows.Values.Where(f => f.Status == FlowStatus.Paused).ToList();
             return pausedFlows;
         }
 
-        public async Task<bool> SetResumeConditionAsync(Guid flowId, ResumeCondition condition)
-        {
-            return await _persistence.SetResumeConditionAsync(flowId, condition);
-        }
 
         public async Task PublishEventAsync(string eventType, object eventData, string correlationId = null)
         {

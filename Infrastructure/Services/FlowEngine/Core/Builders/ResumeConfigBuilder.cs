@@ -1,7 +1,7 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
 
-namespace Infrastructure.Services.FlowEngine.Definition.Builders
+namespace Infrastructure.Services.FlowEngine.Core.Builders
 {
     /// <summary>
     /// Builder for configuring resume conditions and triggers
@@ -41,7 +41,7 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// <summary>
         /// Resume when condition becomes true (checked periodically)
         /// </summary>
-        public ResumeConfigBuilder WhenCondition(Func<FlowContext, Task<bool>> condition, TimeSpan? checkInterval = null)
+        public ResumeConfigBuilder WhenCondition(Func<FlowExecutionContext, Task<bool>> condition, TimeSpan? checkInterval = null)
         {
             _config.AutoResumeCondition = condition;
             _config.ConditionCheckInterval = checkInterval ?? TimeSpan.FromMinutes(5);
@@ -61,7 +61,7 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// <summary>
         /// Resume when external API call succeeds
         /// </summary>
-        public ResumeConfigBuilder OnApiSuccess(Func<FlowContext, Task<bool>> apiCheck, TimeSpan checkInterval)
+        public ResumeConfigBuilder OnApiSuccess(Func<FlowExecutionContext, Task<bool>> apiCheck, TimeSpan checkInterval)
         {
             _config.AutoResumeCondition = apiCheck;
             _config.ConditionCheckInterval = checkInterval;

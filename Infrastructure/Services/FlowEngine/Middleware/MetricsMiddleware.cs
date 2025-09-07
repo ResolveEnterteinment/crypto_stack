@@ -10,7 +10,7 @@ namespace Infrastructure.Services.FlowEngine.Middleware
 {
     public class MetricsMiddleware : IFlowMiddleware
     {
-        public async Task InvokeAsync(FlowContext context, Func<Task> next)
+        public async Task InvokeAsync(FlowExecutionContext context, Func<Task> next)
         {
             // Metrics collection implementation
             await next();

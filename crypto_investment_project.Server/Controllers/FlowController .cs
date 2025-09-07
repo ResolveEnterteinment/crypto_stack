@@ -3,7 +3,6 @@ using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Flow;
 using Infrastructure.Hubs;
-using Infrastructure.Services.Base;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
@@ -127,7 +126,7 @@ namespace Controllers
                         .ToActionResult(this);
                 }
 
-                var detailDto = MapToFlowDetailDto(flow);
+                var detailDto = MapToFlowDetailDto(flow.State);
                 return ResultWrapper.Success(detailDto)
                     .ToActionResult(this);
             }
@@ -209,10 +208,10 @@ namespace Controllers
                     return ResultWrapper.NotFound("Flow", flowId.ToString()).ToActionResult(this);
                 }
 
-                if (flow.Status != FlowStatus.Running)
+                if (flow.State.Status != FlowStatus.Running)
                 {
                     return ResultWrapper.Failure(FailureReason.InvalidOperation,
-                        $"Flow cannot be paused. Current status: {flow.Status}")
+                        $"Flow cannot be paused. Current status: {flow.State.Status}")
                         .ToActionResult(this);
                 }
 
@@ -220,7 +219,8 @@ namespace Controllers
                 var message = request?.Message ?? $"Manually paused by {User.Identity?.Name ?? "Admin"}";
 
                 var pauseCondition = PauseCondition.Pause(pauseReason, message);
-                await _flowExecutor.PauseFlowAsync(flow, pauseCondition);
+
+                await flow.PauseAsync(pauseCondition);
 
                 // Use notification service instead of direct hub context
                 await _notificationService.NotifyFlowStatusChanged(flow);
@@ -251,17 +251,20 @@ namespace Controllers
                     return ResultWrapper.NotFound("Flow", flowId.ToString()).ToActionResult(this);
                 }
 
-                if (flow.Status != FlowStatus.Paused)
+                if (flow.State.Status != FlowStatus.Paused)
                 {
                     return ResultWrapper.Failure(FailureReason.InvalidOperation, 
-                        $"Flow is not paused. Current status: {flow.Status}")
+                        $"Flow is not paused. Current status: {flow.State.Status}")
                         .ToActionResult(this);
                 }
 
                 var resumeData = request?.ResumeData ?? new Dictionary<string, object>();
-                var result = await _flowEngineService.ResumeRuntimeAsync(flowId);
 
-                if (result.Error == null && result.Flow.Status != FlowStatus.Paused)
+                flow.State.SetData(resumeData);
+
+                var result = await flow.ResumeAsync("Manual resume");
+
+                if (result.Error == null && result.Status != FlowStatus.Paused)
                 {
                     // Use notification service
                     await _notificationService.NotifyFlowStatusChanged(flow);
@@ -297,10 +300,10 @@ namespace Controllers
                     return ResultWrapper.NotFound("Flow", flowId.ToString()).ToActionResult(this);
                 }
 
-                if (flow.Status == FlowStatus.Completed || flow.Status == FlowStatus.Cancelled)
+                if (flow.State.Status == FlowStatus.Completed || flow.State.Status == FlowStatus.Cancelled)
                 {
                     return ResultWrapper.Failure(FailureReason.InvalidOperation, 
-                        $"Flow has already ended. Status: {flow.Status}")
+                        $"Flow has already ended. Status: {flow.State.Status}")
                         .ToActionResult(this);
                 }
 
@@ -343,17 +346,17 @@ namespace Controllers
                     return ResultWrapper.NotFound("Flow", flowId.ToString()).ToActionResult(this);
                 }
 
-                if (flow.Status != FlowStatus.Failed)
+                if (flow.State.Status != FlowStatus.Failed)
                 {
-                    return BadRequest(new { error = $"Flow is not failed. Current status: {flow.Status}" });
+                    return BadRequest(new { error = $"Flow is not failed. Current status: {flow.State.Status}" });
                 }
 
                 var resolution = request?.Resolution ?? "Manually resolved";
                 var resolvedBy = User.Identity?.Name ?? "Admin";
 
                 // Mark flow as resolved (you might want to add a Resolved status to your enum)
-                flow.Status = FlowStatus.Completed;
-                flow.Events.Add(new FlowEvent
+                flow.State.Status = FlowStatus.Resolved;
+                flow.State.Events.Add(new FlowEvent
                 {
                     FlowId = flowId,
                     EventType = "FlowResolved",
@@ -362,11 +365,11 @@ namespace Controllers
                     {
                         ["ResolvedBy"] = resolvedBy,
                         ["Resolution"] = resolution,
-                        ["OriginalError"] = flow.LastError?.Message ?? "Unknown"
+                        ["OriginalError"] = flow.State.LastError?.Message ?? "Unknown"
                     }.ToSafe()
                 });
 
-                await _flowPersistence.SaveFlowStateAsync(flow);
+                await flow.PersistAsync();
 
                 // Use notification service
                 await _notificationService.NotifyFlowStatusChanged(flow);
@@ -397,25 +400,25 @@ namespace Controllers
                     return ResultWrapper.NotFound("Flow", flowId.ToString()).ToActionResult(this);
                 }
 
-                if (!(flow.Status == FlowStatus.Paused || flow.Status == FlowStatus.Failed))
+                if (flow.State.Status != FlowStatus.Failed)
                 {
                     return ResultWrapper.Failure(FailureReason.InvalidOperation,
-                        $"Flow is not failed. Current status: {flow.Status}")
+                        $"Flow is not failed. Current status: {flow.State.Status}")
                         .ToActionResult(this);
                 }
 
                 // Reset the failed step and restart
-                var currentStep = flow.Steps[flow.CurrentStepIndex];
+                var currentStep = flow.Definition.Steps[flow.State.CurrentStepIndex];
                 currentStep.Status = StepStatus.Pending;
-                flow.Status = FlowStatus.Running;
-                flow.LastError = null;
+                flow.State.Status = FlowStatus.Running;
+                flow.State.LastError = null;
 
-                await _flowPersistence.SaveFlowStateAsync(flow);
+                await flow.PersistAsync();
 
                 // Re-execute the flow
                 var result = await _flowEngineService.ResumeRuntimeAsync(flowId);
 
-                if (result.Error == null && result.Flow.Status != FlowStatus.Paused)
+                if (result.Error == null && result.Status != FlowStatus.Paused)
                 {
                     // Use notification service
                     await _notificationService.NotifyFlowStatusChanged(flow);
@@ -432,145 +435,6 @@ namespace Controllers
                 _logger.LogError(ex, "Error retrying flow {FlowId}", flowId);
                 return ResultWrapper.InternalServerError().ToActionResult(this);
             }
-        }
-
-        #endregion
-
-        #region Batch Operations
-
-        /// <summary>
-        /// Perform batch operations on multiple flows
-        /// </summary>
-        [HttpPost("flows/batch/{operation}")]
-        [ProducesResponseType(typeof(BatchOperationResultDto), 200)]
-        [ProducesResponseType(400)]
-        public async Task<IActionResult> BatchOperation(
-            string operation,
-            [FromBody] BatchOperationRequestDto request)
-        {
-            if (request?.FlowIds == null || !request.FlowIds.Any())
-            {
-                return BadRequest(new { error = "No flow IDs provided" });
-            }
-
-            var validOperations = new[] { "pause", "resume", "cancel", "resolve" };
-            if (!validOperations.Contains(operation.ToLower()))
-            {
-                return BadRequest(new { error = $"Invalid operation. Valid operations: {string.Join(", ", validOperations)}" });
-            }
-
-            var result = new BatchOperationResultDto
-            {
-                Operation = operation,
-                TotalFlows = request.FlowIds.Count,
-                SuccessCount = 0,
-                FailureCount = 0,
-                Results = new List<BatchOperationItemResult>()
-            };
-
-            foreach (var flowId in request.FlowIds)
-            {
-                try
-                {
-                    bool success = false;
-                    string message = "";
-
-                    var flow = await _flowEngineService.GetFlowById(flowId);
-
-                    if (flow == null)
-                    {
-                        success = false;
-                        message = "Flow not found";
-
-                        result.Results.Add(new BatchOperationItemResult
-                        {
-                            FlowId = flowId,
-                            Success = success,
-                            Message = message
-                        });
-
-                        continue;
-                    }
-
-                    switch (operation.ToLower())
-                    {
-                        case "pause":
-                            var pauseResult = await _flowExecutor.PauseFlowAsync(flow, new PauseCondition
-                            {
-                                Reason = PauseReason.ManualIntervention,
-                                Message = "Batch pause operation"
-                            });
-                            success = pauseResult.Error == null && pauseResult.Flow.Status == FlowStatus.Paused;
-                            message = success ? "Paused successfully" : "Failed to pause";
-                            break;
-
-                        case "resume":
-                            var resumeResult = await _flowEngineService.ResumeRuntimeAsync(flowId);
-
-                            if (resumeResult == null)
-                            {
-                                success = false;
-                                message = "Resume result returned null";
-                                break;
-                            }
-                            success = resumeResult.Error == null && resumeResult.Flow.Status != FlowStatus.Paused;
-                            message = resumeResult.Message;
-                            break;
-
-                        case "cancel":
-                            success = await _flowEngineService.CancelAsync(flowId, "Batch cancel operation");
-                            message = success ? "Cancelled successfully" : "Failed to cancel";
-                            break;
-
-                        case "resolve":
-                            if (flow != null && flow.Status == FlowStatus.Failed)
-                            {
-                                flow.Status = FlowStatus.Completed;
-                                await _flowPersistence.SaveFlowStateAsync(flow);
-                                success = true;
-                                message = "Resolved successfully";
-                            }
-                            else
-                            {
-                                message = "Flow not in failed state";
-                            }
-                            break;
-                    }
-
-                    if (success)
-                    {
-                        result.SuccessCount++;
-                    }
-                    else
-                    {
-                        result.FailureCount++;
-                    }
-
-                    result.Results.Add(new BatchOperationItemResult
-                    {
-                        FlowId = flowId,
-                        Success = success,
-                        Message = message
-                    });
-                }
-                catch (Exception ex)
-                {
-                    result.FailureCount++;
-                    result.Results.Add(new BatchOperationItemResult
-                    {
-                        FlowId = flowId,
-                        Success = false,
-                        Message = ex.Message
-                    });
-
-                    _logger.LogError(ex, "Error during batch {Operation} for flow {FlowId}", operation, flowId);
-                }
-            }
-
-            // Notify clients of batch operation completion
-            await _hubContext.Clients.All.SendAsync("BatchOperationCompleted", result);
-
-            return Ok(result);
         }
 
         #endregion
@@ -654,7 +518,7 @@ namespace Controllers
             };
         }
 
-        private FlowDetailDto MapToFlowDetailDto(FlowDefinition flow)
+        private FlowDetailDto MapToFlowDetailDto(FlowState flow)
         {
             var dto = new FlowDetailDto
             {
@@ -677,7 +541,7 @@ namespace Controllers
                     Name = step.Name,
                     Status = step.Status.ToString(),
                     StepDependencies = step.StepDependencies,
-                    DataDependencies = step.DataDependencies?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Name),
+                    DataDependencies = step.DataDependencies,
                     MaxRetries = step.MaxRetries,
                     RetryDelay = step.RetryDelay.ToString(),
                     Timeout = step.Timeout?.ToString(),

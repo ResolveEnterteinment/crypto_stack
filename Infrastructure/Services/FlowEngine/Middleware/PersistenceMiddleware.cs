@@ -10,7 +10,7 @@ namespace Infrastructure.Services.FlowEngine.Middleware
 {
     public class PersistenceMiddleware : IFlowMiddleware
     {
-        public async Task InvokeAsync(FlowContext context, Func<Task> next)
+        public async Task InvokeAsync(FlowExecutionContext context, Func<Task> next)
         {
             // Persistence implementation
             await next();

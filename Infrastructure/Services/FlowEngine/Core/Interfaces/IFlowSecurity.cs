@@ -1,4 +1,4 @@
-﻿using Infrastructure.Services.FlowEngine.Core.Models;
+﻿using Infrastructure.Services.FlowEngine.Engine;
 
 namespace Infrastructure.Services.FlowEngine.Core.Interfaces
 {
@@ -28,7 +28,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Interfaces
         /// </summary>
         /// <param name="flow">The flow to validate</param>
         /// <returns>Security validation result</returns>
-        Task<SecurityValidationResult> ValidateFlowSecurityAsync(FlowDefinition flow);
+        Task<SecurityValidationResult> ValidateFlowSecurityAsync(Flow flow);
 
         /// <summary>
         /// Encrypts sensitive flow data if encryption is enabled

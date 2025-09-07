@@ -2,8 +2,9 @@
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
+using Infrastructure.Services.FlowEngine.Engine;
 
-namespace Infrastructure.Services.FlowEngine.Definition.Builders
+namespace Infrastructure.Services.FlowEngine.Core.Builders
 {
     /// <summary>
     /// Fluent builder for flow steps
@@ -28,7 +29,7 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// <summary>
         /// Define the step execution logic
         /// </summary>
-        public StepBuilder<TStep> Execute(Func<FlowContext, Task<StepResult>> execution)
+        public StepBuilder<TStep> Execute(Func<FlowExecutionContext, Task<StepResult>> execution)
         {
             _step.ExecuteAsync = execution;
             return this;
@@ -37,7 +38,7 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// <summary>
         /// Add conditional logic
         /// </summary>
-        public StepBuilder<TStep> OnlyIf(Func<FlowContext, bool> condition)
+        public StepBuilder<TStep> OnlyIf(Func<FlowExecutionContext, bool> condition)
         {
             _step.Condition = condition;
             return this;
@@ -93,7 +94,7 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// Enable dynamic sub-branching based on runtime data
         /// </summary>
         public StepBuilder<TStep> WithDynamicBranches<TItem>(
-            Func<FlowContext, IEnumerable<TItem>> dataSelector,
+            Func<FlowExecutionContext, IEnumerable<TItem>> dataSelector,
             Func<TItem, int, FlowSubStep> stepFactory,
             ExecutionStrategy strategy = ExecutionStrategy.Parallel)
         {
@@ -168,7 +169,7 @@ namespace Infrastructure.Services.FlowEngine.Definition.Builders
         /// <summary>
         /// Configure pause behavior for this step
         /// </summary>
-        public StepBuilder<TStep> CanPause(Func<FlowContext, PauseCondition> pauseCondition)
+        public StepBuilder<TStep> CanPause(Func<FlowExecutionContext, PauseCondition> pauseCondition)
         {
             _step.PauseCondition = pauseCondition;
             return this;

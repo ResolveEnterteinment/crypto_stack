@@ -1,6 +1,7 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Models;
+using Infrastructure.Services.FlowEngine.Engine;
 
-namespace Infrastructure.Services.FlowEngine.Definition.Builders
+namespace Infrastructure.Services.FlowEngine.Core.Builders
 {
     /// <summary>
     /// Fluent builder for flow steps

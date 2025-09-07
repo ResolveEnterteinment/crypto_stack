@@ -1,4 +1,5 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Models;
+using Infrastructure.Services.FlowEngine.Engine;
 
 namespace Infrastructure.Services.FlowEngine.Core.Interfaces
 {
@@ -12,7 +13,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Interfaces
         /// </summary>
         /// <param name="flow">The flow to validate</param>
         /// <returns>Validation result</returns>
-        Task<FlowValidationResult> ValidateFlowAsync(FlowDefinition flow);
+        Task<FlowValidationResult> ValidateFlowAsync(Flow flow);
 
         /// <summary>
         /// Validates a specific step within a flow
@@ -20,7 +21,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Interfaces
         /// <param name="step">The step to validate</param>
         /// <param name="flow">The parent flow context</param>
         /// <returns>Validation result</returns>
-        Task<StepValidationResult> ValidateStepAsync(FlowStep step, FlowDefinition flow);
+        Task<StepValidationResult> ValidateStepAsync(FlowStep step, Flow flow);
 
         /// <summary>
         /// Validates flow data structure and content
@@ -35,7 +36,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Interfaces
         /// </summary>
         /// <param name="flow">The flow to validate dependencies for</param>
         /// <returns>Validation result</returns>
-        Task<DependencyValidationResult> ValidateDependenciesAsync(FlowDefinition flow);
+        Task<DependencyValidationResult> ValidateDependenciesAsync(Flow flow);
     }
 
     /// <summary>

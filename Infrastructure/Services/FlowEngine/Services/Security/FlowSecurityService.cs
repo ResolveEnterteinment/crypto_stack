@@ -1,5 +1,5 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Interfaces;
-using Infrastructure.Services.FlowEngine.Core.Models;
+using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.Extensions.Logging;
 using System.Security.Claims;
 using System.Text.Json;
@@ -104,16 +104,16 @@ namespace Infrastructure.Services.FlowEngine.Services.Security
             }
         }
 
-        public async Task<SecurityValidationResult> ValidateFlowSecurityAsync(FlowDefinition flow)
+        public async Task<SecurityValidationResult> ValidateFlowSecurityAsync(Flow flow)
         {
             var result = new SecurityValidationResult { IsValid = true };
 
             try
             {
                 // Validate flow data for security issues
-                if (flow.Data != null)
+                if (flow.State.Data != null)
                 {
-                    var dataJson = JsonSerializer.Serialize(flow.Data);
+                    var dataJson = JsonSerializer.Serialize(flow.State.Data);
 
                     // Check for SQL injection patterns
                     if (SqlInjectionPattern.IsMatch(dataJson))
@@ -128,7 +128,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Security
                     }
 
                     // Check for sensitive data
-                    var sensitiveFields = ExtractSensitiveFields(flow.Data);
+                    var sensitiveFields = ExtractSensitiveFields(flow.State.Data);
                     if (sensitiveFields.Any())
                     {
                         result.HasSensitiveData = true;
@@ -138,14 +138,14 @@ namespace Infrastructure.Services.FlowEngine.Services.Security
                 }
 
                 // Validate user context
-                if (string.IsNullOrEmpty(flow.UserId))
+                if (string.IsNullOrEmpty(flow.State.UserId))
                 {
                     result.SecurityErrors.Add("Flow must have a valid user context");
                     result.IsValid = false;
                 }
 
                 // Validate correlation ID for audit trail
-                if (string.IsNullOrEmpty(flow.CorrelationId))
+                if (string.IsNullOrEmpty(flow.State.CorrelationId))
                 {
                     result.SecurityWarnings.Add("Flow should have a correlation ID for audit purposes");
                 }
@@ -154,13 +154,13 @@ namespace Infrastructure.Services.FlowEngine.Services.Security
 
                 _logger.LogInformation(
                     "Security validation completed for flow {FlowId}. Valid: {IsValid}, Errors: {ErrorCount}, Warnings: {WarningCount}, HasSensitiveData: {HasSensitiveData}",
-                    flow.FlowId, result.IsValid, result.SecurityErrors.Count, result.SecurityWarnings.Count, result.HasSensitiveData);
+                    flow.State.FlowId, result.IsValid, result.SecurityErrors.Count, result.SecurityWarnings.Count, result.HasSensitiveData);
 
                 return result;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error during security validation for flow {FlowId}", flow.FlowId);
+                _logger.LogError(ex, "Error during security validation for flow {FlowId}", flow.State.FlowId);
                 result.SecurityErrors.Add($"Security validation error: {ex.Message}");
                 result.IsValid = false;
                 return result;

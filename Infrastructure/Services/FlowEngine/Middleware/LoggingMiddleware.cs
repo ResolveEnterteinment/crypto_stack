@@ -10,7 +10,7 @@ namespace Infrastructure.Services.FlowEngine.Middleware
 {
     public class LoggingMiddleware : IFlowMiddleware
     {
-        public async Task InvokeAsync(FlowContext context, Func<Task> next)
+        public async Task InvokeAsync(FlowExecutionContext context, Func<Task> next)
         {
             // Logging implementation
             await next();
