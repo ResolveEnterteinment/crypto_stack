@@ -285,7 +285,7 @@ namespace Infrastructure.Services.Withdrawal
                    }
 
                    // Get user info
-                   var userResult = await _userService.GetAsync(request.UserId);
+                   var userResult = await _userService.GetByIdAsync(request.UserId);
 
                    var exchangeRateResult = await _exchangeService.GetCachedAssetPriceAsync(request.Currency);
                    decimal exchangeRate = exchangeRateResult?.Data ?? 0;

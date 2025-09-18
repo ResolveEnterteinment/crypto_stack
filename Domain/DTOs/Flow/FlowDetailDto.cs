@@ -20,5 +20,6 @@
         public List<FlowEventDto> Events { get; set; } = [];
         public Dictionary<string, object> Data { get; set; } = [];
         public int TotalSteps { get; set; }
+        public TriggeredFlowDataDto? TriggeredBy { get; set; }
     }
 }

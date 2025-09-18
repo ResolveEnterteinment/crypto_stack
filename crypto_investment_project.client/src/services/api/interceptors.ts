@@ -179,9 +179,11 @@ export class InterceptorManager {
 
             const response = await axiosInstance.post('/v1/auth/refresh-token', null, {
                 headers: {
-                    'Authorization': `Bearer ${currentToken}`,
+                    //'Authorization': `Bearer ${currentToken}`,
                     'X-Skip-Auth': 'true' // Skip auth interceptor for this request
-                }
+                },
+                // ✅ ENSURE: Cookies are sent with request
+                withCredentials: true
             });
 
             if (response.data.success && response.data.accessToken) {

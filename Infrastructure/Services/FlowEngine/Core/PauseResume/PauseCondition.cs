@@ -1,4 +1,5 @@
 ﻿using Infrastructure.Services.FlowEngine.Core.Enums;
+using Infrastructure.Services.FlowEngine.Core.Models;
 
 namespace Infrastructure.Services.FlowEngine.Core.PauseResume
 {
@@ -9,17 +10,17 @@ namespace Infrastructure.Services.FlowEngine.Core.PauseResume
     {
         public PauseReason Reason { get; set; }
         public string Message { get; set; }
-        public Dictionary<string, object> Data { get; set; } = new();
+        public object? Data { get; set; } = new();
         public bool ShouldPause { get; set; }
         public ResumeConfig ResumeConfig { get; set; }
 
-        public static PauseCondition Pause(PauseReason reason, string message, Dictionary<string, object> data = null)
+        public static PauseCondition Pause(PauseReason reason, string message, object? data = null)
         {
             return new PauseCondition
             {
                 Reason = reason,
                 Message = message,
-                Data = data ?? new(),
+                Data = data,
                 ShouldPause = true
             };
         }

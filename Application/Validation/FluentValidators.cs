@@ -94,7 +94,7 @@ namespace Application.Validation
 
             RuleFor(x => x.Allocations)
                 .NotEmpty().WithMessage("At least one allocation is required")
-                .Must(allocations => allocations.Any()).WithMessage("At least one allocation is required");
+                .Must(allocations => allocations != null && allocations.Any()).WithMessage("At least one allocation is required");
 
             RuleForEach(x => x.Allocations).SetValidator(new AllocationValidator());
 

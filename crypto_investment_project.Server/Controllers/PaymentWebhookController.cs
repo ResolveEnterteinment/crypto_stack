@@ -59,6 +59,13 @@ namespace crypto_investment_project.Server.Controllers
                 // Verify webhook signature
                 string signature = Request.Headers["Stripe-Signature"];
 
+
+                if (string.IsNullOrEmpty(signature))
+                {
+                    await _logger.LogTraceAsync("Missing Stripe-Signature header", level: Domain.Constants.Logging.LogLevel.Error, requiresResolution: true);
+                    return BadRequest(new { error = "Missing signature header" });
+                }
+
                 var stripeEvent = EventUtility.ConstructEvent(
                     requestBody,
                     signature,
@@ -66,18 +73,12 @@ namespace crypto_investment_project.Server.Controllers
                     300 // 5 minutes clock skew tolerance
                 );
 
+                _logger.LogInformation($"Stripe event received: {stripeEvent.Type} (ID: {stripeEvent.Id})");
+
                 using var EventScope = _logger.EnrichScope(
                     ("EventId", stripeEvent.Id),
                     ("EventType", stripeEvent.Type)
                 );
-
-                _logger.LogInformation($"Stripe event received: {stripeEvent.Type} (ID: {stripeEvent.Id})");
-
-                if (string.IsNullOrEmpty(signature))
-                {
-                    await _logger.LogTraceAsync("Missing Stripe-Signature header", level: Domain.Constants.Logging.LogLevel.Error, requiresResolution: true);
-                    return BadRequest(new { error = "Missing signature header" });
-                }
 
                 // Idempotency check
                 var stripeEventId = stripeEvent.Id;

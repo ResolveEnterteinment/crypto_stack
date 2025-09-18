@@ -7,7 +7,7 @@ namespace Application.Interfaces
     public interface IUserService : IBaseService<UserData>
     {
         public Task<bool> CheckUserExists(Guid userId);
-        Task<UserData?> GetAsync(Guid id);
+        Task<UserData?> GetByIdAsync(Guid id);
         Task<UserData?> CreateAsync(UserData newUserData);
         Task UpdateAsync(Guid id, UserUpdateDTO updatedUserData);
         Task RemoveAsync(Guid id);

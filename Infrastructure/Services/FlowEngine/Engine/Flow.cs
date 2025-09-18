@@ -1,12 +1,10 @@
-﻿using Infrastructure.Services.Base;
-using Infrastructure.Services.FlowEngine.Core.Builders;
+﻿using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
 using Infrastructure.Utilities;
 using Microsoft.Extensions.DependencyInjection;
-using System;
 
 namespace Infrastructure.Services.FlowEngine.Engine
 {
@@ -18,11 +16,16 @@ namespace Infrastructure.Services.FlowEngine.Engine
         private readonly IServiceScopeFactory _serviceScopeFactory;
         private readonly SemaphoreSlim _executionLock = new(1, 1);
         private CancellationTokenSource? _cancellationTokenSource;
+        private CancellationToken? _externalCancellationToken;
+
+        // Service scope management
+        private IServiceScope? _currentScope;
+        private readonly object _serviceLock = new object();
 
         public Guid Id => State.FlowId;
         public FlowStatus Status => State.Status;
 
-        public CancellationToken CancellationToken => _cancellationTokenSource?.Token ?? CancellationToken.None;
+        public CancellationToken CancellationToken => _externalCancellationToken.HasValue ? _externalCancellationToken.Value : _cancellationTokenSource?.Token ?? CancellationToken.None;
 
         /// <summary>
         /// Flow definition containing steps, middleware, and configuration
@@ -41,9 +44,68 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
         public bool IsInitialized { get; private set; } = false;
 
-        private Flow(IServiceScopeFactory serviceScopeFactory)
+        private Flow(IServiceScopeFactory serviceScopeFactory, CancellationToken? cancellationToken = null)
         {
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
+            _externalCancellationToken = cancellationToken;
+        }
+
+        /// <summary>
+        /// Gets a service with automatic scope management and recreation
+        /// </summary>
+        /// <typeparam name="TService">The service type to retrieve</typeparam>
+        /// <returns>The requested service instance</returns>
+        public TService GetService<TService>() where TService : class
+        {
+            lock (_serviceLock)
+            {
+                EnsureValidScope();
+                return _currentScope!.ServiceProvider.GetRequiredService<TService>();
+            }
+        }
+
+        /// <summary>
+        /// Ensures we have a valid service scope, recreating if necessary
+        /// </summary>
+        private void EnsureValidScope()
+        {
+            if (_currentScope == null || IsScopeConsumed())
+            {
+                RecreateScope();
+            }
+        }
+
+        /// <summary>
+        /// Checks if the current service scope has been consumed/disposed
+        /// </summary>
+        private bool IsScopeConsumed()
+        {
+            if (_currentScope == null)
+                return true;
+
+            try
+            {
+                // Try to access the service provider - if disposed, this will throw
+                _ = _currentScope.ServiceProvider.GetService<IServiceScopeFactory>();
+                return false;
+            }
+            catch (ObjectDisposedException)
+            {
+                return true;
+            }
+            catch (InvalidOperationException)
+            {
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Recreates the service scope
+        /// </summary>
+        private void RecreateScope()
+        {
+            _currentScope?.Dispose();
+            _currentScope = _serviceScopeFactory.CreateScope();
         }
 
         /// <summary>
@@ -55,30 +117,16 @@ namespace Infrastructure.Services.FlowEngine.Engine
         }
 
         /// <summary>
-        /// Safely gets a required service using a fresh scope
-        /// </summary>
-        private T GetRequiredServiceSafe<T>() where T : class
-        {
-            using var scope = CreateServiceScope();
-            return scope.ServiceProvider.GetRequiredService<T>();
-        }
-
-        /// <summary>
-        /// Safely gets an optional service using a fresh scope
-        /// </summary>
-        private T GetServiceSafe<T>() where T : class
-        {
-            using var scope = CreateServiceScope();
-            return scope.ServiceProvider.GetService<T>();
-        }
-
-        /// <summary>
         /// Create a new flow instance from definition
         /// </summary>
-        public static Flow Create<TDefinition>(IServiceProvider serviceProvider, Dictionary<string, object>? initialData = null) where TDefinition : FlowDefinition
+        public static Flow Create<TDefinition>(
+            IServiceProvider serviceProvider, 
+            Dictionary<string, object>? initialData = null,
+            CancellationToken? cancellationToken = null
+            ) where TDefinition : FlowDefinition
         {
             var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
-            var flow = new Flow(scopeFactory);
+            var flow = new Flow(scopeFactory, cancellationToken);
 
             // Create fresh definition instance from DI using a new scope
             using var scope = scopeFactory.CreateScope();
@@ -88,7 +136,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             flow.State = new FlowState
             {
                 FlowId = Guid.NewGuid(),
-                FlowType = typeof(TDefinition).FullName!,
+                FlowType = flow.Definition.GetType().AssemblyQualifiedName,
                 Status = FlowStatus.Ready,
                 CreatedAt = DateTime.UtcNow,
                 Data = initialData?.ToSafe() ?? new Dictionary<string, SafeObject>(),
@@ -96,6 +144,8 @@ namespace Infrastructure.Services.FlowEngine.Engine
             };
 
             flow._cancellationTokenSource = new CancellationTokenSource();
+
+            flow._externalCancellationToken = cancellationToken;
 
             flow.Initialize();
 
@@ -106,10 +156,14 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Create a new flow instance from definition
         /// </summary>
-        public static Flow Create(IServiceProvider serviceProvider, Type definitionType, Dictionary<string, object>? initialData = null)
+        public static Flow Create(
+            IServiceProvider serviceProvider, 
+            Type definitionType, 
+            Dictionary<string, object>? initialData = null,
+            CancellationToken? cancellationToken = null)
         {
             var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
-            var flow = new Flow(scopeFactory);
+            var flow = new Flow(scopeFactory, cancellationToken);
 
             // Create fresh definition instance from DI using a new scope
             using var scope = scopeFactory.CreateScope();
@@ -139,7 +193,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             flow.State = new FlowState
             {
                 FlowId = Guid.NewGuid(),
-                FlowType = definitionType.FullName!,
+                FlowType = definitionType.AssemblyQualifiedName!,
                 Status = FlowStatus.Ready,
                 CreatedAt = DateTime.UtcNow,
                 Data = initialData?.ToSafe() ?? [],
@@ -147,6 +201,8 @@ namespace Infrastructure.Services.FlowEngine.Engine
             };
 
             flow._cancellationTokenSource = new CancellationTokenSource();
+
+            flow._externalCancellationToken = cancellationToken;
 
             flow.Initialize();
 
@@ -185,7 +241,8 @@ namespace Infrastructure.Services.FlowEngine.Engine
             if (flowDefinition == null)
                 throw new InvalidOperationException($"Could not create instance of flow type: {flowState.FlowType}");
 
-            var flow = new Flow(scopeFactory);
+            // Create flow with no initial cancellation token - will be set up later during restoration
+            var flow = new Flow(scopeFactory, CancellationToken.None);
 
             flow.Definition = flowDefinition;
             flow.State = flowState;
@@ -204,14 +261,11 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     var tempContext = new FlowExecutionContext
                     {
                         Flow = flow,
-                        State = flow.State,
-                        Definition = flow.Definition,
                         CurrentStep = pauseStep,
                         Services = contextScope.ServiceProvider,
-                        CancellationToken = flow.CancellationToken
                     };
 
-                    var pauseCondition = pauseStep.PauseCondition(tempContext);
+                    var pauseCondition = await pauseStep.PauseCondition(tempContext);
                     flow.Definition.ActiveResumeConfig = pauseCondition.ResumeConfig ?? pauseStep.ResumeConfig;
                 }
             }
@@ -225,9 +279,9 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <typeparam name="TDefinition">The flow definition type</typeparam>
         /// <param name="serviceProvider">Service provider for dependency injection</param>
         /// <returns>A FlowBuilder instance for chainable configuration</returns>
-        public static FlowBuilder Builder(IServiceProvider serviceProvider)
+        public static FlowBuilder Builder(IServiceProvider serviceProvider, CancellationToken? cancellationToken = null)
         {
-            return new FlowBuilder(serviceProvider);
+            return new FlowBuilder(serviceProvider, cancellationToken);
         }
 
         /// <summary>
@@ -248,7 +302,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
             else
             { // New flow, initialize step states
-
                 State.Steps = Definition.Steps.Select(s => new StepState(s)).ToList();
                 State.Status = FlowStatus.Ready;
             }
@@ -256,10 +309,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             Context = new FlowExecutionContext
             {
                 Flow = this,
-                State = State,
-                Definition = Definition,
                 CurrentStep = Definition.Steps[State.CurrentStepIndex],
-                CancellationToken = CancellationToken,
                 Services = null // Will be set when needed via RefreshServiceContext
             };
 
@@ -267,32 +317,27 @@ namespace Infrastructure.Services.FlowEngine.Engine
         }
 
         /// <summary>
-        /// Set initial data for the flow
-        /// </summary>
-        public void SetInitialData(Dictionary<string, object> data)
-        {
-            State.Data = data.ToSafe();
-        }
-
-        /// <summary>
         /// Execute the flow with a fresh service scope
         /// </summary>
-        public async Task<FlowExecutionResult> ExecuteAsync(CancellationToken cancellationToken = default)
+        public async Task<FlowExecutionResult> ExecuteAsync()
         {
-            await _executionLock.WaitAsync(cancellationToken);
+            await _executionLock.WaitAsync(CancellationToken);
             try
             {
                 // Create a fresh scope for execution to ensure we have valid services
-                using var scope = CreateServiceScope();
-                var executor = scope.ServiceProvider.GetRequiredService<IFlowExecutor>();
+                var executor = GetService<IFlowExecutor>();
 
-                // Update the context with the fresh service provider for this execution
+                // Update the context with the current service provider
                 if (Context != null)
                 {
-                    Context.Services = scope.ServiceProvider;
+                    lock (_serviceLock)
+                    {
+                        EnsureValidScope();
+                        Context.Services = _currentScope!.ServiceProvider;
+                    }
                 }
 
-                return await executor.ExecuteAsync(this, cancellationToken);
+                return await executor.ExecuteAsync(this, CancellationToken);
             }
             finally
             {
@@ -300,20 +345,25 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
         }
 
-        public async Task<FlowExecutionResult> ResumeAsync(string reason, CancellationToken cancellationToken = default)
+        public async Task<FlowExecutionResult> ResumeAsync(string reason)
         {
-            await _executionLock.WaitAsync(cancellationToken);
+            await _executionLock.WaitAsync(CancellationToken);
             try
             {
                 // Create a fresh scope for execution to ensure we have valid services
-                using var scope = CreateServiceScope();
-                var executor = scope.ServiceProvider.GetRequiredService<IFlowExecutor>();
-                // Update the context with the fresh service provider for this execution
+                var executor = GetService<IFlowExecutor>();
+
+                // Update the context with the current service provider
                 if (Context != null)
                 {
-                    Context.Services = scope.ServiceProvider;
+                    lock (_serviceLock)
+                    {
+                        EnsureValidScope();
+                        Context.Services = _currentScope!.ServiceProvider;
+                    }
                 }
-                return await executor.ResumePausedFlowAsync(this, reason, cancellationToken);
+
+                return await executor.ResumePausedFlowAsync(this, reason, CancellationToken);
             }
             finally
             {
@@ -321,20 +371,25 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
         }
 
-        public async Task<FlowExecutionResult> RetryAsync(string reason, CancellationToken cancellationToken = default)
+        public async Task<FlowExecutionResult> RetryAsync(string reason)
         {
-            await _executionLock.WaitAsync(cancellationToken);
+            await _executionLock.WaitAsync(CancellationToken);
             try
             {
                 // Create a fresh scope for execution to ensure we have valid services
-                using var scope = CreateServiceScope();
-                var executor = scope.ServiceProvider.GetRequiredService<IFlowExecutor>();
-                // Update the context with the fresh service provider for this execution
+                var executor = GetService<IFlowExecutor>();
+
+                // Update the context with the current service provider
                 if (Context != null)
                 {
-                    Context.Services = scope.ServiceProvider;
+                    lock (_serviceLock)
+                    {
+                        EnsureValidScope();
+                        Context.Services = _currentScope!.ServiceProvider;
+                    }
                 }
-                return await executor.RetryFailedFlowAsync(this, reason, cancellationToken);
+
+                return await executor.RetryFailedFlowAsync(this, reason, CancellationToken);
             }
             finally
             {
@@ -342,25 +397,57 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
         }
 
-        public async Task<FlowExecutionResult> PauseAsync(PauseCondition pauseCondition, CancellationToken cancellationToken = default)
+        public async Task<FlowExecutionResult> PauseAsync(PauseCondition pauseCondition)
         {
-            await _executionLock.WaitAsync(cancellationToken);
+            await _executionLock.WaitAsync(CancellationToken);
             try
             {
                 // Create a fresh scope for execution to ensure we have valid services
-                using var scope = CreateServiceScope();
-                var executor = scope.ServiceProvider.GetRequiredService<IFlowExecutor>();
-                // Update the context with the fresh service provider for this execution
+                var executor = GetService<IFlowExecutor>();
+
+                // Update the context with the current service provider
                 if (Context != null)
                 {
-                    Context.Services = scope.ServiceProvider;
+                    lock (_serviceLock)
+                    {
+                        EnsureValidScope();
+                        Context.Services = _currentScope!.ServiceProvider;
+                    }
                 }
+
                 var stepIndex = Context?.CurrentStep.Status == StepStatus.Pending ? State.CurrentStepIndex : State.CurrentStepIndex + 1;
-                var pasuseStep = Definition.Steps[stepIndex];
+                var pauseStep = Definition.Steps[stepIndex];
 
-                pasuseStep.PauseCondition = _ => pauseCondition;
+                // Fix: Ensure PauseCondition is an async function returning Task<PauseCondition>
+                pauseStep.PauseCondition = async _ => await Task.FromResult(pauseCondition);
 
                 return FlowExecutionResult.Paused(Id, "Flow paused successfully.");
+            }
+            finally
+            {
+                _executionLock.Release();
+            }
+        }
+
+        public async Task<FlowExecutionResult> CancelAsync(string reason)
+        {
+            await _executionLock.WaitAsync(CancellationToken);
+            try
+            {
+                // Create a fresh scope for execution to ensure we have valid services
+                var executor = GetService<IFlowExecutor>();
+
+                // Update the context with the current service provider
+                if (Context != null)
+                {
+                    lock (_serviceLock)
+                    {
+                        EnsureValidScope();
+                        Context.Services = _currentScope!.ServiceProvider;
+                    }
+                }
+
+                return executor.CancelFlowAsync(this, reason, CancellationToken).Result;
             }
             finally
             {
@@ -375,9 +462,18 @@ namespace Infrastructure.Services.FlowEngine.Engine
         {
             State.Steps = Definition.Steps.Select(s => new StepState(s)).ToList();
 
+            // Only persist if the state is dirty
+            if (!State.IsDirty)
+            {
+                return; // No changes to persist
+            }
+
             using var scope = CreateServiceScope();
             var persistence = scope.ServiceProvider.GetRequiredService<IFlowPersistence>();
             await persistence.SaveFlowStateAsync(State);
+
+            // Mark State as clean after successful persistence
+            State.MarkClean();
         }
 
         /// <summary>
@@ -391,24 +487,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 using var scope = CreateServiceScope();
                 Context.Services = scope.ServiceProvider;
             }
-        }
-
-        /// <summary>
-        /// Executes an action with a fresh service scope
-        /// </summary>
-        public async Task<T> WithFreshServices<T>(Func<IServiceProvider, Task<T>> action)
-        {
-            using var scope = CreateServiceScope();
-            return await action(scope.ServiceProvider);
-        }
-
-        /// <summary>
-        /// Executes an action with a fresh service scope (void return)
-        /// </summary>
-        public async Task WithFreshServices(Func<IServiceProvider, Task> action)
-        {
-            using var scope = CreateServiceScope();
-            await action(scope.ServiceProvider);
         }
 
         private void RestoreStepStatesAsync()
@@ -434,6 +512,45 @@ namespace Infrastructure.Services.FlowEngine.Engine
         {
             _executionLock?.Dispose();
             _cancellationTokenSource?.Dispose();
+
+            // Dispose the current scope
+            lock (_serviceLock)
+            {
+                _currentScope?.Dispose();
+                _currentScope = null;
+            }
+        }
+
+        public void LinkToParentCancellation(CancellationToken parentToken)
+        {
+            // Dispose existing token source if any
+            _cancellationTokenSource?.Dispose();
+
+            // Create a new linked token source
+            _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(parentToken);
+
+            // Update external token reference
+            _externalCancellationToken = _cancellationTokenSource.Token;
+        }
+
+        // Update the existing InitializeCancellationTokenSource method
+        internal void InitializeCancellationTokenSource(CancellationToken cancellationToken)
+        {
+            // Dispose existing token source if any
+            _cancellationTokenSource?.Dispose();
+
+            if (cancellationToken == CancellationToken.None)
+            {
+                // Create independent cancellation token source
+                _cancellationTokenSource = new CancellationTokenSource();
+                _externalCancellationToken = _cancellationTokenSource.Token;
+            }
+            else
+            {
+                // Link to provided cancellation token
+                _cancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                _externalCancellationToken = _cancellationTokenSource.Token;
+            }
         }
     }
 }

@@ -67,7 +67,7 @@ namespace crypto_investment_project.Server.Middleware
                 // Skip for admin users (but still log the access)
                 if (context.User.IsInRole("ADMIN"))
                 {
-                    await LogAdminAccess(context);
+                    LogAdminAccess(context);
                     await _next(context);
                     return;
                 }
@@ -119,7 +119,7 @@ namespace crypto_investment_project.Server.Middleware
                 }
 
                 // Log successful KYC verification
-                await LogKycSuccess(context, userId.Value, requirement);
+                LogKycSuccess(context, userId.Value, requirement);
 
                 // Continue with the request
                 await _next(context);
@@ -141,7 +141,7 @@ namespace crypto_investment_project.Server.Middleware
             {
                 // Check cache first
                 var cacheKey = $"kyc_verification_{userId}_{requirement.Level}";
-                if (_cache.TryGetValue(cacheKey, out KycVerificationResult cachedResult))
+                if (_cache.TryGetValue(cacheKey, out KycVerificationResult? cachedResult) && cachedResult != null)
                 {
                     return cachedResult;
                 }
@@ -250,62 +250,131 @@ namespace crypto_investment_project.Server.Middleware
         {
             try
             {
-                // Read request body to get withdrawal amount
+                // Check if request was aborted/cancelled
+                if (context.RequestAborted.IsCancellationRequested)
+                {
+                    _logger.LogWarning("Request was cancelled during withdrawal limits check for user {UserId}", userId);
+                    return false;
+                }
+
+                // Only perform limit checks for withdrawal requests with bodies
+                if (context.Request.ContentLength == 0 || context.Request.ContentLength == null)
+                {
+                    _logger.LogDebug("No request body found for withdrawal limits check for user {UserId}", userId);
+                    return true; // Allow if no body to check
+                }
+
+                // Read request body to get withdrawal amount with proper error handling
                 context.Request.EnableBuffering();
-                var body = await ReadRequestBody(context.Request);
+
+                string body;
+                try
+                {
+                    body = await ReadRequestBodySafely(context.Request, context.RequestAborted);
+                }
+                catch (IOException ex) when (ex.Message.Contains("client reset") || ex.Message.Contains("request stream"))
+                {
+                    _logger.LogWarning("Client disconnected during request body read for user {UserId}: {Error}", userId, ex.Message);
+                    return false; // Deny access if we can't read the request
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogWarning("Request was cancelled during body read for user {UserId}", userId);
+                    return false;
+                }
 
                 if (string.IsNullOrEmpty(body))
                 {
-                    throw new ArgumentException("Invalid request body format.");
+                    _logger.LogDebug("Empty request body for withdrawal limits check for user {UserId}", userId);
+                    return true; // Allow if empty body
                 }
-                
+
                 var options = new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true,
                     PropertyNamingPolicy = JsonNamingPolicy.CamelCase
                 };
 
-                var withdrawalRequest = JsonSerializer.Deserialize<CryptoWithdrawalRequest>(body, options);
-                if (!(withdrawalRequest?.Amount > 0m))
+                CryptoWithdrawalRequest? withdrawalRequest;
+                try
                 {
-                    throw new ArgumentException("Invalid withdrawal amount");
+                    withdrawalRequest = JsonSerializer.Deserialize<CryptoWithdrawalRequest>(body, options);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning("Invalid JSON in withdrawal request for user {UserId}: {Error}", userId, ex.Message);
+                    return true; // Allow if we can't parse - let the controller handle validation
                 }
 
-                if (string.IsNullOrEmpty(withdrawalRequest?.Currency))
+                if (withdrawalRequest == null)
                 {
-                    throw new ArgumentException("Withdrawal currency is required");
+                    _logger.LogDebug("Could not deserialize withdrawal request for user {UserId}", userId);
+                    return true; // Allow if we can't deserialize - let the controller handle validation
+                }
+
+                // Only check limits if we have valid amount and currency
+                if (withdrawalRequest.Amount <= 0m || string.IsNullOrEmpty(withdrawalRequest.Currency))
+                {
+                    _logger.LogDebug("Invalid withdrawal amount or currency for user {UserId}", userId);
+                    return true; // Allow - let the controller handle validation
                 }
 
                 var canUserWithdrawResult = await withdrawalService.CanUserWithdrawAsync(userId, withdrawalRequest.Amount, withdrawalRequest.Currency);
 
-                if(canUserWithdrawResult == null || !canUserWithdrawResult.IsSuccess || canUserWithdrawResult.Data == false)
+                if (canUserWithdrawResult == null || !canUserWithdrawResult.IsSuccess || canUserWithdrawResult.Data == false)
                 {
+                    _logger.LogInformation("Withdrawal limits exceeded for user {UserId}, amount {Amount} {Currency}",
+                        userId, withdrawalRequest.Amount, withdrawalRequest.Currency);
                     return false; // User cannot withdraw
                 }
 
                 return true; // Within limits
 
             }
+            catch (IOException ex) when (ex.Message.Contains("client reset") || ex.Message.Contains("request stream"))
+            {
+                _logger.LogWarning("Client disconnected during withdrawal limits check for user {UserId}: {Error}", userId, ex.Message);
+                return false; // Fail safe - deny on client disconnect
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Request was cancelled during withdrawal limits check for user {UserId}", userId);
+                return false; // Fail safe - deny on cancellation
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error checking withdrawal limits for user {userId}");
+                _logger.LogError(ex, "Error checking withdrawal limits for user {UserId}", userId);
                 return false; // Fail safe - deny on error
             }
         }
 
-        private async Task<string> ReadRequestBody(HttpRequest request)
+        private async Task<string> ReadRequestBodySafely(HttpRequest request, CancellationToken cancellationToken)
         {
-            request.Body.Position = 0;
-            using var reader = new StreamReader(request.Body, Encoding.UTF8, leaveOpen: true);
-            var body = await reader.ReadToEndAsync();
-            request.Body.Position = 0;
-            return body;
+            try
+            {
+                request.Body.Position = 0;
+                using var reader = new StreamReader(request.Body, Encoding.UTF8, leaveOpen: true);
+                var body = await reader.ReadToEndAsync().WaitAsync(cancellationToken);
+                request.Body.Position = 0;
+                return body;
+            }
+            catch (IOException ex) when (ex.Message.Contains("client reset") || ex.Message.Contains("request stream"))
+            {
+                _logger.LogDebug("Client reset the request stream during body read");
+                throw; // Re-throw for specific handling
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogDebug("Request was cancelled during body read");
+                throw; // Re-throw for specific handling
+            }
         }
 
         private KycRequirement? GetKycRequirement(PathString path)
         {
-            // Direct path match
-            if (_routeRequirements.TryGetValue(path.Value, out var requirement))
+            // Direct path match - handle null path value
+            var pathValue = path.Value ?? string.Empty;
+            if (_routeRequirements.TryGetValue(pathValue, out var requirement))
             {
                 return requirement;
             }
@@ -313,7 +382,7 @@ namespace crypto_investment_project.Server.Middleware
             // Pattern matching for parameterized routes
             foreach (var kvp in _routeRequirements)
             {
-                if (IsRouteMatch(path.Value, kvp.Key))
+                if (IsRouteMatch(pathValue, kvp.Key))
                 {
                     return kvp.Value;
                 }
@@ -390,7 +459,7 @@ namespace crypto_investment_project.Server.Middleware
             };
 
             await context.Response.WriteAsync(JsonSerializer.Serialize(response));
-            await LogKycFailure(context, result);
+            LogKycFailure(context, result);
         }
 
         private async Task WriteSessionRequiredResponse(HttpContext context)
@@ -443,7 +512,7 @@ namespace crypto_investment_project.Server.Middleware
             await context.Response.WriteAsync(JsonSerializer.Serialize(response));
         }
 
-        private async Task LogAdminAccess(HttpContext context)
+        private void LogAdminAccess(HttpContext context)
         {
             var userId = GetUserId(context);
             var logEntry = new SecurityLogEntry
@@ -461,7 +530,7 @@ namespace crypto_investment_project.Server.Middleware
                 userId, context.Request.Path, logEntry.IpAddress);
         }
 
-        private async Task LogKycSuccess(HttpContext context, Guid userId, KycRequirement requirement)
+        private void LogKycSuccess(HttpContext context, Guid userId, KycRequirement requirement)
         {
             var logEntry = new SecurityLogEntry
             {
@@ -479,7 +548,7 @@ namespace crypto_investment_project.Server.Middleware
                 userId, requirement.Level, context.Request.Path);
         }
 
-        private async Task LogKycFailure(HttpContext context, KycVerificationResult result)
+        private void LogKycFailure(HttpContext context, KycVerificationResult result)
         {
             var logEntry = new SecurityLogEntry
             {
@@ -498,7 +567,7 @@ namespace crypto_investment_project.Server.Middleware
         }
     }
 
-    // Supporting classes
+    // Supporting classes remain unchanged...
     public class KycRequirement
     {
         public string Level { get; set; } = string.Empty;
@@ -537,24 +606,22 @@ namespace crypto_investment_project.Server.Middleware
 }
 
 // Extension method for registering the middleware
-    public static class KycMiddlewareExtensions
+public static class KycMiddlewareExtensions
+{
+    public static IApplicationBuilder UseKycRequirement(this IApplicationBuilder builder)
     {
-        public static IApplicationBuilder UseKycRequirement(this IApplicationBuilder builder)
-        {
-            return builder.UseMiddleware<KycRequirementMiddleware>();
-        }
+        return builder.UseMiddleware<KycRequirementMiddleware>();
     }
-
+}
 
 // Configuration extension
-
-    public static class KycMiddlewareServiceExtensions
+public static class KycMiddlewareServiceExtensions
+{
+    public static IServiceCollection AddKycMiddleware(this IServiceCollection services, IConfiguration configuration)
     {
-        public static IServiceCollection AddKycMiddleware(this IServiceCollection services, IConfiguration configuration)
-        {
-            services.Configure<KycMiddlewareOptions>(
-                configuration.GetSection("KycMiddleware"));
+        services.Configure<KycMiddlewareOptions>(
+            configuration.GetSection("KycMiddleware"));
 
-            return services;
-        }
+        return services;
     }
+}

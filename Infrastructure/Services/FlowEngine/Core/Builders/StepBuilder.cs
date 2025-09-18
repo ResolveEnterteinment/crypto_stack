@@ -2,7 +2,6 @@
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
-using Infrastructure.Services.FlowEngine.Engine;
 
 namespace Infrastructure.Services.FlowEngine.Core.Builders
 {
@@ -23,6 +22,12 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
         public StepBuilder<TStep> RequiresData<TData>(string key)
         {
             _step.DataDependencies.Add(key, typeof(TData));
+            return this;
+        }
+
+        public StepBuilder<TStep> RequiresRole( params string[] roles)
+        {
+            _step.RequiredRoles.AddRange(roles);
             return this;
         }
 
@@ -95,14 +100,13 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
         /// </summary>
         public StepBuilder<TStep> WithDynamicBranches<TItem>(
             Func<FlowExecutionContext, IEnumerable<TItem>> dataSelector,
-            Func<TItem, int, FlowSubStep> stepFactory,
+            Func<FlowBranchBuilder, TItem, int, FlowBranch> stepFactory,
             ExecutionStrategy strategy = ExecutionStrategy.Parallel)
         {
-            var builder = new BranchStepBuilder(new FlowBranch());
             _step.DynamicBranching = new DynamicBranchingConfig
             {
                 DataSelector = ctx => dataSelector(ctx).Cast<object>(),
-                StepFactory = (item, index) => stepFactory((TItem)item, index),
+                BranchFactory = ((builder, item, index) => stepFactory(builder, (TItem)item, index)),
                 ExecutionStrategy = strategy
             };
             return this;
@@ -111,10 +115,10 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
         /// <summary>
         /// Enable static conditional sub-branching
         /// </summary>
-        public StepBuilder<TStep> WithBranches(Action<FlowBranchBuilder> configureBranches)
+        public StepBuilder<TStep> WithStaticBranches(Action<FlowBranchBuilder> stepFactory)
         {
             var branchBuilder = new FlowBranchBuilder(_step);
-            configureBranches(branchBuilder);
+            stepFactory(branchBuilder);
             return this;
         }
 
@@ -128,9 +132,9 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
         /// <summary>
         /// Trigger another flow upon completion
         /// </summary>
-        public StepBuilder<TStep> Triggers<TFlow>() where TFlow : FlowDefinition
+        public StepBuilder<TStep> Triggers<TFlow>(Func<FlowExecutionContext, Dictionary<string, object>>? initialDataFactory = null) where TFlow : FlowDefinition
         {
-            _step.TriggeredFlows.Add(typeof(TFlow));
+            _step.TriggeredFlows.Add(new TriggeredFlowData(typeof(TFlow).AssemblyQualifiedName, initialDataFactory));
             return this;
         }
 
@@ -150,9 +154,17 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
         /// <remarks>Idempotency is useful in scenarios where the step may be retried or executed multiple
         /// times,  such as in distributed systems or fault-tolerant workflows.</remarks>
         /// <returns>The current <see cref="FlowStepBuilder"/> instance, allowing for method chaining.</returns>
-        public StepBuilder<TStep> WithIdempotency()
+        public StepBuilder<TStep> WithIdempotency(string? key = null)
         {
             _step.IsIdempotent = true;
+            _step.IdempotencyKey = key;
+            return this;
+        }
+
+        public StepBuilder<TStep> WithIdempotency(Func<FlowExecutionContext, string> keyFactory)
+        {
+            _step.IsIdempotent = true;
+            _step.IdempotencyKeyFactory = keyFactory;
             return this;
         }
 
@@ -169,7 +181,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
         /// <summary>
         /// Configure pause behavior for this step
         /// </summary>
-        public StepBuilder<TStep> CanPause(Func<FlowExecutionContext, PauseCondition> pauseCondition)
+        public StepBuilder<TStep> CanPause(Func<FlowExecutionContext, Task<PauseCondition>> pauseCondition)
         {
             _step.PauseCondition = pauseCondition;
             return this;
@@ -190,9 +202,10 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
         /// <summary>
         /// Add step to flow and return flow for chaining
         /// </summary>
-        public void Build()
+        public TStep Build()
         {
             _steps.Add(_step);
+            return _step;
         }
     }
 }

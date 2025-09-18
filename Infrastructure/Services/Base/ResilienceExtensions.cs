@@ -5,7 +5,6 @@ using Polly;
 using Polly.CircuitBreaker;
 using Polly.Retry;
 using System.Net.Sockets;
-using System.Threading;
 using System.Threading.RateLimiting;
 
 namespace Infrastructure.Services.Base

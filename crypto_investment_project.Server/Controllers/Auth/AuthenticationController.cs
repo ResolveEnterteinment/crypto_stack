@@ -293,7 +293,7 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 var roles = await _userManager.GetRolesAsync(user);
 
                 // Get user data
-                var userData = await _userService.GetAsync(user.Id);
+                var userData = await _userService.GetByIdAsync(user.Id);
 
                 // Queue cache warmup - this is why you need singleton registration
                 cacheWarmup.QueueUserCacheWarmup(Guid.Parse(userId));
@@ -658,7 +658,7 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 string userEmail = User.FindFirstValue(ClaimTypes.Email);
 
                 // Clear refresh token cookie
-                Response.Cookies.Delete("refreshToken");
+                ClearRefreshTokenCookie();
 
                 await HttpContext.SignOutAsync();
 
@@ -690,6 +690,20 @@ namespace crypto_investment_project.Server.Controllers.Auth
             };
 
             Response.Cookies.Append("refreshToken", refreshToken, cookieOptions);
+        }
+
+        private void ClearRefreshTokenCookie()
+        {
+            var cookieOptions = new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Strict,
+                Path = "/api/v1/auth/refresh-token",
+                Expires = DateTime.UtcNow.AddDays(-1) // Expire immediately
+            };
+
+            Response.Cookies.Append("refreshToken", "", cookieOptions);
         }
 
         #endregion

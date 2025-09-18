@@ -1,11 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Application.Contracts.Responses.Payment
+﻿namespace Application.Contracts.Responses.Payment
 {
+    /// <summary>
+    /// Response model for payment cancellation requests
+    /// </summary>
     public class PaymentCancelResponse
     {
         public string PaymentId { get; set; } = string.Empty;

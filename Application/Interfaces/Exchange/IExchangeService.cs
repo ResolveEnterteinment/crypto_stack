@@ -20,6 +20,7 @@ namespace Application.Interfaces.Exchange
         /// Gets the default exchange to use when none is specified.
         /// </summary>
         IExchange DefaultExchange { get; }
+        decimal MIN_NOTIONAL_FALLBACK_AMOUNT { get; }
 
         Task<ResultWrapper<decimal>> GetCachedAssetPriceAsync(string ticker);
 

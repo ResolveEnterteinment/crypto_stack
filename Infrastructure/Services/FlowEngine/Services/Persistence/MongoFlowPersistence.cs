@@ -1,4 +1,6 @@
-﻿using Infrastructure.Services.FlowEngine.Configuration.Options;
+﻿using Domain.DTOs.Subscription;
+using Domain.Exceptions;
+using Infrastructure.Services.FlowEngine.Configuration.Options;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Exceptions;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
@@ -122,7 +124,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
             var summaries = flowStates.Select(state => new FlowSummary
             {
                 FlowId = state.FlowId,
-                FlowType = state.FlowType,
+                FlowType = Type.GetType(state.FlowType).Name,
                 Status = state.Status,
                 UserId = state.UserId,
                 CorrelationId = state.CorrelationId,
@@ -287,6 +289,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                             type == typeof(SafeObject) ||
                             type == typeof(List<SafeObject>) ||  // This allows List<SafeObject>
                             type == typeof(Dictionary<string, SafeObject>) ||
+                            type == typeof(EnhancedAllocationDto) ||
                             ObjectSerializer.DefaultAllowedTypes(type)
                     )
                 );
@@ -303,6 +306,22 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                     typeof(Dictionary<string, SafeObject>),
                     new DictionaryInterfaceImplementerSerializer<Dictionary<string, SafeObject>>(
                         DictionaryRepresentation.Document)
+                );
+            }
+            catch (BsonSerializationException)
+            {
+                // Already registered
+            }
+
+            // FIX: Register custom serializer for Dictionary<string, Type> to handle DataDependencies
+            try
+            {
+                BsonSerializer.RegisterSerializer(
+                    typeof(Dictionary<string, Type>),
+                    new DictionaryInterfaceImplementerSerializer<Dictionary<string, Type>>(
+                        DictionaryRepresentation.Document,
+                        new StringSerializer(),
+                        new TypeStringSerializer()) // Use custom type serializer
                 );
             }
             catch (BsonSerializationException)
@@ -328,6 +347,8 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
             RegisterExceptionType<NullReferenceException>();
             RegisterExceptionType<FlowExecutionException>();
             RegisterExceptionType<FlowNotFoundException>();
+            RegisterExceptionType<HttpRequestException>();
+            RegisterExceptionType<PaymentApiException>();
 
             // Register FlowContext class map
             if (!BsonClassMap.IsClassMapRegistered(typeof(FlowExecutionContext)))
@@ -352,6 +373,16 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                 });
             }
 
+            // Register TriggeredFlowData class map
+            if (!BsonClassMap.IsClassMapRegistered(typeof(TriggeredFlowData)))
+            {
+                BsonClassMap.RegisterClassMap<TriggeredFlowData>(cm =>
+                {
+                    cm.AutoMap();
+                    cm.SetIgnoreExtraElements(true);
+                });
+            }
+
             // Register FlowEvent class map
             if (!BsonClassMap.IsClassMapRegistered(typeof(FlowEvent)))
             {
@@ -362,6 +393,61 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                     cm.MapProperty(c => c.Data)
                       .SetDefaultValue(new Dictionary<string, SafeObject>())
                       .SetIgnoreIfDefault(false);
+                });
+            }
+
+            // Register EnhancedAllocationDto class map
+            if (!BsonClassMap.IsClassMapRegistered(typeof(EnhancedAllocationDto)))
+            {
+                BsonClassMap.RegisterClassMap<EnhancedAllocationDto>(cm =>
+                {
+                    cm.AutoMap();
+                    cm.SetIgnoreExtraElements(true);
+                });
+            }
+
+            // Register FlowStep class map with proper DataDependencies handling
+            if (!BsonClassMap.IsClassMapRegistered(typeof(FlowStep)))
+            {
+                BsonClassMap.RegisterClassMap<FlowStep>(cm =>
+                {
+                    cm.AutoMap();
+                    cm.SetIgnoreExtraElements(true);
+
+                    // Map DataDependencies with custom handling
+                    cm.MapProperty(c => c.DataDependencies)
+                      .SetDefaultValue(new Dictionary<string, Type>())
+                      .SetIgnoreIfDefault(false);
+                });
+            }
+
+            // Register FlowSubStep class map (inherits from FlowStep)
+            if (!BsonClassMap.IsClassMapRegistered(typeof(FlowSubStep)))
+            {
+                BsonClassMap.RegisterClassMap<FlowSubStep>(cm =>
+                {
+                    cm.AutoMap();
+                    cm.SetIgnoreExtraElements(true);
+                });
+            }
+
+            // Register FlowBranch class map
+            if (!BsonClassMap.IsClassMapRegistered(typeof(FlowBranch)))
+            {
+                BsonClassMap.RegisterClassMap<FlowBranch>(cm =>
+                {
+                    cm.AutoMap();
+                    cm.SetIgnoreExtraElements(true);
+                });
+            }
+
+            // Register StepState class map
+            if (!BsonClassMap.IsClassMapRegistered(typeof(StepState)))
+            {
+                BsonClassMap.RegisterClassMap<StepState>(cm =>
+                {
+                    cm.AutoMap();
+                    cm.SetIgnoreExtraElements(true);
                 });
             }
 
@@ -399,6 +485,103 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                         cm.UnmapProperty(e => e.Data);
                     }
                 });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Custom BSON serializer for Type objects that handles both string and document representations
+    /// </summary>
+    public class TypeStringSerializer : SerializerBase<Type>
+    {
+        public override Type Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+        {
+            var currentBsonType = context.Reader.GetCurrentBsonType();
+
+            switch (currentBsonType)
+            {
+                case BsonType.String:
+                    // Handle string representation (normal case)
+                    var typeString = context.Reader.ReadString();
+                    if (string.IsNullOrEmpty(typeString))
+                        return null;
+
+                    try
+                    {
+                        return Type.GetType(typeString);
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+
+                case BsonType.Document:
+                    // Handle document representation (complex serialization case)
+                    var document = BsonDocumentSerializer.Instance.Deserialize(context, args);
+
+                    // Try to extract type information from various possible fields
+                    if (document.Contains("_t"))
+                    {
+                        // MongoDB polymorphic type discriminator
+                        var typeName = document["_t"].AsString;
+                        try
+                        {
+                            return Type.GetType(typeName);
+                        }
+                        catch
+                        {
+                            return null;
+                        }
+                    }
+                    else if (document.Contains("AssemblyQualifiedName"))
+                    {
+                        var typeName = document["AssemblyQualifiedName"].AsString;
+                        try
+                        {
+                            return Type.GetType(typeName);
+                        }
+                        catch
+                        {
+                            return null;
+                        }
+                    }
+                    else if (document.Contains("FullName"))
+                    {
+                        var typeName = document["FullName"].AsString;
+                        try
+                        {
+                            return Type.GetType(typeName);
+                        }
+                        catch
+                        {
+                            return null;
+                        }
+                    }
+
+                    // Fallback: return null for unrecognized document structures
+                    return null;
+
+                case BsonType.Null:
+                    context.Reader.ReadNull();
+                    return null;
+
+                default:
+                    // Skip unknown BSON types
+                    context.Reader.SkipValue();
+                    return null;
+            }
+        }
+
+        public override void Serialize(BsonSerializationContext context, BsonSerializationArgs args, Type value)
+        {
+            if (value == null)
+            {
+                context.Writer.WriteNull();
+            }
+            else
+            {
+                // Store the AssemblyQualifiedName for full type resolution
+                context.Writer.WriteString(value.AssemblyQualifiedName ?? value.FullName ?? value.Name);
             }
         }
     }

@@ -1,4 +1,5 @@
 using Application.Contracts.Requests.Subscription;
+using Application.Contracts.Responses.Payment;
 using Application.Contracts.Responses.Subscription;
 using Application.Extensions;
 using Application.Interfaces;
@@ -6,8 +7,12 @@ using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
 using Domain.DTOs;
+using Domain.DTOs.Payment;
 using Domain.Models.Subscription;
 using FluentValidation;
+using Infrastructure.Flows.Subscription;
+using Infrastructure.Services.FlowEngine.Core.Interfaces;
+using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -28,7 +33,7 @@ namespace crypto_investment_project.Server.Controllers
         private readonly IValidator<SubscriptionUpdateRequest> _updateValidator;
         private readonly ILogger<SubscriptionController> _logger;
         private readonly IIdempotencyService _idempotencyService;
-        private readonly IUserService _userService;
+        private readonly IFlowEngineService _flowEngineService;
 
         public SubscriptionController(
             ISubscriptionService subscriptionService,
@@ -36,7 +41,7 @@ namespace crypto_investment_project.Server.Controllers
             IValidator<SubscriptionCreateRequest> createValidator,
             IValidator<SubscriptionUpdateRequest> updateValidator,
             IIdempotencyService idempotencyService,
-            IUserService userService,
+            IFlowEngineService flowEngineService,
             ILogger<SubscriptionController> logger)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
@@ -44,7 +49,7 @@ namespace crypto_investment_project.Server.Controllers
             _createValidator = createValidator ?? throw new ArgumentNullException(nameof(createValidator));
             _updateValidator = updateValidator ?? throw new ArgumentNullException(nameof(updateValidator));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
-            _userService = userService ?? throw new ArgumentNullException(nameof(userService));
+            _flowEngineService = flowEngineService ?? throw new ArgumentNullException(nameof(flowEngineService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -228,7 +233,7 @@ namespace crypto_investment_project.Server.Controllers
         /// <summary>
         /// Creates a new subscription
         /// </summary>
-        /// <param name="subscriptionRequest">The subscription details</param>
+        /// <param name="subscriptionCreateRequest">The subscription details</param>
         /// <param name="idempotencyKey">Unique key to prevent duplicate operations</param>
         /// <returns>The ID of the created subscription</returns>
         /// <response code="201">Returns the newly created subscription ID</response>
@@ -248,14 +253,16 @@ namespace crypto_investment_project.Server.Controllers
         [ProducesResponseType(StatusCodes.Status409Conflict)]
         [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
         public async Task<IActionResult> New(
-            [FromBody] SubscriptionCreateRequest subscriptionRequest,
-            [FromHeader(Name = "X-Idempotency-Key")] string idempotencyKey)
+            [FromBody] SubscriptionCreateRequest subscriptionCreateRequest,
+            [FromHeader(Name = "X-Idempotency-Key")] string idempotencyKey,
+            [FromServices] IServiceProvider serviceProvider)
         {
+            var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
             using (_logger.BeginScope(new Dictionary<string, object>
             {
-                ["UserId"] = subscriptionRequest?.UserId,
+                ["UserId"] = subscriptionCreateRequest?.UserId,
                 ["Operation"] = "CreateSubscription",
-                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                ["CorrelationId"] = correlationId,
                 ["IdempotencyKey"] = idempotencyKey
             }))
             {
@@ -288,14 +295,29 @@ namespace crypto_investment_project.Server.Controllers
                     var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
                     var isAdmin = User.IsInRole("ADMIN");
 
-                    if (!isAdmin && subscriptionRequest?.UserId != currentUserId)
+                    if (!isAdmin && subscriptionCreateRequest?.UserId != currentUserId)
                     {
                         _logger.LogWarning("Unauthorized attempt to create subscription for user {TargetUserId} by user {CurrentUserId}",
-                            subscriptionRequest?.UserId, currentUserId);
+                            subscriptionCreateRequest?.UserId, currentUserId);
                         return ResultWrapper.Unauthorized()
                             .ToActionResult(this);
                     }
 
+                    var flow = Flow.Builder(serviceProvider)
+                        .WithData(new Dictionary<string, object>
+                        {
+                            ["Request"] = subscriptionCreateRequest,
+                            ["IdempotencyKey"] = idempotencyKey,
+                            ["SuccessUrl"] = subscriptionCreateRequest.SuccessUrl,
+                            ["CancelUrl"] = subscriptionCreateRequest.CancelUrl,
+                        })
+                        .ForUser(currentUserId, User.Identity?.Name)
+                        .WithCorrelation(correlationId)
+                        .Build<SubscriptionCreationFlow>();
+
+                    var subscriptionCreateResult = await flow.ExecuteAsync();
+
+                    /*
                     // Validate request
                     var validationResult = await _createValidator.ValidateAsync(subscriptionRequest);
                     if (!validationResult.IsValid)
@@ -338,10 +360,35 @@ namespace crypto_investment_project.Server.Controllers
 
                     return ResultWrapper.Success(response, "Subscription created successfully")
                         .ToActionResult(this);
+                    */
+
+                    if (subscriptionCreateResult.Error != null)
+                    {
+                        throw subscriptionCreateResult.Error;
+                    }
+
+                    var subscriptionId = flow.State.GetData<Guid>("SubscriptionId");
+                    if (subscriptionId == null || subscriptionId == Guid.Empty)
+                    {
+                        throw new Exception("Subscription creation flow did not return a valid SubscriptionId");
+                    }
+
+                    var checkoutSession = subscriptionCreateResult.Data as SessionDto;
+
+                    var response = new CheckoutSessionResponse
+                    {
+                        CheckoutUrl = checkoutSession.Url,
+                        ClientSecret = checkoutSession.ClientSecret,
+                        SessionId = checkoutSession.Id
+                    };
+
+                    return ResultWrapper.Success(response, "Subscription created successfully")
+                        .ToActionResult(this);
+
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error creating subscription for user {UserId}", subscriptionRequest?.UserId);
+                    _logger.LogError(ex, "Error creating subscription for user {UserId}", subscriptionCreateRequest?.UserId);
                     return ResultWrapper.FromException(ex).ToActionResult(this);
                 }
             }

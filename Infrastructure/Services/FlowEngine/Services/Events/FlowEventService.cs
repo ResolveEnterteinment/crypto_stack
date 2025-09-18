@@ -1,5 +1,5 @@
-﻿using Infrastructure.Services.FlowEngine.Core.Interfaces;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Domain.Events.Payment;
+using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace Infrastructure.Services.FlowEngine.Services.Events
@@ -51,11 +51,11 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
             {
                 if (flow.Definition.ActiveResumeConfig != null && flow.Definition.ActiveResumeConfig.EventTriggers?.Count != 0)
                 {
-                    foreach (var trigger in flow.Definition.ActiveResumeConfig.EventTriggers)
+                    foreach (var trigger in flow.Definition.ActiveResumeConfig.EventTriggers!)
                     {
                         if (trigger.EventType == eventType)
                         {
-                            bool shouldResume = trigger.EventFilter?.Invoke(eventData) ?? true;
+                            bool shouldResume = trigger.EventFilter?.Invoke(flow.Context, eventData) ?? true;
 
                             if (shouldResume)
                             {
@@ -66,6 +66,11 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
                     }
                 }
             }
+        }
+
+        public async Task Handle(CheckoutSessionCompletedEvent notification, CancellationToken cancellationToken)
+        {
+            await PublishAsync("CheckoutSessionCompleted", notification.Session);
         }
     }
 }

@@ -1,5 +1,8 @@
-﻿using Infrastructure.Services.FlowEngine.Core.Interfaces;
+﻿using Application.Interfaces;
+using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Engine;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Security.Claims;
 using System.Text.Json;
@@ -13,14 +16,17 @@ namespace Infrastructure.Services.FlowEngine.Services.Security
     public class FlowSecurityService : IFlowSecurity
     {
         private readonly ILogger<FlowSecurityService> _logger;
+        private readonly IServiceScopeFactory _scopeFactory;
         private static readonly Regex SqlInjectionPattern = new(@"(\b(ALTER|CREATE|DELETE|DROP|EXEC(UTE)?|INSERT( +INTO)?|MERGE|SELECT|UPDATE|UNION( +ALL)?)\b)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex XssPattern = new(@"<[^>]*>|javascript:|vbscript:|onload|onerror|onclick",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-        public FlowSecurityService(ILogger<FlowSecurityService> logger)
+        public FlowSecurityService(ILogger<FlowSecurityService> logger,
+            IServiceScopeFactory scopeFactory)
         {
             _logger = logger;
+            _scopeFactory = scopeFactory;
         }
 
         public async Task<bool> ValidateUserAccessAsync(string userId, Type flowType)
@@ -207,6 +213,24 @@ namespace Infrastructure.Services.FlowEngine.Services.Security
             }
         }
 
+        public async Task<bool> UserHasRoleAsync(string userId, string roleName)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(userId) || string.IsNullOrEmpty(roleName))
+                {
+                    _logger.LogWarning("UserHasRoleAsync called with empty userId or roleName");
+                    return false;
+                }
+                var userRoles = await GetUserRoles(userId);
+                return userRoles.Contains(roleName.ToUpper());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking if user {UserId} has role {RoleName}", userId, roleName);
+                return false;
+            }
+        }
         private async Task<bool> ValidateFlowPermission(string userId, string requiredPermission)
         {
             // This would typically check against your authorization system
@@ -244,17 +268,47 @@ namespace Infrastructure.Services.FlowEngine.Services.Security
             }
         }
 
+        /// <summary>
+        /// Gets user roles from the authentication system
+        /// </summary>
         private async Task<List<string>> GetUserRoles(string userId)
         {
-            // This is a placeholder implementation
-            // In a real implementation, you would query your user/role system
-            await Task.Delay(1); // Placeholder for async operation
+            try
+            {
+                // Option 1: Get from HttpContext (if available)
+                var httpContextAccessor = _scopeFactory.CreateScope().ServiceProvider.GetService<IHttpContextAccessor>();
+                if (httpContextAccessor?.HttpContext?.User != null)
+                {
+                    var claims = httpContextAccessor.HttpContext.User.Claims
+                        .Where(c => c.Type == ClaimTypes.Role)
+                        .Select(c => c.Value)
+                        .ToList();
 
-            // For now, return basic roles based on user ID patterns
-            if (userId.Contains("admin"))
-                return new List<string> { "ADMIN", "USER" };
+                    if (claims.Any())
+                        return claims;
+                }
 
-            return new List<string> { "USER" };
+                // Option 2: Get from database/user service
+                var authService = _scopeFactory.CreateScope().ServiceProvider.GetService<IAuthenticationService>();
+                if (authService != null)
+                {
+                    if(!Guid.TryParse(userId, out var parsedUserId))
+                    {
+                        throw new ArgumentException("UserId must be a valid GUID");
+                    }
+                    var userRoles = await authService.GetUserRolesAsync(parsedUserId.ToString());
+                    
+                    return userRoles ?? [];
+                }
+
+                // Option 3: Default fallback
+                return [];
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving roles for user {UserId}", userId);
+                return []; // Default safe role
+            }
         }
 
         private List<string> ExtractSensitiveFields(object data)

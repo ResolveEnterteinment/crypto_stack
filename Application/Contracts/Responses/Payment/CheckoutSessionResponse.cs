@@ -1,9 +1,24 @@
 ﻿namespace Application.Contracts.Responses.Payment
 {
+    /// <summary>
+    /// Response model for checkout session creation
+    /// </summary>
     public class CheckoutSessionResponse
     {
-        public string CheckoutUrl { get; set; } = string.Empty;
-        public string ClientSecret { get; set; } = string.Empty;
-        public string SessionId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// URL to redirect the user to for checkout
+        /// </summary>
+        public string? CheckoutUrl { get; set; }
+
+        /// <summary>
+        /// Client secret for Stripe Elements integration (if applicable)
+        /// </summary>
+        public string? ClientSecret { get; set; }
+
+        /// <summary>
+        /// Gets or sets the unique identifier for the current session.
+        /// </summary>
+        public string? SessionId { get; set; }
     }
 }

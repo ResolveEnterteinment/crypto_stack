@@ -1,8 +1,6 @@
-using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
-using Infrastructure.Services.FlowEngine.Engine;
 using Infrastructure.Services.FlowEngine.Middleware;
 using Microsoft.Extensions.Logging;
 
@@ -15,7 +13,6 @@ namespace Infrastructure.Flows.Demo
     {
         private readonly ILogger<ComprehensiveDemoFlow> _logger;
         private readonly IDemoService _demoService;
-        private readonly FlowStepBuilder _builder;
 
         public ComprehensiveDemoFlow(
             ILogger<ComprehensiveDemoFlow> logger,
@@ -23,7 +20,6 @@ namespace Infrastructure.Flows.Demo
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _demoService = demoService ?? throw new ArgumentNullException(nameof(demoService));
-            _builder = new FlowStepBuilder(this);
         }
 
         /// <summary>
@@ -56,7 +52,7 @@ namespace Infrastructure.Flows.Demo
                     // Simulate initialization
                     await Task.Delay(100, context.CancellationToken);
 
-                    return StepResult.Success("Demo initialized successfully", new()
+                    return context.CurrentStep.Success("Demo initialized successfully", new()
                     {
                         ["DemoId"] = Guid.NewGuid(),
                         ["StartTime"] = DateTime.UtcNow,
@@ -74,16 +70,15 @@ namespace Infrastructure.Flows.Demo
                 .Execute(async context =>
                 {
                     _logger.LogInformation("Validating configuration...");
-                    
-                    // Simulate potential failure for demo
-                    var random = new Random();
-                    if (random.Next(1, 4) == 1) // 25% chance of failure
+
+                    var request = context.GetData<DemoRequest>("Request");
+                    if (request.SimulateValidationFailure == true)
                     {
                         throw new InvalidOperationException("Configuration validation failed (simulated)");
                     }
 
                     await Task.Delay(200, context.CancellationToken);
-                    return StepResult.Success("Configuration validated");
+                    return context.CurrentStep.Success("Configuration validated");
                 })
                 .WithRetries(maxRetries: 3, delay: TimeSpan.FromSeconds(2))
                 .WithTimeout(TimeSpan.FromSeconds(10))
@@ -97,29 +92,32 @@ namespace Infrastructure.Flows.Demo
                     // Data selector: Get items to process
                     context => context.GetData<List<string>>("ProcessingItems"),
                     
-                    // Step factory: Create sub-step for each item
-                    (item, index) => new FlowSubStep
-                    {
-                        Name = $"ProcessItem_{item}_{index}",
-                        SourceData = item,
-                        Priority = index < 3 ? 1 : 2, // First 3 items have higher priority
-                        ExecuteAsync = async ctx =>
+                    // Branch factory: Create a branch for each item
+                    (builder, item, index) => builder.Branch($"ProcessItemsInParallel-dynamic-{index}")
+                        .WithPriority(index < 3 ? 1 : 2) // First 3 items have higher priority
+                        .WithSourceData(item)
+                        .WithSteps(stepBuilder =>
                         {
-                            _logger.LogInformation("Processing item: {Item}", item);
-                            
-                            // Simulate processing time
-                            await Task.Delay(1000 + (index * 200), ctx.CancellationToken);
-                            
-                            var result = await _demoService.ProcessItemAsync(item);
-                            
-                            return StepResult.Success($"Processed {item}", new()
+                            stepBuilder.Step($"ProcessItem_{item}_{index}")
+                            .Execute(async context =>
                             {
-                                ["ProcessedItem"] = item,
-                                ["ProcessingTime"] = DateTime.UtcNow,
-                                ["Result"] = result
-                            });
-                        }
-                    },
+                                _logger.LogInformation("Processing item: {Item}", item);
+
+                                // Simulate processing time
+                                await Task.Delay(1000 + (index * 200), context.CancellationToken);
+
+                                var result = await _demoService.ProcessItemAsync(item);
+
+                                return context.CurrentStep.Success($"Processed {item}", new()
+                                {
+                                    ["ProcessedItem"] = item,
+                                    ["ProcessingTime"] = DateTime.UtcNow,
+                                    ["Result"] = result
+                                });
+                            })
+                            .Build();
+                        })
+                        .Build(),
                     ExecutionStrategy.Parallel // Process items in parallel
                 )
                 .InParallel()
@@ -129,7 +127,7 @@ namespace Infrastructure.Flows.Demo
             // Step 4: Step with pause/resume capability (e.g., waiting for external approval)
             _builder.Step("RequireApproval")
                 .After("ProcessItemsInParallel", "ValidateConfiguration")
-                .CanPause(context =>
+                .CanPause(async context =>
                 {
                     _logger.LogInformation("Approval required for demo flow");
 
@@ -137,7 +135,7 @@ namespace Infrastructure.Flows.Demo
                     if (request.RequiresApproval)
                     {
                         return PauseCondition.Pause(
-                            Services.FlowEngine.Core.Enums.PauseReason.ComplianceReview,
+                            PauseReason.ComplianceReview,
                             "Waiting for manual approval",
                             new Dictionary<string, object>
                             {
@@ -150,7 +148,7 @@ namespace Infrastructure.Flows.Demo
                 })
                 .ResumeOn(resume =>
                 {
-                    resume.OnEvent("DemoApproval", eventData =>
+                    resume.OnEvent("DemoApproval", (context, eventData) =>
                     {
                         var approval = eventData as DemoApprovalEvent;
                         return approval?.Approved == true;
@@ -178,14 +176,14 @@ namespace Infrastructure.Flows.Demo
                         _logger.LogInformation("Approval required for demo flow");
 
                         // Pause the flow for manual approval
-                        return StepResult.Success($"Approved request {approvalRequestId}", new()
+                        return context.CurrentStep.Success($"Approved request {approvalRequestId}", new()
                         {
                             ["ApprovalStatus"] = "Approved",
                             ["ApprovedAt"] = DateTime.UtcNow,
                         });
                     }
 
-                    return StepResult.Success("No approval required");
+                    return context.CurrentStep.Success("No approval required");
                 })
                 .Build();
 
@@ -198,8 +196,8 @@ namespace Infrastructure.Flows.Demo
                     
                     // Simulate resource-intensive operation
                     var calculation = await _demoService.PerformComplexCalculationAsync();
-                    
-                    return StepResult.Success("Complex calculation completed", new()
+
+                    return context.CurrentStep.Success("Complex calculation completed", new()
                     {
                         ["CalculationResult"] = calculation.Result,
                         ["ExecutionTime"] = calculation.ExecutionTime,
@@ -208,7 +206,7 @@ namespace Infrastructure.Flows.Demo
                 })
                 .WithTimeout(TimeSpan.FromMinutes(5))
                 .Critical()
-                .CanPause(context =>
+                .CanPause(async context =>
                 {
                     // Pause if system resources are low
                     var systemLoad = _demoService.GetSystemLoad();
@@ -216,9 +214,9 @@ namespace Infrastructure.Flows.Demo
                     {
                         return new PauseCondition
                         {
-                            Reason = Services.FlowEngine.Core.Enums.PauseReason.ComplianceReview, // Using closest available enum
+                            Reason = PauseReason.ComplianceReview, // Using closest available enum
                             Message = $"System under high load: {systemLoad:P}",
-                            Data = new() { ["SystemLoad"] = systemLoad }
+                            Data = systemLoad
                         };
                     }
                     return PauseCondition.Continue();
@@ -238,51 +236,58 @@ namespace Infrastructure.Flows.Demo
                 .After("PerformComplexCalculation")
                 .Execute(async context =>
                 {
+                    var request = context.GetData<DemoRequest>("Request");
                     _logger.LogInformation("Calling external API...");
-                    
+
+                    if (request.SimulateExternalApiFailure)
+                        throw new Domain.Exceptions.ServiceUnavailableException(_demoService.GetType().Name);
+
                     var apiResult = await _demoService.CallExternalApiAsync();
-                    
-                    return StepResult.Success("External API call successful", new()
+
+                    return context.CurrentStep.Success("External API call successful", new()
                     {
                         ["ApiResponse"] = apiResult.Data,
                         ["ApiResponseTime"] = apiResult.ResponseTime,
                         ["ApiStatusCode"] = apiResult.StatusCode
                     });
                 })
-                .WithRetries(maxRetries: 5, delay: TimeSpan.FromSeconds(3))
                 .WithIdempotency()
                 .WithTimeout(TimeSpan.FromSeconds(30))
-                .AllowFailure()
-                .WithBranches(branchBuilder =>
+                .WithStaticBranches(builder =>
                 {
-                    branchBuilder.When(
-                        context =>
-                        {
-                            var apiResponse = context.GetData<ApiResult>("ApiResponse");
-                            return apiResponse != null;
-                        },
-                        stepBuilder => stepBuilder.Step("SuccessPath")
-                            .Execute(async context =>
-                            {
-                                _logger.LogInformation("Following success path");
-                                await Task.Delay(500, context.CancellationToken);
-                                return StepResult.Success("Success path completed");
-                            })
-                            //.JumpTo("CallExternalAPI") // Loop back for demo purposes to test idempotency
-                            .Build());
+                    builder.Branch("SuccessPath")
+                    .When(context => context.HasData("ApiResponse"))
+                    .WithSteps(stepBuilder => {
+                        stepBuilder.Step("SuccessPath")
+                                .Execute(async context =>
+                                {
+                                    _logger.LogInformation("Following success path");
+                                    await Task.Delay(500, context.CancellationToken);
+                                    return context.CurrentStep.Success("Success path completed");
+                                })
+                                .Build();
+                                })
+                    .Build();
 
-                    branchBuilder.Otherwise(
-                        stepBuilder => stepBuilder.Step("ErrorPath")
-                            .Execute(async context =>
-                            {
-                                _logger.LogWarning("Following error path");
-                                await Task.Delay(300, context.CancellationToken);
-                                return StepResult.Failure("Error path completed with recovery");
+                    builder.Branch("ErrorPath")
+                    .Otherwise()
+                    .WithSteps(
+                        stepBuilder => {
+                            stepBuilder.Step("ErrorPath")
+                                .Execute(async context =>
+                                {
+                                    _logger.LogWarning("Following error path");
+                                    await Task.Delay(300, context.CancellationToken);
+                                    //return context.CurrentStep.Cancel("External api call failed. Cancelling execution.");
+                                    return context.CurrentStep.Success("External api call failed. Will jump.");
+                                })
+                                .AllowFailure()
+                                .JumpTo("CallExternalAPI") // Loop back for demo purposes to test idempotency
+                                .Build();
                             })
-                            .AllowFailure()
-                            .JumpTo("CallExternalAPI", 3) // Loop back for demo purposes to test idempotency
-                            .Build());
+                    .Build();
                 })
+                .AllowFailure()
                 .Build();
 
             // Step 7: Triggering another flow
@@ -301,7 +306,7 @@ namespace Infrastructure.Flows.Demo
                         Summary = "Demo flow completed successfully"
                     };
 
-                    return StepResult.Success("Notification flow will be triggered", new()
+                    return context.CurrentStep.Success("Notification flow will be triggered", new()
                     {
                         ["NotificationData"] = notificationData
                     });
@@ -330,7 +335,7 @@ namespace Infrastructure.Flows.Demo
                     // Persist summary
                     await _demoService.SaveDemoSummaryAsync(summary);
 
-                    return StepResult.Success("Demo flow completed successfully", new()
+                    return context.CurrentStep.Success("Demo flow completed successfully", new()
                     {
                         ["FlowSummary"] = summary,
                         ["ExecutionTime"] = summary.EndTime.Subtract(summary.StartTime)
@@ -345,7 +350,9 @@ namespace Infrastructure.Flows.Demo
     {
         public bool EnableValidation { get; set; } = true;
         public bool RequiresApproval { get; set; } = false;
-        public List<string> Items { get; set; } = new();
+        public bool SimulateValidationFailure { get; set; } = false;
+        public bool SimulateExternalApiFailure { get; set; } = false;
+        public List<string> Items { get; set; } = [];
     }
 
     public class DemoApprovalEvent

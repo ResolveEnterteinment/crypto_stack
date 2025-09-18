@@ -15,6 +15,7 @@
         RateLimitExceeded,
         TemporaryError,
         WaitingForEvent,
+        WaitingForPayment,
         Custom
     }
 }

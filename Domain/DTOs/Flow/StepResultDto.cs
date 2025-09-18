@@ -4,6 +4,6 @@
     {
         public bool IsSuccess { get; set; }
         public string Message { get; set; }
-        public Dictionary<string, object> Data { get; set; } = [];
+        public object? Data { get; set; }
     }
 }

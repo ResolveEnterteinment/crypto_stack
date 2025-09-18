@@ -1426,7 +1426,8 @@ namespace Infrastructure.Services
             {
                 // Get user details for personalized messaging
                 var userResult = await _userService.GetByIdAsync(Guid.Parse(paymentIntentRequest.UserId));
-                var userEmail = userResult.Data?.Email ?? "user@example.com";
+                var userEmail = userResult?.Email ?? 
+                    throw new ResourceNotFoundException("User", paymentIntentRequest.UserId);
 
                 // Enhanced notification with actionable information
                 await _notificationService.CreateAndSendNotificationAsync(new NotificationData
@@ -1573,8 +1574,8 @@ namespace Infrastructure.Services
         private async Task<string> GetOrCreateStripeCustomerAsync(string userId, string email)
         {
             if (!Guid.TryParse(userId, out var uid)) throw new ArgumentException("Invalid userId");
-            var wrUser = await _userService.GetByIdAsync(uid);
-            var existingCustomer = wrUser.Data?.PaymentProviderCustomerId;
+            var userData = await _userService.GetByIdAsync(uid);
+            var existingCustomer = userData?.PaymentProviderCustomerId;
 
             var isCustomerValid = !string.IsNullOrEmpty(existingCustomer) && await _stripeService.CheckCustomerExists(existingCustomer);
 

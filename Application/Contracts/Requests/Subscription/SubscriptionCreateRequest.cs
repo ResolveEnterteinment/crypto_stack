@@ -14,6 +14,8 @@ namespace Application.Contracts.Requests.Subscription
         public required int Amount { get; set; } = 0;
         public required string Currency { get; set; }
         public DateTime? EndDate { get; set; } = null;
+        public string SuccessUrl { get; set; } = string.Empty;
+        public string CancelUrl { get; set; } = string.Empty;
     }
 
     public class AllocationRequest

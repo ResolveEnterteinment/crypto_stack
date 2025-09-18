@@ -78,18 +78,18 @@ app.UseSecurityHeaders();
 // Add rate limiting
 app.UseRateLimiter();
 
-// Add CORS
+// Add CORS - IMPORTANT: Must be before authentication
 app.UseCors("AllowSpecifiedOrigins");
 Console.WriteLine("✅ CORS configured");
 
-// Configure antiforgery
+// Configure antiforgery - IMPORTANT: Must be before authentication
 app.UseCustomAntiforgery();
 Console.WriteLine("✅ CSRF protection configured");
 
-// Authentication and authorization
+// Authentication and authorization - IMPORTANT: Order matters
 app.UseAuthentication();
-app.UseKycRequirement();
 app.UseAuthorization();
+app.UseKycRequirement(); // KYC after authorization
 Console.WriteLine("✅ Authentication configured");
 
 app.UseHttpsRedirection();

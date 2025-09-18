@@ -1,0 +1,347 @@
+using Application.Contracts.Requests.Subscription;
+using Application.Contracts.Responses.Subscription;
+using Application.Interfaces;
+using Application.Interfaces.Payment;
+using Application.Interfaces.Subscription;
+using Domain.Constants;
+using Domain.DTOs.Payment;
+using Domain.Exceptions;
+using FluentValidation;
+using Infrastructure.Services.FlowEngine.Core.Enums;
+using Infrastructure.Services.FlowEngine.Core.Models;
+using Infrastructure.Services.FlowEngine.Core.PauseResume;
+using Microsoft.Extensions.Logging;
+
+namespace Infrastructure.Flows.Subscription
+{
+    /// <summary>
+    /// Comprehensive flow for creating subscriptions with validation, payment setup, and activation
+    /// </summary>
+    public class SubscriptionCreationFlow : FlowDefinition
+    {
+        private readonly ISubscriptionService _subscriptionService;
+        private readonly IPaymentService _paymentService;
+        private readonly IValidator<SubscriptionCreateRequest> _subscriptionValidator;
+        private readonly IValidator<CheckoutSessionRequest> _checkoutValidator;
+        private readonly INotificationService _notificationService;
+        private readonly IIdempotencyService _idempotencyService;
+        private readonly ILogger<SubscriptionCreationFlow> _logger;
+
+        public SubscriptionCreationFlow(
+            ISubscriptionService subscriptionService,
+            IPaymentService paymentService,
+            IValidator<SubscriptionCreateRequest> validator,
+            INotificationService notificationService,
+            IIdempotencyService idempotencyService,
+            ILogger<SubscriptionCreationFlow> logger)
+        {
+            _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
+            _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
+            _subscriptionValidator = validator ?? throw new ArgumentNullException(nameof(validator));
+            _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
+
+        protected override void DefineSteps()
+        {
+            // Step 1: Validate request and check idempotency
+            _builder.Step("ValidateSubscriptionRequest")
+                .RequiresData<SubscriptionCreateRequest>("Request")
+                .RequiresData<string>("IdempotencyKey")
+                .Execute(async context =>
+                {
+                    var request = context.GetData<SubscriptionCreateRequest>("Request");
+
+                    _logger.LogInformation("Starting subscription creation for user {UserId}", request.UserId);
+
+                    // Validate request
+                    var validationResult = await _subscriptionValidator.ValidateAsync(request);
+                    if (!validationResult.IsValid)
+                    {
+                        var errors = validationResult.Errors
+                            .GroupBy(e => e.PropertyName)
+                            .ToDictionary(g => g.Key, g => g.Select(e => e.ErrorMessage).ToArray());
+
+                        _logger.LogWarning("Validation failed for subscription creation: {ValidationErrors}",
+                            string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage)));
+
+                        return StepResult.Failure("Validation failed: " + string.Join(", ", validationResult.Errors.Select(e => e.ErrorMessage)));
+                    }
+
+                    return StepResult.Success("Request validated successfully");
+                })
+                .Build();
+
+            // Step 2: Handle idempotent requests (early exit)
+            _builder.Step("CheckIdempotency")
+                .After("ValidateSubscriptionRequest")
+                .RequiresData<string>("IdempotencyKey")
+                .Execute(async context =>
+                {
+                    var idempotencyKey = context.GetData<string>("IdempotencyKey");
+                    var (resultExists, existingResult) = await _idempotencyService.GetResultAsync<SubscriptionCreateResponse>(idempotencyKey);
+
+                    if (resultExists && existingResult != null)
+                    {
+                        _logger.LogInformation("Idempotent request detected for key {IdempotencyKey}, returning existing subscription {SubscriptionId}",
+                            idempotencyKey, existingResult);
+
+                        context.SetData("IsIdempotentRequest", true);
+                        context.SetData("SubscriptionResponse", existingResult);
+
+                        return StepResult.Success("Idempotent request - returning existing result", existingResult);
+                    }
+
+                    context.SetData("IsIdempotentRequest", false);
+
+                    return StepResult.Success("No existing idempotent result found");
+                })
+                .WithStaticBranches(builder => builder
+                    .Branch("IdempotentRequest")
+                    .When(context => context.GetData<bool>("IsIdempotentRequest"))
+                    .WithSteps(builder => builder
+                        .Step("SkipToEnd")
+                        .Execute( async context => StepResult.Success($"Idempotent request - Jumping to step PrepareResponse"))
+                        .JumpTo("PrepareResponse")
+                        .Build())
+                    .Build())
+                .Build();
+
+            // Step 3: Create subscription entity
+            _builder.Step("CreateSubscriptionEntity")
+                .After("CheckIdempotency")
+                .OnlyIf(context => !context.GetData<bool>("IsIdempotentRequest"))
+                .RequiresData<SubscriptionCreateRequest>("Request")
+                .Execute(async context =>
+                {
+                    var request = context.GetData<SubscriptionCreateRequest>("Request");
+
+                    _logger.LogInformation("Creating subscription entity for user {UserId}", request.UserId);
+
+                    // Create the subscription
+                    var subscriptionCreateResult = await _subscriptionService.CreateAsync(request);
+
+                    if (subscriptionCreateResult == null || !subscriptionCreateResult.IsSuccess)
+                    {
+                        throw new DatabaseException($"Failed to create subscription: {subscriptionCreateResult?.ErrorMessage}");
+                    }
+
+                    var subscriptionId = subscriptionCreateResult.Data.AffectedIds.First();
+
+                    _logger.LogInformation("Successfully created subscription {SubscriptionId} for user {UserId}",
+                        subscriptionId, request.UserId);
+
+                    context.SetData("SubscriptionId", subscriptionId);
+
+                    return StepResult.Success($"Subscription entity with ID {subscriptionId} created", subscriptionId);
+                })
+                .Critical()
+                .Build();
+
+            // Step 4: Store idempotency result
+            _builder.Step("StoreIdempotencyResult")
+                .After("CreateSubscriptionEntity")
+                .RequiresData<string>("IdempotencyKey")
+                .RequiresData<Guid>("SubscriptionId")
+                .Execute(async context =>
+                {
+                    var idempotencyKey = context.GetData<string>("IdempotencyKey");
+                    var subscriptionId = context.GetData<Guid>("SubscriptionId");
+
+                    await _idempotencyService.StoreResultAsync(idempotencyKey, subscriptionId);
+
+                    return StepResult.Success($"Idempotency result stored with key {idempotencyKey}");
+                })
+                .Build();
+
+            // Setup payment method and create checkout session
+            _builder.Step("SetupPaymentSession")
+                .After("CreateSubscriptionEntity")
+                .RequiresData<SubscriptionCreateRequest>("Request")
+                .RequiresData<Guid>("SubscriptionId")
+                .Execute(async context =>
+                {
+                    var request = context.GetData<SubscriptionCreateRequest>("Request");
+                    var subscriptionId = context.GetData<Guid>("SubscriptionId");
+
+                    _logger.LogInformation("Setting up payment session for subscription {SubscriptionId}", subscriptionId);
+
+                    // Create checkout session for payment
+                    var checkoutRequest = new CreateCheckoutSessionDto
+                    {
+                        SubscriptionId = subscriptionId.ToString(),
+                        UserId = request.UserId,
+                        UserEmail = context.Flow.State.UserEmail,
+                        Amount = request.Amount,
+                        Currency = request.Currency,
+                        IsRecurring = true,
+                        Interval = request.Interval,
+                        ReturnUrl = $"{request.SuccessUrl}?subscription_id={subscriptionId}&amount={request.Amount}&currency={request.Currency}",
+                        CancelUrl = $"{request.CancelUrl}?subscription_id=${subscriptionId}",
+                        Provider = "Stripe",
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["correlationId"] = context.Flow.State.CorrelationId,
+                            ["userId"] = request.UserId,
+                            ["subscriptionId"] = subscriptionId.ToString()
+                        }
+                    };
+
+                    var sessionResult = await _paymentService.CreateCheckoutSessionAsync(checkoutRequest);
+
+                    if (sessionResult == null || !sessionResult.IsSuccess)
+                    {
+                        throw new PaymentApiException($"Failed to create checkout session: {sessionResult?.ErrorMessage}", "Stripe");
+                    }
+
+                    var session = sessionResult.Data;
+
+                    context.SetData("CheckoutSession", session);
+
+                    return StepResult.Success($"Payment session created with ID {session.Id}", session);
+                })
+                .InParallel()
+                .Critical()
+                .Build();
+
+            // Step 6: Wait for payment completion (pause flow)
+            _builder.Step("AwaitPaymentCompletion")
+                .After("SetupPaymentSession")
+                .RequiresData<SessionDto>("CheckoutSession")
+                .CanPause(async context =>
+                {
+                    _logger.LogInformation("Pausing flow to await payment completion");
+
+                    var session = context.GetData<SessionDto>("CheckoutSession");
+
+                    return PauseCondition.Pause(
+                        PauseReason.WaitingForPayment,
+                        "Waiting for payment completion",
+                        context.GetData<SessionDto>("CheckoutSession")
+                        );
+                })
+                .ResumeOn(resume =>
+                {
+                    // Resume when checkout session is completed
+                    resume.OnEvent("CheckoutSessionCompleted", (context, eventData) =>
+                    {
+                        var sessionData = eventData as SessionDto;
+                        var subscriptionId = context.GetData<Guid>("SubscriptionId");
+
+                        // Check if this event is for our subscription
+                        var canResume = sessionData?.Metadata?.ContainsKey("subscriptionId") == true &&
+                               sessionData.Metadata["subscriptionId"] == subscriptionId.ToString();
+
+                        if (canResume)
+                        {
+                            context.SetData("CheckoutSessionResult", sessionData);
+                            return true;
+                        }
+
+                        return false;
+                    });
+
+                    // Auto-resume after timeout (e.g., for abandoned payments)
+                    resume.WhenCondition(async context =>
+                    {
+                        var pausedAt = context.State.PausedAt;
+                        return pausedAt.HasValue && 
+                               DateTime.UtcNow.Subtract(pausedAt.Value) > TimeSpan.FromHours(1);
+                    });
+
+                    // Allow manual resume by admins
+                    resume.AllowManual(["ADMIN"]);
+                })
+                .Execute(async context =>
+                {
+                    // This executes after resume
+                    var subscriptionId = context.GetData<Guid>("SubscriptionId");
+
+                    var session = context.GetData<SessionDto>("CheckoutSessionResult");
+                    // Update our subscription with the active status
+                    var updatedFields = new Dictionary<string, object>
+                    {
+                        ["Provider"] = session.Provider,
+                        ["ProviderSubscriptionId"] = session.SubscriptionId,
+                        ["Status"] = SubscriptionStatus.Active
+                    };
+
+                    var updateResult = await _subscriptionService.UpdateAsync(subscriptionId, updatedFields);
+
+                    if (!updateResult.IsSuccess)
+                    {
+                        throw new DatabaseException($"Failed to update subscription {subscriptionId}: {updateResult.ErrorMessage}");
+                    }
+
+                    await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                    {
+                        UserId = context.State.UserId,
+                        Message = "Your subscription has been activated."
+                    });
+
+                    return StepResult.Failure("Unable to verify subscription status after payment");
+                })
+                .Build();
+
+            // Step 7: Send notification to user
+            _builder.Step("NotifyUser")
+                .After("AwaitPaymentCompletion")
+                .RequiresData<SubscriptionCreateRequest>("Request")
+                .RequiresData<Guid>("SubscriptionId")
+                .Execute(async context =>
+                {
+                    var request = context.GetData<SubscriptionCreateRequest>("Request");
+                    var subscriptionId = context.GetData<Guid>("SubscriptionId");
+                    var paymentCompleted = context.GetData<bool>("PaymentCompleted");
+
+                    var message = paymentCompleted 
+                        ? "Your subscription has been created and activated successfully!"
+                        : "Your subscription has been created. Please complete payment setup to activate it.";
+
+                    await _notificationService.CreateAndSendNotificationAsync(new NotificationData
+                    {
+                        UserId = request.UserId,
+                        Message = message,
+                        IsRead = false
+                    });
+
+                    return StepResult.Success("User notification sent");
+                })
+                .InParallel()
+                .AllowFailure() // Don't fail the entire flow if notification fails
+                .Build();
+
+            // Step 8: Prepare final response
+            _builder.Step("PrepareResponse")
+                .Execute(async context =>
+                {
+                    // Check if we already have a response from idempotent handling
+                    if (context.HasData("SubscriptionResponse"))
+                    {
+                        return StepResult.Success("Idempotent request - returning existing result", context.GetData<SubscriptionCreateResponse>("SubscriptionResponse"));
+                    }
+
+                    var subscriptionId = context.GetData<Guid>("SubscriptionId");
+                    var checkoutSession = context.HasData("CheckoutSession") 
+                        ? context.GetData<SessionDto>("CheckoutSession") 
+                        : null;
+
+                    var response = new SubscriptionCreateResponse
+                    {
+                        Id = subscriptionId.ToString(),
+                        CheckoutUrl = checkoutSession?.Url,
+                        Status = context.GetData<bool>("PaymentCompleted") 
+                            ? SubscriptionStatus.Active 
+                            : SubscriptionStatus.Pending
+                    };
+
+                    return StepResult.Success("Response prepared", new Dictionary<string, object>
+                    {
+                        ["SubscriptionResponse"] = response
+                    });
+                })
+                .Build();
+        }
+    }
+}

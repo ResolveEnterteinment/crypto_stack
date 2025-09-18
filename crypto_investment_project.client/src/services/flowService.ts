@@ -46,6 +46,14 @@ export interface PagedResult<T> {
     totalPages: number;
 }
 
+export interface TriggeredFlowDataDto {
+    type: string;
+    flowId?: string;
+    triggeredByStep?: string;
+    status?: string;
+    createdAt?: string;
+}
+
 export interface FlowDetailDto {
     flowId: string;
     flowType: string;
@@ -65,6 +73,7 @@ export interface FlowDetailDto {
     events: FlowEvent[];
     data: Record<string, any>;
     totalSteps: number;
+    triggeredBy?: TriggeredFlowDataDto;
 }
 
 export interface StepDto {
@@ -79,7 +88,18 @@ export interface StepDto {
     isIdempotent: boolean;
     canRunInParallel: boolean;
     result?: StepResultDto;
+    error?: StepErrorDto;
     branches?: BranchDto[];
+    triggeredFlows: TriggeredFlowDataDto[];
+}
+
+export interface StepErrorDto {
+    message: string;
+    exceptionType: string;
+    stackTrace: string;
+    source: string;
+    occuredAt: Date;
+    innerError: StepErrorDto;
 }
 
 export interface SubStepDto extends StepDto {
@@ -100,7 +120,8 @@ export interface StepResultDto {
 export interface BranchDto {
     steps: SubStepDto[];
     isDefault: boolean;
-    condition: string;
+    isConditional: string;
+    name: string;
 }
 
 export interface FlowEvent {

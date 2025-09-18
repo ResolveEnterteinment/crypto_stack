@@ -109,16 +109,16 @@ const FlowStep: React.FC<FlowStepProps> = ({
                                 {branch.isDefault ? (
                                     <Tag color="blue">Default Branch</Tag>
                                 ) : (
-                                    <Tooltip title={branch.condition || 'Custom condition'}>
+                                    <Tooltip title={branch.isConditional || 'Custom condition'}>
                                         <Tag color="orange">
                                             Conditional Branch
                                         </Tag>
                                     </Tooltip>
                                 )}
-                                {branch.condition && !branch.isDefault && (
+                                {branch.isConditional && !branch.isDefault && (
                                     <div style={{ marginTop: '8px' }}>
                                         <Text type="secondary" style={{ fontSize: '12px' }}>
-                                            Condition: {branch.condition}
+                                            Condition: {branch.isConditional}
                                         </Text>
                                     </div>
                                 )}
@@ -370,7 +370,7 @@ const FlowStep: React.FC<FlowStepProps> = ({
                                             <Text>Steps: {branch.steps?.join(', ') || 'None'}</Text>
                                             <br />
                                             <Text type="secondary">
-                                                {branch.isDefault ? 'Default Branch' : `Condition: ${branch.condition}`}
+                                                {branch.isDefault ? 'Default Branch' : `Condition: ${branch.isConditional}`}
                                             </Text>
                                         </Card>
                                     ))}

@@ -1,4 +1,7 @@
 using Infrastructure.Flows.Demo;
+using Infrastructure.Flows.Exchange;
+using Infrastructure.Flows.Payment;
+using Infrastructure.Flows.Subscription;
 using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -19,6 +22,14 @@ namespace Infrastructure.Services.FlowEngine.Extensions
             // Get the assembly containing the flows
             services.AddScoped<ComprehensiveDemoFlow>();
             services.AddScoped<DemoNotificationFlow>();
+            // Subscription flows
+            services.AddScoped<SubscriptionCreationFlow>();
+            services.AddScoped<UpdateSubscriptionPostPaymentFlow>();
+            // Payment flows
+            services.AddScoped<PaymentProcessingFlow>();
+            // Exchange flows
+            services.AddScoped<AllocationExchangeOrderFlow>();
+            services.AddScoped<HandleDustFlow>();
 
             return services;
         }

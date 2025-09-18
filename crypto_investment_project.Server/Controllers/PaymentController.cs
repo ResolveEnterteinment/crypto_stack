@@ -1,3 +1,4 @@
+using Application.Contracts.Responses.Payment;
 using Application.Extensions;
 using Application.Interfaces;
 using Application.Interfaces.Logging;

@@ -1,6 +1,4 @@
 ﻿using Application.Interfaces;
-using Application.Interfaces.Base;
-using Application.Interfaces.Logging;
 using Domain.DTOs.User;
 using Domain.Exceptions;
 using Domain.Models.User;
@@ -37,9 +35,9 @@ namespace Infrastructure.Services
             return checkExists;
         }
 
-        public async Task<UserData?> GetAsync(Guid id)
+        public async Task<UserData?> GetByIdAsync(Guid id)
         {
-            var result = await GetByIdAsync(id);
+            var result = await base.GetByIdAsync(id);
             return result.IsSuccess ? result.Data : null;
         }
 

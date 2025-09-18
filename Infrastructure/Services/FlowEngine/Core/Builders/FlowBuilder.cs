@@ -10,14 +10,17 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
     public class FlowBuilder
     {
         private readonly IServiceScopeFactory _serviceScopeFactory;
+        private readonly CancellationToken? _cancellationToken = null;
         private Dictionary<string, object> _initialData = new();
         private string _userId = "system";
+        private string? _userEmail = null;
         private string _correlationId = "";
-        private Guid? _triggeredBy = null;
+        private TriggeredFlowData? _triggeredBy = null;
 
-        public FlowBuilder(IServiceProvider serviceProvider)
+        public FlowBuilder(IServiceProvider serviceProvider, CancellationToken? cancellationToken = null)
         {
             _serviceScopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+            _cancellationToken = cancellationToken;
         }
 
         public FlowBuilder WithData(string key, object value)
@@ -36,10 +39,13 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
             return this;
         }
 
-        public FlowBuilder ForUser(string userId)
+        public FlowBuilder ForUser(string userId, string? email = null)
         {
-            _userId = userId ?? "system";
-            return this;
+            {
+                _userId = userId ?? "system";
+                _userEmail = email;
+                return this;
+            }
         }
 
         public FlowBuilder WithCorrelation(string correlationId)
@@ -48,9 +54,9 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
             return this;
         }
 
-        public FlowBuilder TriggeredBy(Guid triggerFlowId)
+        public FlowBuilder TriggeredBy(TriggeredFlowData triggerData)
         {
-            _triggeredBy = triggerFlowId;
+            _triggeredBy = triggerData;
             return this;
         }
 
@@ -59,6 +65,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
             using var scope = _serviceScopeFactory.CreateScope();
             var flow = Flow.Create<TDefinition>(scope.ServiceProvider, _initialData);
             flow.State.UserId = _userId;
+            flow.State.UserEmail = _userEmail;
             flow.State.CorrelationId = string.IsNullOrEmpty(_correlationId) ? Guid.NewGuid().ToString() : _correlationId;
             flow.State.TriggeredBy = _triggeredBy;
             return flow;
@@ -67,9 +74,10 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
         public Flow Build(Type definitionType)
         {
             using var scope = _serviceScopeFactory.CreateScope();
-            var flow = Flow.Create(scope.ServiceProvider, definitionType, _initialData);
+            var flow = Flow.Create(scope.ServiceProvider, definitionType, _initialData, _cancellationToken);
 
             flow.State.UserId = _userId;
+            flow.State.UserEmail = _userEmail;
             flow.State.CorrelationId = string.IsNullOrEmpty(_correlationId) ? Guid.NewGuid().ToString() : _correlationId;
             flow.State.TriggeredBy = _triggeredBy;
             return flow;

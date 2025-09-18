@@ -864,6 +864,7 @@ namespace Infrastructure.Services.Subscription
 
         public async Task Handle(CheckoutSessionCompletedEvent notification, CancellationToken cancellationToken)
         {
+            /*
             await _resilienceService.CreateBuilder(
                 new Scope
                 {
@@ -915,6 +916,7 @@ namespace Infrastructure.Services.Subscription
                         subscriptionId);
                 })
                 .ExecuteAsync();
+            */
         }
 
         public async Task Handle(SubscriptionCreatedEvent notification, CancellationToken cancellationToken)

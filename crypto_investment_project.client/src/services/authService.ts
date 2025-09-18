@@ -1,4 +1,4 @@
-// src/services/authService.ts
+﻿// src/services/authService.ts
 import apiClient, { ApiErrorHandler } from './api';
 
 // Type definitions
@@ -91,6 +91,10 @@ class AuthService {
         REFRESH_TOKEN: 'refresh_token',
         USER: 'user'
     } as const;
+
+    private refreshAttempts = 0;
+    private readonly MAX_REFRESH_ATTEMPTS = 3;
+    private refreshInProgress = false;
 
     /**
      * Initialize authentication service
@@ -280,15 +284,38 @@ class AuthService {
     }
 
     /**
-     * Refresh the authentication token
+     * Refresh the authentication token with exponential backoff
      */
     async refreshToken(): Promise<boolean> {
         try {
-            const currentToken = this.getStoredToken();
-
-            if (!currentToken) {
+            // Prevent concurrent refresh attempts
+            if (this.refreshInProgress) {
                 return false;
             }
+
+            this.refreshInProgress = true;
+
+            const currentToken = this.getStoredToken();
+            if (!currentToken) {
+                this.refreshAttempts = 0;
+                return false;
+            }
+
+            // Check if we've exceeded max attempts
+            if (this.refreshAttempts >= this.MAX_REFRESH_ATTEMPTS) {
+                console.log("Max refresh attempts exceeded, clearing authentication");
+                this.clearAuthentication();
+                return false;
+            }
+
+            // Calculate exponential backoff delay
+            const backoffDelay = Math.min(1000 * Math.pow(2, this.refreshAttempts), 30000);
+            if (this.refreshAttempts > 0) {
+                console.log(`Waiting ${backoffDelay}ms before refresh attempt ${this.refreshAttempts + 1}`);
+                await new Promise(resolve => setTimeout(resolve, backoffDelay));
+            }
+
+            this.refreshAttempts++;
 
             // Use deduplication to prevent concurrent refresh attempts
             const response = await apiClient.post<LoginResponse>(
@@ -298,12 +325,19 @@ class AuthService {
                     dedupe: true,
                     dedupeKey: 'token-refresh',
                     priority: 'high',
-                    retryCount: 1
+                    retryCount: 0, // No API-level retry, we handle it here
+                    // ✅ NEW: Include current access token in Authorization header
+                    headers: {
+                        'Authorization': `Bearer ${currentToken}`
+                    }
                 }
             );
 
             if (response.success && response.data.accessToken) {
-                // Update stored authentication
+                // Reset attempts on success
+                this.refreshAttempts = 0;
+
+                // Update stored authentication (only access token)
                 this.storeAuthentication(response.data);
 
                 console.log("Token refresh successful");
@@ -315,14 +349,22 @@ class AuthService {
             console.error("Token refresh failed:", error);
 
             const apiError = ApiErrorHandler.extractError(error);
+
+            // Clear auth immediately on auth errors (401, 403)
             if (apiError.isAuthError) {
+                console.log("Auth error during refresh, clearing authentication");
+                this.refreshAttempts = 0;
                 this.clearAuthentication();
+                return false;
             }
 
+            // For other errors, don't clear auth immediately - let backoff handle it
             return false;
+
+        } finally {
+            this.refreshInProgress = false;
         }
     }
-
     /**
      * Request password reset
      */
@@ -442,18 +484,22 @@ class AuthService {
     // ==================== Helper Methods ====================
 
     /**
-     * Store authentication data
-     */
+ * Store authentication data
+ */
     private storeAuthentication(data: LoginResponse): void {
         console.log("Storing authentication data");
 
-        // Store tokens
+        // Store access token in localStorage
         localStorage.setItem(this.STORAGE_KEYS.ACCESS_TOKEN, data.accessToken);
         sessionStorage.setItem(this.STORAGE_KEYS.ACCESS_TOKEN, data.accessToken); // Backup
 
-        if (data.refreshToken) {
-            localStorage.setItem(this.STORAGE_KEYS.REFRESH_TOKEN, data.refreshToken);
-        }
+        // ❌ REMOVE: Don't store refresh token in localStorage
+        // if (data.refreshToken) {
+        //     localStorage.setItem(this.STORAGE_KEYS.REFRESH_TOKEN, data.refreshToken);
+        // }
+
+        // ✅ NEW: Refresh token is now handled by HTTP-only cookies on backend
+        // No need to store refresh token on frontend
 
         // Store user data
         const userData = {
@@ -487,15 +533,21 @@ class AuthService {
     }
 
     /**
-     * Clear all authentication data
-     */
+ * Clear all authentication data
+ */
     private clearAuthentication(): void {
         console.log("Clearing authentication data");
 
-        // Clear localStorage
+        // Reset refresh attempts
+        this.refreshAttempts = 0;
+        this.refreshInProgress = false;
+
+        // Clear localStorage (only access token and user data)
         localStorage.removeItem(this.STORAGE_KEYS.ACCESS_TOKEN);
-        localStorage.removeItem(this.STORAGE_KEYS.REFRESH_TOKEN);
         localStorage.removeItem(this.STORAGE_KEYS.USER);
+
+        // ❌ REMOVE: Don't clear refresh token from localStorage
+        // localStorage.removeItem(this.STORAGE_KEYS.REFRESH_TOKEN);
 
         // Clear sessionStorage
         sessionStorage.removeItem(this.STORAGE_KEYS.ACCESS_TOKEN);
@@ -503,6 +555,9 @@ class AuthService {
 
         // Clear API client tokens
         apiClient.clearTokens();
+
+        // ✅ NEW: Call logout endpoint to clear HTTP-only cookie
+        this.logout();
     }
 
     /**

@@ -68,6 +68,7 @@ namespace Infrastructure.Services.Exchange
         /// </summary>
         public async Task Handle(PaymentReceivedEvent notification, CancellationToken cancellationToken)
         {
+            /*
             string idempotencyKey = $"payment_event_{notification.EventId}";
 
             await _resilienceService.CreateBuilder(
@@ -132,6 +133,9 @@ namespace Infrastructure.Services.Exchange
                     await _eventService.MarkAsFailedAsync(notification.EventId, ex.Message);
                 })
                 .ExecuteAsync();
+            */
+
+            throw new NotImplementedException("Event handling is currently disabled. Please invoke PaymentProcessingFlow directly.");
         }
 
         /// <summary>

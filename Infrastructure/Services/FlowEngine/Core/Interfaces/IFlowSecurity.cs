@@ -8,6 +8,14 @@ namespace Infrastructure.Services.FlowEngine.Core.Interfaces
     public interface IFlowSecurity
     {
         /// <summary>
+        /// Checks if a user has a specific role
+        /// </summary>
+        /// <param name="userId"></param>
+        /// <param name="roleName"></param>
+        /// <returns>True is the user has role, false otherwise</returns>
+        Task<bool> UserHasRoleAsync(string userId, string roleName);
+
+        /// <summary>
         /// Validates if a user has access to execute a specific flow type
         /// </summary>
         /// <param name="userId">The user ID to validate</param>

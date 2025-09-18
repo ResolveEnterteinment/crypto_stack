@@ -48,7 +48,7 @@ namespace Infrastructure.Services.Asset
                     ]
                 })
         {
-            InitializeEssentialAssetsAsync();
+            InitializeEssentialAssetsAsync().Wait();
         }
 
         private async Task InitializeEssentialAssetsAsync()

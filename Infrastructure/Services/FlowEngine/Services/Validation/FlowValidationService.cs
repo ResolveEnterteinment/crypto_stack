@@ -46,7 +46,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                 }
 
                 // Validate steps
-                if (flow.Definition.Steps == null || !flow.Definition.Steps.Any())
+                if (flow.Definition.Steps == null || flow.Definition.Steps.Count == 0)
                 {
                     result.Warnings.Add("Flow has no steps defined");
                 }
@@ -81,7 +81,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                     }
                 }
 
-                result.IsValid = !result.Errors.Any();
+                result.IsValid = result.Errors.Count == 0;
 
                 _logger.LogInformation(
                     "Flow validation completed for {FlowType} {FlowId}. Valid: {IsValid}, Errors: {ErrorCount}, Warnings: {WarningCount}",
@@ -319,7 +319,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
                 // Check for missing dependencies
                 foreach (var step in flow.Definition.Steps)
                 {
-                    if (step.StepDependencies?.Any() == true)
+                    if (step.StepDependencies?.Count > 0)
                     {
                         foreach (var dependency in step.StepDependencies)
                         {
@@ -348,7 +348,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Validation
 
                 result.Errors.AddRange(result.MissingDependencies);
                 result.Errors.AddRange(result.CircularDependencies);
-                result.IsValid = !result.Errors.Any();
+                result.IsValid = result.Errors.Count == 0;
 
                 return result;
             }

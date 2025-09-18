@@ -27,11 +27,12 @@ namespace Infrastructure.Services.Exchange
         private const string MIN_NOTIONAL_CATCHE_FORMAT = "min_notional:{0}:{1}";
         private static readonly TimeSpan MIN_NOTIONAL_CACHE_DURATION = TimeSpan.FromHours(1);
 
-
         public IReadOnlyDictionary<string, IExchange> Exchanges => _exchanges;
         public IExchange DefaultExchange => _exchanges.Values.FirstOrDefault()
             ?? throw new InvalidOperationException("No exchanges configured");
         public Guid FiatAssetId { get; }
+
+        decimal IExchangeService.MIN_NOTIONAL_FALLBACK_AMOUNT => 10m;
 
         public ExchangeService(
             IOptions<ExchangeServiceSettings> settings,

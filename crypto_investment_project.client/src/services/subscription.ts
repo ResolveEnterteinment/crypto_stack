@@ -4,6 +4,7 @@ import ICreateSubscriptionRequest from "../interfaces/ICreateSubscriptionRequest
 import IUpdateSubscriptionRequest from "../interfaces/IUpdateSubscriptionRequest";
 import { logApiError } from "../utils/apiErrorHandler";
 import { Subscription } from "../types/subscription";
+import { SessionResponse } from "./payment";
 
 interface SubscriptionCreateResponse {
     id: string;
@@ -91,7 +92,7 @@ export const getSubscriptions = async (userId: string): Promise<Subscription[]> 
  * @param subscriptionData The subscription data
  * @returns Promise with the created subscription ID
  */
-export const createSubscription = async (subscriptionData: ICreateSubscriptionRequest): Promise<any> => {
+export const createSubscription = async (subscriptionData: ICreateSubscriptionRequest): Promise<SessionResponse> => {
     try {
         // Validate input
         if (!subscriptionData.userId) {
@@ -133,25 +134,26 @@ export const createSubscription = async (subscriptionData: ICreateSubscriptionRe
 
         const requestPayload: ICreateSubscriptionRequest = {
             userId: subscriptionData.userId,
-            allocations: subscriptionData.allocations.map(allocation => ({
-                assetId: allocation.assetId,
-                percentAmount: Math.round(allocation.percentAmount)
-            })),
+            allocations: subscriptionData.allocations,
             interval: subscriptionData.interval.toUpperCase(),
             amount: subscriptionData.amount,
             currency: subscriptionData.currency,
-            endDate: subscriptionData.endDate ? subscriptionData.endDate : null
+            endDate: subscriptionData.endDate ? subscriptionData.endDate : null,
+            successUrl: subscriptionData.successUrl,
+            cancelUrl: subscriptionData.cancelUrl
         };
 
-        console.log("Creating subscription with payload:", JSON.stringify(requestPayload, null, 2));
+        console.log("Creating subscription with payload:", requestPayload);
 
-        const response = await api.post <SubscriptionCreateResponse>(ENDPOINTS.NEW(), requestPayload, { headers });
+        const response = await api.post<SessionResponse>(ENDPOINTS.NEW(), requestPayload, { headers });
+
+        console.log("Received response:", response);
 
         if (!response.success) {
             throw new Error("Server returned empty response");
         }
 
-        return response.data.id;
+        return response.data;
     } catch (error) {
         logApiError(error, "Create Subscription Error");
         throw error;
@@ -201,7 +203,7 @@ export const updateSubscription = async (subscriptionId: string, updateFields: I
 
         // Update the subscription - backend will automatically handle Stripe updates for amount/endDate changes
         console.log("Updating subscription with payload:", JSON.stringify(requestPayload, null, 2));
-        const response = await api.put(ENDPOINTS.UPDATE(subscriptionId), requestPayload, { headers });
+         await api.put(ENDPOINTS.UPDATE(subscriptionId), requestPayload, { headers });
 
         console.log("Subscription updated successfully (Stripe sync handled automatically for amount/endDate changes)");
 
@@ -230,7 +232,7 @@ export const cancelSubscription = async (subscriptionId: string): Promise<void> 
             'X-Idempotency-Key': idempotencyKey
         };
 
-        const response = await api.post(ENDPOINTS.CANCEL(subscriptionId), null, { headers });
+        await api.post(ENDPOINTS.CANCEL(subscriptionId), null, { headers });
     } catch (error) {
         logApiError(error, "Cancel Subscription Error");
         throw error;
@@ -256,7 +258,7 @@ export const pauseSubscription = async (subscriptionId: string): Promise<void> =
             'X-Idempotency-Key': idempotencyKey
         };
 
-        const response = await api.post(ENDPOINTS.PAUSE(subscriptionId), null, { headers });
+        await api.post(ENDPOINTS.PAUSE(subscriptionId), null, { headers });
 
     } catch (error) {
         logApiError(error, "Pause Subscription Error");
@@ -283,7 +285,7 @@ export const resumeSubscription = async (subscriptionId: string): Promise<void> 
             'X-Idempotency-Key': idempotencyKey
         };
 
-        const response = await api.post(ENDPOINTS.RESUME(subscriptionId), null, { headers });
+         await api.post(ENDPOINTS.RESUME(subscriptionId), null, { headers });
 
     } catch (error) {
         logApiError(error, "Resume Subscription Error");

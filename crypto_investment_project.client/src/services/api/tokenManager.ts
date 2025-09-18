@@ -1,4 +1,4 @@
-import { API_CONFIG } from "./config";
+﻿import { API_CONFIG } from "./config";
 
 // src/services/api/tokenManager.ts
 class TokenManager {
@@ -27,18 +27,18 @@ class TokenManager {
         }
     }
 
-    // Refresh Token Management
-    getRefreshToken(): string | null {
-        return localStorage.getItem(API_CONFIG.AUTH.REFRESH_TOKEN_KEY);
-    }
+    // ❌ REMOVE: Refresh token methods (handled by HTTP-only cookies)
+    // getRefreshToken(): string | null {
+    //     return localStorage.getItem(API_CONFIG.AUTH.REFRESH_TOKEN_KEY);
+    // }
 
-    setRefreshToken(token: string | null): void {
-        if (token) {
-            localStorage.setItem(API_CONFIG.AUTH.REFRESH_TOKEN_KEY, token);
-        } else {
-            localStorage.removeItem(API_CONFIG.AUTH.REFRESH_TOKEN_KEY);
-        }
-    }
+    // setRefreshToken(token: string | null): void {
+    //     if (token) {
+    //         localStorage.setItem(API_CONFIG.AUTH.REFRESH_TOKEN_KEY, token);
+    //     } else {
+    //         localStorage.removeItem(API_CONFIG.AUTH.REFRESH_TOKEN_KEY);
+    //     }
+    // }
 
     // CSRF Token Management
     getCsrfToken(): string | null {
@@ -91,7 +91,6 @@ class TokenManager {
     // Clear all tokens
     clearAll(): void {
         this.setAccessToken(null);
-        this.setRefreshToken(null);
         this.setCsrfToken(null);
         this.setKycSessionId(null);
         this.refreshPromise = null;

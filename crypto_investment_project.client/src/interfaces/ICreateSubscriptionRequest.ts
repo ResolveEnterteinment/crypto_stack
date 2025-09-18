@@ -7,4 +7,6 @@ export default interface ICreateSubscriptionRequest {
     amount: number;
     currency: string;
     endDate?: Date | null;
+    successUrl: string;
+    cancelUrl: string;
 }

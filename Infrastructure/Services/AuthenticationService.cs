@@ -103,7 +103,7 @@ namespace Infrastructure.Services
                 user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays);
                 await _userManager.UpdateAsync(user);
 
-                var userData = await _userService.GetAsync(user.Id);
+                var userData = await _userService.GetByIdAsync(user.Id);
 
                 if (userData == null)
                 {
@@ -662,6 +662,17 @@ namespace Infrastructure.Services
             }
 
             return await _userManager.IsInRoleAsync(user, roleName);
+        }
+
+        public async Task<List<string>> GetUserRolesAsync(string userId)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user == null)
+            {
+                _logger.LogWarning("Role retrieval for non-existent user {UserId}", userId);
+                return new List<string>();
+            }
+            return (await _userManager.GetRolesAsync(user)).ToList();
         }
 
         #region Helper Methods

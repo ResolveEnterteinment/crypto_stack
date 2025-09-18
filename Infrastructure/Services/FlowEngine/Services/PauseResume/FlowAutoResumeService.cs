@@ -86,8 +86,6 @@ namespace Infrastructure.Services.FlowEngine.Services.PauseResume
                     var context = new FlowExecutionContext
                     {
                         Flow = flow,
-                        Definition = flow.Definition,
-                        State = flow.State,
                         CurrentStep = flow.Definition.Steps[flow.State.CurrentStepIndex],
                         Services = _serviceProvider
                     };

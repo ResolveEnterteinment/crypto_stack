@@ -1,129 +1,69 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
-import { AdminFlowSignalRService } from '../services/adminFlowSignalR';
-import { FlowDetailDto, BatchOperationResultDto } from '../services/flowService';
-import { useAuth } from '../context/AuthContext';
+import { useEffect, useRef, useState } from 'react';
+import { AdminFlowSignalRService, type StepStatusUpdateDto } from '../services/adminFlowSignalR';
+import type { FlowDetailDto, BatchOperationResultDto } from '../services/flowService';
 
-/**
- * Hook for admin-level flow monitoring
- * Subscribes to ALL flow updates across the system
- */
-export const useAdminFlowSignalR = (
-    onFlowStatusChanged: (update: FlowDetailDto) => void,
-    onBatchOperationCompleted?: (result: BatchOperationResultDto) => void,
+export function useAdminFlowSignalR(
+    onFlowStatusChanged?: (update: FlowDetailDto) => void,
+    onStepStatusChanged?: (update: StepStatusUpdateDto) => void,
     onError?: (error: string) => void
-) => {
-    const { token } = useAuth();
-    const signalRServiceRef = useRef<AdminFlowSignalRService | null>(null);
-    const initializingRef = useRef<boolean>(false);
+) {
+    const [isConnected, setIsConnected] = useState(false);
+    const serviceRef = useRef<AdminFlowSignalRService>();
 
-    const [connectionState, setConnectionState] = useState<{
-        isConnected: boolean;
-        isConnecting: boolean;
-        error: string | null;
-    }>({
-        isConnected: false,
-        isConnecting: false,
-        error: null
-    });
-
-    const initializeConnection = useCallback(async () => {
-        if (!token) {
-            console.log('Not authenticated, skipping admin SignalR connection');
-            return;
-        }
-
-        if (initializingRef.current) {
-            console.log('Admin SignalR initialization already in progress');
-            return;
-        }
-
-        initializingRef.current = true;
-        setConnectionState(prev => ({ ...prev, isConnecting: true, error: null }));
-
-        try {
-            // Clean up existing connection if any
-            if (signalRServiceRef.current) {
-                await signalRServiceRef.current.stop();
-                signalRServiceRef.current = null;
-            }
-
-            // Create new service instance
-            const service = new AdminFlowSignalRService(token);
-
-            // Set up event handlers
-            service.setFlowStatusChangedHandler(onFlowStatusChanged);
-
-            if (onBatchOperationCompleted) {
-                service.setBatchOperationCompletedHandler(onBatchOperationCompleted);
-            }
-
-            if (onError) {
-                service.setErrorHandler(onError);
-            }
-
-            // Start connection and join admin group
-            await service.start();
-            await service.joinAdminGroup();
-
-            signalRServiceRef.current = service;
-
-            setConnectionState({
-                isConnected: true,
-                isConnecting: false,
-                error: null
-            });
-
-            console.log('Admin Flow SignalR connection established');
-        } catch (error) {
-            console.error('Failed to initialize admin flow SignalR connection:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Connection failed';
-
-            setConnectionState({
-                isConnected: false,
-                isConnecting: false,
-                error: errorMessage
-            });
-
-            onError?.(errorMessage);
-        } finally {
-            initializingRef.current = false;
-        }
-    }, [token, onFlowStatusChanged, onBatchOperationCompleted, onError]);
-
-    const disconnect = useCallback(async () => {
-        if (signalRServiceRef.current) {
-            try {
-                await signalRServiceRef.current.stop();
-            } catch (error) {
-                console.error('Error stopping admin SignalR connection:', error);
-            } finally {
-                signalRServiceRef.current = null;
-                setConnectionState({
-                    isConnected: false,
-                    isConnecting: false,
-                    error: null
-                });
-            }
-        }
-    }, []);
-
-    const reconnect = useCallback(async () => {
-        await disconnect();
-        await initializeConnection();
-    }, [disconnect, initializeConnection]);
-
-    // Initialize connection on mount
     useEffect(() => {
-        initializeConnection();
+        const service = new AdminFlowSignalRService();
+        serviceRef.current = service;
+
+        const startConnection = async () => {
+            try {
+                // Set up handlers before starting
+                if (onFlowStatusChanged) {
+                    service.setFlowStatusChangedHandler(onFlowStatusChanged);
+                }
+
+                if (onStepStatusChanged) {
+                    service.setStepStatusChangedHandler(onStepStatusChanged);
+                }
+
+                if (onError) {
+                    service.setErrorHandler(onError);
+                }
+
+                await service.start();
+                await service.joinAdminGroup();
+                setIsConnected(true);
+            } catch (error) {
+                console.error('Failed to start admin flow SignalR connection:', error);
+                setIsConnected(false);
+                onError?.('Failed to connect to flow updates');
+            }
+        };
+
+        startConnection();
 
         return () => {
-            disconnect();
+            service.stop();
+            setIsConnected(false);
         };
-    }, [token]); // Reconnect when token changes
+    }, [onFlowStatusChanged, onStepStatusChanged, onError]);
+
+    const reconnect = async () => {
+        if (serviceRef.current) {
+            try {
+                await serviceRef.current.stop();
+                await serviceRef.current.start();
+                await serviceRef.current.joinAdminGroup();
+                setIsConnected(true);
+            } catch (error) {
+                console.error('Failed to reconnect admin flow SignalR:', error);
+                setIsConnected(false);
+                onError?.('Failed to reconnect to flow updates');
+            }
+        }
+    };
 
     return {
-        ...connectionState,
-        reconnect,
-        disconnect
+        isConnected,
+        reconnect
     };
-};
+}

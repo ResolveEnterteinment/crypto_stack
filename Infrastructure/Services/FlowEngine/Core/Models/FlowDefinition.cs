@@ -1,4 +1,4 @@
-﻿using Infrastructure.Services.FlowEngine.Core.Enums;
+﻿using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
 
@@ -7,6 +7,8 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
     public abstract class FlowDefinition
     {
         private bool _isInitialized = false;
+
+        protected readonly FlowStepBuilder _builder;
 
         /// <summary>
         /// Gets the list of middleware types to be executed in the application pipeline.
@@ -22,6 +24,11 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
         /// Gets or sets the active resume configuration.
         /// </summary>
         public ResumeConfig ActiveResumeConfig { get; set; }
+
+        protected FlowDefinition()
+        {
+            _builder = new FlowStepBuilder(this);
+        }
 
         /// <summary>
         /// Define your flow steps - implement this in your flow class

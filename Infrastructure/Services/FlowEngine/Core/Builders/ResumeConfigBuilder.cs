@@ -28,7 +28,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
         /// <summary>
         /// Resume when specific event is published
         /// </summary>
-        public ResumeConfigBuilder OnEvent(string eventType, Func<object, bool> eventFilter = null)
+        public ResumeConfigBuilder OnEvent(string eventType, Func<FlowExecutionContext, object, bool> eventFilter = null)
         {
             _config.EventTriggers.Add(new EventTrigger
             {

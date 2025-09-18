@@ -7,6 +7,7 @@ using Infrastructure.Services.FlowEngine.Engine;
 using Infrastructure.Utilities;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
+
 namespace Infrastructure.Services.FlowEngine.Services.Notification
 {
     public class FlowNotificationService : IFlowNotificationService
@@ -36,7 +37,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                 var flowDetailDto = MapToFlowDetailDto(flow);
 
                 // Send to specific flow group
-                await _hubContext.Clients.Group($"flow-{flow.Id}")
+                await _hubContext.Clients.Group($"flow-{flow.State.FlowId}")
                     .SendAsync("FlowStatusChanged", flowDetailDto);
 
                 // Also send to admin group for dashboard updates
@@ -44,11 +45,11 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                     .SendAsync("FlowStatusChanged", flowDetailDto);
 
                 _logger.LogDebug("Sent flow status update for flow {FlowId} with status {Status}",
-                    flow.Id, flow.Status);
+                    flow.State.FlowId, flow.State.Status);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error sending flow status notification for flow {FlowId}", flow?.Id);
+                _logger.LogError(ex, "Error sending flow status notification for flow {FlowId}", flow?.State?.FlowId);
             }
         }
 
@@ -69,18 +70,47 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                     return;
                 }
 
+                // Send BOTH step-specific update AND full flow update
+                var stepUpdateDto = new StepStatusUpdateDto
+                {
+                    FlowId = flow.State.FlowId,
+                    StepName = step.Name,
+                    StepStatus = step.Status.ToString(),
+                    StepResult = step.Result != null ? new StepResultDto
+                    {
+                        IsSuccess = step.Result.IsSuccess,
+                        Message = step.Result.Message,
+                        Data = step.Result.Data?.ToValue(),
+                    } : null,
+                    CurrentStepIndex = flow.State.CurrentStepIndex + 1,
+                    CurrentStepName = flow.State.CurrentStepName,
+                    FlowStatus = flow.State.Status.ToString(),
+                    Timestamp = DateTime.UtcNow
+                };
+
+                // Send step-specific update
+                await _hubContext.Clients.Group($"flow-{flow.State.FlowId}")
+                    .SendAsync("StepStatusChanged", stepUpdateDto);
+
+                await _hubContext.Clients.Group("flow-admins")
+                    .SendAsync("StepStatusChanged", stepUpdateDto);
+
+                // Also send full flow update to ensure complete state sync
                 var flowDetailDto = MapToFlowDetailDto(flow);
 
-                // Send detailed update to subscribed clients
-                await _hubContext.Clients.Group($"flow-{flow.Id}")
+                await _hubContext.Clients.Group($"flow-{flow.State.FlowId}")
                     .SendAsync("FlowStatusChanged", flowDetailDto);
 
-                _logger.LogDebug("Sent step status update for flow {FlowId}, step {StepName}",
-                    flow.Id, step.Name);
+                await _hubContext.Clients.Group("flow-admins")
+                    .SendAsync("FlowStatusChanged", flowDetailDto);
+
+                _logger.LogDebug("Sent step status update for flow {FlowId}, step {StepName} with status {StepStatus}",
+                    flow.State.FlowId, step.Name, step.Status);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error sending step status notification for flow {FlowId}", flow?.Id);
+                _logger.LogError(ex, "Error sending step status notification for flow {FlowId}, step {StepName}",
+                    flow?.State?.FlowId, step?.Name);
             }
         }
 
@@ -89,7 +119,10 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
             try
             {
                 await _hubContext.Clients.Group($"flow-{flowId}")
-                    .SendAsync("FlowError", error);
+                    .SendAsync("FlowError", flowId.ToString(), error);
+
+                await _hubContext.Clients.Group("flow-admins")
+                    .SendAsync("FlowError", flowId.ToString(), error);
 
                 _logger.LogWarning("Sent flow error notification for flow {FlowId}: {Error}", flowId, error);
             }
@@ -109,11 +142,10 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
             }
 
             // Map FlowDefinition to FlowDetailDto
-            // You can use AutoMapper or manual mapping here
             return new FlowDetailDto
             {
                 FlowId = flow.State.FlowId,
-                FlowType = flow.GetType().FullName,
+                FlowType = flow.State.FlowType,
                 Status = flow.State.Status.ToString(),
                 UserId = flow.State.UserId,
                 CorrelationId = flow.State.CorrelationId,
@@ -122,7 +154,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                 CompletedAt = flow.State.CompletedAt,
                 PausedAt = flow.State.PausedAt,
                 CurrentStepName = flow.State.CurrentStepName,
-                CurrentStepIndex = flow.State.CurrentStepIndex,
+                CurrentStepIndex = flow.State.CurrentStepIndex + 1,
                 PauseReason = flow.State.PauseReason?.ToString(),
                 PauseMessage = flow.State.PauseMessage,
                 LastError = flow.State.LastError?.Message,
@@ -142,12 +174,14 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                     {
                         IsSuccess = s.Result.IsSuccess,
                         Message = s.Result.Message,
-                        Data = s.Result.Data?.FromSafe() ?? []
+                        Data = s.Result.Data?.ToValue()
                     } : null,
+                    Error = s?.Error,
                     Branches = s?.Branches?.Select(b => new BranchDto
                     {
+                        Name = b?.Name ?? string.Empty,
                         IsDefault = b?.IsDefault ?? false,
-                        Condition = b?.Condition?.Method?.Name ?? "Unknown",
+                        IsConditional = b?.Condition != null,
                         Steps = b?.Steps?.Select(bs => new SubStepDto
                         {
                             Name = bs?.Name ?? "Unknown SubStep",
@@ -164,28 +198,31 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                             {
                                 IsSuccess = bs.Result.IsSuccess,
                                 Message = bs.Result.Message,
-                                Data = bs.Result.Data?.FromSafe() ?? []
+                                Data = bs.Result.Data?.ToValue()
                             } : null,
+                            Error = bs?.Error,
                             Branches = bs?.Branches?.Select(b => new BranchDto
                             {
                                 // Handle recursive branches safely
                                 IsDefault = b?.IsDefault ?? false,
-                                Condition = b?.Condition?.Method?.Name ?? "Unknown"
+                                IsConditional = b?.Condition != null
                             }).ToList() ?? [],
                             Priority = (bs as FlowSubStep)?.Priority ?? 0,
                             SourceData = (bs as FlowSubStep)?.SourceData,
                             Index = (bs as FlowSubStep)?.Index ?? 0,
-                            Metadata = (bs as FlowSubStep)?.Metadata?.FromSafe() ?? [],
+                            Metadata = (bs as FlowSubStep)?.Metadata?.FromSafe() ?? new Dictionary<string, object>(),
                             EstimatedDuration = (bs as FlowSubStep)?.EstimatedDuration,
                             ResourceGroup = (bs as FlowSubStep)?.ResourceGroup
 
-                        }).ToList() ?? []
+                        }).ToList() ?? [],
+                        Priority = b?.Priority ?? 0,
+                        ResourceGroup = b?.ResourceGroup,
                     }).ToList() ?? []
                 }).ToList() ?? [],
                 Events = flow.State.Events?.Select(e => new FlowEventDto
                 {
                     EventId = e?.EventId ?? Guid.Empty,
-                    FlowId = e?.FlowId ?? flow.Id,
+                    FlowId = e?.FlowId ?? flow.State.FlowId,
                     EventType = e?.EventType ?? "Unknown",
                     Description = e?.Description ?? "No description",
                     Timestamp = e?.Timestamp ?? DateTime.UtcNow,
@@ -195,5 +232,18 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                 TotalSteps = flow.Definition.Steps?.Count ?? 0
             };
         }
+    }
+
+    // New DTO for step-specific updates
+    public class StepStatusUpdateDto
+    {
+        public Guid FlowId { get; set; }
+        public string StepName { get; set; }
+        public string StepStatus { get; set; }
+        public StepResultDto? StepResult { get; set; }
+        public int CurrentStepIndex { get; set; }
+        public string CurrentStepName { get; set; }
+        public string FlowStatus { get; set; }
+        public DateTime Timestamp { get; set; }
     }
 }

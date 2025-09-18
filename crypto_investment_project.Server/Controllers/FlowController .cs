@@ -348,7 +348,8 @@ namespace Controllers
 
                 if (flow.State.Status != FlowStatus.Failed)
                 {
-                    return BadRequest(new { error = $"Flow is not failed. Current status: {flow.State.Status}" });
+                    return ResultWrapper.Failure(FailureReason.InvalidOperation, $"Flow is not failed. Current status: {flow.State.Status}")
+                        .ToActionResult(this);
                 }
 
                 var resolution = request?.Resolution ?? "Manually resolved";
@@ -374,7 +375,8 @@ namespace Controllers
                 // Use notification service
                 await _notificationService.NotifyFlowStatusChanged(flow);
 
-                return Ok(new { success = true, message = "Flow resolved successfully" });
+                return ResultWrapper.Success("Flow resolved successfully")
+                    .ToActionResult(this);
             }
             catch (Exception ex)
             {
@@ -513,7 +515,7 @@ namespace Controllers
                 ErrorMessage = flowSummary.ErrorMessage,
                 Duration = flowSummary.Duration?.TotalSeconds,
                 // Additional computed fields for the admin panel
-                CurrentStepIndex = flowSummary.CurrentStepIndex,
+                CurrentStepIndex = flowSummary.CurrentStepIndex + 1,
                 TotalSteps = flowSummary.TotalSteps
             };
         }
@@ -523,7 +525,7 @@ namespace Controllers
             var dto = new FlowDetailDto
             {
                 FlowId = flow.FlowId,
-                FlowType = flow.GetType().Name,
+                FlowType = Type.GetType(flow.FlowType).Name,
                 Status = flow.Status.ToString(),
                 UserId = flow.UserId,
                 CorrelationId = flow.CorrelationId,
@@ -531,11 +533,12 @@ namespace Controllers
                 StartedAt = flow.StartedAt,
                 CompletedAt = flow.CompletedAt,
                 CurrentStepName = flow.CurrentStepName,
-                CurrentStepIndex = flow.CurrentStepIndex,
+                CurrentStepIndex = flow.CurrentStepIndex + 1,
                 PausedAt = flow.PausedAt,
                 PauseReason = flow.PauseReason?.ToString(),
                 PauseMessage = flow.PauseMessage,
                 LastError = flow.LastError?.Message,
+                TriggeredBy = flow.TriggeredBy != null ? MapToTriggeredFlowDataDto(flow.TriggeredBy) : null,
                 Steps = flow.Steps.Select(step => new StepDto
                 {
                     Name = step.Name,
@@ -545,6 +548,9 @@ namespace Controllers
                     MaxRetries = step.MaxRetries,
                     RetryDelay = step.RetryDelay.ToString(),
                     Timeout = step.Timeout?.ToString(),
+                    StartedAt = step.StartedAt,
+                    CompletedAt = step.CompletedAt,
+                    Duration = step.Duration.TotalSeconds.ToString(),
                     IsCritical = step.IsCritical,
                     IsIdempotent = step.IsIdempotent,
                     CanRunInParallel = step.CanRunInParallel,
@@ -552,10 +558,13 @@ namespace Controllers
                     {
                         IsSuccess = step.Result.IsSuccess,
                         Message = step.Result.Message,
-                        Data = step.Result.Data.FromSafe(),
+                        Data = step.Result.Data.ToValue(),
                     } : null,
+                    Error = step.Error,
+                    TriggeredFlows = step.TriggeredFlows?.Select(tf => MapToTriggeredFlowDataDto(tf)).ToList() ?? [],
                     Branches = step.Branches?.Select(b => new BranchDto
                     {
+                        Name = b.Name,
                         Steps = b.Steps.Select(s => new SubStepDto
                         {
                             Name = s.Name,
@@ -572,8 +581,10 @@ namespace Controllers
                             {
                                 IsSuccess = s.Result.IsSuccess,
                                 Message = s.Result.Message,
-                                Data = s.Result.Data.FromSafe(),
+                                Data = s.Result.Data.ToValue(),
                             } : null,
+                            Error = s.Error,
+                            TriggeredFlows = step.TriggeredFlows?.Select(tf => MapToTriggeredFlowDataDto(tf)).ToList() ?? [],
                             Priority = s.Priority,
                             SourceData = s.SourceData,
                             Index = s.Index,
@@ -582,7 +593,9 @@ namespace Controllers
                             ResourceGroup = s.ResourceGroup
                         }).ToList(),
                         IsDefault = b.IsDefault,
-                        Condition = b.Condition?.Method.Name ?? "Unknown"
+                        IsConditional = b.Condition != null,
+                        Priority = b.Priority,
+                        ResourceGroup = b.ResourceGroup
                     }).ToList() ?? []
                 }).ToList(),
                 Events = flow.Events.Select(e => new FlowEventDto
@@ -597,6 +610,37 @@ namespace Controllers
                 Data = flow.Data?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Value),
                 TotalSteps = flow.Steps.Count
             };
+
+            return dto;
+        }
+
+        private TriggeredFlowDataDto MapToTriggeredFlowDataDto(TriggeredFlowData triggeredFlow)
+        {
+            var dto = new TriggeredFlowDataDto
+            {
+                Type = Type.GetType(triggeredFlow.Type).Name,
+                FlowId = triggeredFlow.FlowId,
+                TriggeredByStep = triggeredFlow.TiggeredByStep
+            };
+
+            // Try to get current status of the triggered flow if FlowId exists
+            if (triggeredFlow.FlowId.HasValue)
+            {
+                try
+                {
+                    var status = _flowEngineService.GetStatus(triggeredFlow.FlowId.Value);
+                    dto.Status = status?.ToString();
+
+                    // Optionally get creation time from flow details
+                    var flow = _flowEngineService.GetFlowById(triggeredFlow.FlowId.Value).Result;
+                    dto.CreatedAt = flow?.State.CreatedAt;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to get status for triggered flow {FlowId}", triggeredFlow.FlowId);
+                    dto.Status = "Unknown";
+                }
+            }
 
             return dto;
         }
@@ -658,20 +702,6 @@ namespace Controllers
 
     #region DTOs
 
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
-
     public class PauseRequestDto
     {
         public PauseReason Reason { get; set; }
@@ -714,10 +744,6 @@ namespace Controllers
         public bool Success { get; set; }
         public string Message { get; set; }
     }
-
-    
-
-    
 
     #endregion
 }

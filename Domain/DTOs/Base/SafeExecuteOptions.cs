@@ -4,6 +4,10 @@ namespace Domain.DTOs.Base
 {
     public class SafeExecuteOptions
     {
+        public bool IsLightweight { get; set; } = true;
+        public bool EnableDetailedInstrumentation { get; set; } = false;
+        public bool IsCritical { get; set; } = false;
+        public bool IncludeStackTrace { get; set; } = true;
         public Func<Task>? OnSuccess { get; set; }
         public Func<Exception, Task>? OnError { get; set; }
 
@@ -30,10 +34,39 @@ namespace Domain.DTOs.Base
 
         // Context enrichment
         public Dictionary<string, object>? AdditionalContext { get; set; }
+
+        public SafeExecuteOptions WithLightweightInstrumentation()
+        {
+            IsLightweight = true;
+            EnableDetailedInstrumentation = false;
+            IncludeStackTrace = false;
+            return this;
+        }
+
+        public SafeExecuteOptions WithEssentialInstrumentation()
+        {
+            IsLightweight = false;
+            EnableDetailedInstrumentation = false;
+            IncludeStackTrace = true;
+            return this;
+        }
+
+        public SafeExecuteOptions WithFullInstrumentation()
+        {
+            IsLightweight = false;
+            EnableDetailedInstrumentation = true;
+            IncludeStackTrace = true;
+            IsCritical = true;
+            return this;
+        }
     }
 
     public class SafeExecuteOptions<T>
     {
+        public bool IsLightweight { get; set; } = true;
+        public bool EnableDetailedInstrumentation { get; set; } = false;
+        public bool IsCritical { get; set; } = false;
+        public bool IncludeStackTrace { get; set; } = true;
         public Func<T, Task>? OnSuccess { get; set; }
         public Func<Exception, Task>? OnError { get; set; }
 
@@ -60,6 +93,31 @@ namespace Domain.DTOs.Base
 
         // Context enrichment
         public Dictionary<string, object>? AdditionalContext { get; set; }
+
+        public SafeExecuteOptions<T> WithLightweightInstrumentation()
+        {
+            IsLightweight = true;
+            EnableDetailedInstrumentation = false;
+            IncludeStackTrace = false;
+            return this;
+        }
+
+        public SafeExecuteOptions<T> WithEssentialInstrumentation()
+        {
+            IsLightweight = false;
+            EnableDetailedInstrumentation = false;
+            IncludeStackTrace = true;
+            return this;
+        }
+
+        public SafeExecuteOptions<T> WithFullInstrumentation()
+        {
+            IsLightweight = false;
+            EnableDetailedInstrumentation = true;
+            IncludeStackTrace = true;
+            IsCritical = true;
+            return this;
+        }
     }
 
     public class AlertThreshold

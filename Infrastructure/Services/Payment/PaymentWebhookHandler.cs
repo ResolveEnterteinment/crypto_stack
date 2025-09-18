@@ -7,9 +7,13 @@ using Application.Interfaces.Subscription;
 using Domain.Constants;
 using Domain.Constants.Logging;
 using Domain.DTOs;
-using Domain.DTOs.Payment;
 using Domain.Exceptions;
 using Domain.Models.Subscription;
+using Infrastructure.Flows.Exchange;
+using Infrastructure.Flows.Payment;
+using Infrastructure.Flows.Subscription;
+using Infrastructure.Services.FlowEngine.Core.Interfaces;
+using Infrastructure.Services.FlowEngine.Engine;
 using MongoDB.Driver;
 
 namespace Infrastructure.Services.Payment
@@ -21,21 +25,30 @@ namespace Infrastructure.Services.Payment
     {
         private readonly IPaymentService _paymentService;
         private readonly ISubscriptionService _subscriptionService;
+        private readonly IFlowEngineService _flowEngineService;
         private readonly ILoggingService _logger;
         private readonly IResilienceService _resilienceService;
+        private readonly IServiceProvider _serviceProvider;
+        private readonly IUserService _userService;
 
         public StripeWebhookHandler(
             IPaymentService paymentService,
             IEventService eventService,
+            IFlowEngineService flowEngineService,
             ISubscriptionService subscriptionService,
             IIdempotencyService idempotencyService,
             ILoggingService logger,
-            IResilienceService resilienceService)
+            IResilienceService resilienceService,
+            IServiceProvider serviceProvider,
+            IUserService userService)
         {
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
+            _flowEngineService = flowEngineService ?? throw new ArgumentNullException(nameof(flowEngineService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _resilienceService = resilienceService ?? throw new ArgumentNullException(nameof(resilienceService));
+            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+            _userService = userService ?? throw new ArgumentNullException(nameof(userService));
         }
 
         /// <summary>
@@ -56,42 +69,26 @@ namespace Infrastructure.Services.Payment
                 _logger.LogInformation("Processing Stripe webhook event {EventId} of type {EventType}",
                     stripeEvent.Id, stripeEvent.Type);
 
-                bool handled = false;
-
                 // Handle different event types
                 switch (stripeEvent.Type)
                 {
                     case "checkout.session.completed":
-                        handled = true;
                         return await HandleCheckoutSessionCompletedAsync(stripeEvent);
                     case "invoice.paid":
-                        handled = true;
                         return await HandleInvoicePaidAsync(stripeEvent);
                     case "setup_intent.succeeded":
-                        handled = true;
                         return await HandleSetupIntentSucceededAsync(stripeEvent);
                     case "payment_intent.payment_failed":
-                        handled = true;
                         return await HandlePaymentFailedAsync(stripeEvent);
                     case "customer.subscription.deleted":
-                        handled = true;
                         return await HandleSubscriptionDeletedAsync(stripeEvent);
                     case "customer.subscription.paused":
-                        handled = true;
                         return await HandleSubscriptionPausedAsync(stripeEvent);
                     case "customer.subscription.resumed":
-                        handled = true;
                         return await HandleSubscriptionResumedAsync(stripeEvent);
                     default:
                         _logger.LogInformation("Unhandled Stripe event type: {EventType}", stripeEvent.Type);
-                        handled = true; // Mark as handled since we're choosing not to process it
                         break;
-                }
-
-                // Mark the event as processed for idempotency
-                if (!handled)
-                {
-                    throw new PaymentEventException($"Failed to process {stripeEvent.Type} event", stripeEvent.Type, "Stripe", stripeEvent.Id);
                 }
 
                 return ResultWrapper.Success("Event processed successfully");
@@ -110,8 +107,7 @@ namespace Infrastructure.Services.Payment
         private async Task<ResultWrapper> HandleCheckoutSessionCompletedAsync(Stripe.Event stripeEvent)
         {
             #region Validation
-            var session = stripeEvent.Data.Object as Stripe.Checkout.Session;
-            if (session == null)
+            if (stripeEvent.Data.Object is not Stripe.Checkout.Session session)
             {
                 _logger.LogWarning("Invalid event data: Expected Session object");
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid event data: Expected Session object");
@@ -136,6 +132,12 @@ namespace Infrastructure.Services.Payment
                 await _logger.LogTraceAsync("Missing or invalid userId in Session metadata", "Extract user ID from metadata", LogLevel.Error, true);
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing userId in Session metadata");
             }
+
+            if (!metadata.TryGetValue("correlationId", out var correlationId) ||
+                string.IsNullOrEmpty(correlationId))
+            {
+                await _logger.LogTraceAsync("Missing or invalid correlationId in Session metadata", "Extract correlation ID from metadata", LogLevel.Warning, false);
+            }
             #endregion
 
             // Use the resilience wrapper
@@ -151,6 +153,7 @@ namespace Infrastructure.Services.Payment
                 },
                 async () =>
                 {
+                    /*
                     var processResult = await _paymentService.ProcessCheckoutSessionCompletedAsync(new SessionDto()
                     {
                         Id = session.Id,
@@ -169,6 +172,9 @@ namespace Infrastructure.Services.Payment
                             ? new ServiceUnavailableException("PaymentService")
                             : new PaymentApiException(processResult?.ErrorMessage ?? "", "Stripe");
                     }
+                    */
+
+                    _flowEngineService.PublishEventAsync("CheckoutSessionCompleted", session, correlationId);
                 });
         }
 
@@ -177,10 +183,10 @@ namespace Infrastructure.Services.Payment
         /// </summary>
         private async Task<ResultWrapper> HandleInvoicePaidAsync(Stripe.Event stripeEvent)
         {
-            #region Validation
+            #region Validations
             _logger.LogInformation($"Handling stripe event invoice.paid");
-            var invoice = stripeEvent.Data.Object as Stripe.Invoice;
-            if (invoice == null)
+
+            if (stripeEvent.Data.Object is not Stripe.Invoice invoice)
             {
                 _logger.LogWarning("Invalid event data: Expected Invoice object");
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Invalid event data: Expected Invoice object");
@@ -201,10 +207,17 @@ namespace Infrastructure.Services.Payment
 
             // Extract user ID from metadata
             if (!metadata.TryGetValue("userId", out var userId) ||
-                string.IsNullOrEmpty(userId))
+                string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out Guid parsedUserId))
             {
                 await _logger.LogTraceAsync("Missing or invalid userId in Invoice metadata", "Extract user ID from metadata", LogLevel.Error, true);
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing userId in Invoice metadata");
+            }
+
+            // Extract correlation ID from metadata if present
+            if (!metadata.TryGetValue("correlationId", out var correlationId) ||
+                string.IsNullOrEmpty(correlationId))
+            {
+                correlationId = $"stripe-{invoice.Id}";
             }
 
             #endregion
@@ -226,25 +239,27 @@ namespace Infrastructure.Services.Payment
                 },
                 async () =>
                 {
-                    var processResult = await _paymentService.ProcessInvoicePaidEvent(new()
-                    {
-                        Id = invoice.Id,
-                        Provider = "Stripe",
-                        ChargeId = invoice.ChargeId,
-                        PaymentIntentId = invoice.PaymentIntentId,
-                        UserId = userId,
-                        SubscriptionId = subscriptionId,
-                        ProviderSubscripitonId = invoice.SubscriptionId,
-                        Amount = invoice.AmountPaid,
-                        Currency = invoice.Currency,
-                        Status = invoice.Status
-                    });
+                    var user = await _userService.GetByIdAsync(parsedUserId);
 
-                    if (processResult == null || !processResult.IsSuccess)
+                    if(user == null)
                     {
-                        throw processResult == null
-                            ? new ServiceUnavailableException("PaymentService")
-                            : new PaymentApiException(processResult?.ErrorMessage ?? "", "Stripe");
+                        throw new ResourceNotFoundException("User", parsedUserId.ToString());
+                    }
+
+                    var flow = Flow.Builder(_serviceProvider)
+                        .WithData(new Dictionary<string, object>
+                        {
+                            ["Invoice"] = invoice
+                        })
+                        .ForUser(userId, user.Email)
+                        .WithCorrelation(correlationId)
+                        .Build<PaymentProcessingFlow>();
+
+                    var result = await flow.ExecuteAsync();
+
+                    if (result == null || result.Error != null)
+                    {
+                        throw result?.Error ?? new Exception("Failed to execute payment processing flow.");
                     }
                 });
         }

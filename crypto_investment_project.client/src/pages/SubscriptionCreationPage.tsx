@@ -1,17 +1,17 @@
 // src/pages/SubscriptionCreationPage.tsx - Enhanced Version
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
 import Navbar from '../components/Navbar';
-import PlanDetailsStep from '../components/Subscription/PlanDetailsStep';
 import AssetAllocationStep from '../components/Subscription/AssetAllocationStep';
+import PlanDetailsStep from '../components/Subscription/PlanDetailsStep';
 import ReviewStep from '../components/Subscription/ReviewStep';
+import { useAuth } from '../context/AuthContext';
 import { getSupportedAssets } from '../services/asset';
+import { SessionResponse } from '../services/payment';
 import { createSubscription } from '../services/subscription';
-import { initiatePayment, PaymentRequestData } from '../services/payment';
-import { formatApiError } from '../utils/apiErrorHandler';
 import { Asset } from '../types/assetTypes';
 import { Allocation } from '../types/subscription';
+import { formatApiError } from '../utils/apiErrorHandler';
 
 // Error feedback component with improved UX
 const ErrorFeedback: React.FC<{ error: string | null; onDismiss: () => void }> = ({ error, onDismiss }) => {
@@ -226,61 +226,38 @@ const SubscriptionCreationPageContent: React.FC = () => {
                 interval: formData.interval,
                 amount: formData.amount,
                 currency: formData.currency,
-                endDate: formData.endDate
+                endDate: formData.endDate,
+                successUrl: window.location.origin + `/payment/checkout/success`,
+                cancelUrl: window.location.origin + `/payment/checkout/cancel`
             };
 
             // Create subscription with improved error handling
-            let subscriptionId;
+            let session: SessionResponse;
             try {
-                subscriptionId = await createSubscription(subscriptionRequest);
+                session = await createSubscription(subscriptionRequest);
 
-                if (!subscriptionId) {
-                    throw new Error('Server returned empty subscription ID');
-                }
-
-                console.log("Subscription created successfully with ID:", subscriptionId);
-            } catch (subscriptionError: any) {
-                console.error('Subscription creation error:', subscriptionError);
-                // Format user-friendly error message
-                const errorMessage = formatApiError(subscriptionError);
-                throw new Error(`Subscription creation failed: ${errorMessage}`);
-            }
-
-            // Initialize payment with the subscription ID
-            try {
-                const paymentRequest : PaymentRequestData = {
-                    subscriptionId,
-                    userId: formData.userId,
-                    amount: formData.amount,
-                    currency: formData.currency,
-                    isRecurring: formData.interval !== 'ONCE',
-                    interval: formData.interval,
-                    // Add return URLs with better error handling
-                    returnUrl: window.location.origin + `/payment/checkout/success?subscription_id=${subscriptionId}&amount=${formData.amount}&currency=${formData.currency}`,
-                    cancelUrl: window.location.origin + `/payment/checkout/cancel?subscription_id=${subscriptionId}`
-                };
-
-                const data = await initiatePayment(paymentRequest);
-
-                if (!data.checkoutUrl) {
-                    throw new Error('Payment initialization returned empty checkout URL');
+                if (!session || !session.checkoutUrl) {
+                    throw new Error('Server returned empty/invalid session response');
                 }
 
                 // Save current transaction state to session storage for recovery
                 sessionStorage.setItem('pendingSubscription', JSON.stringify({
-                    subscriptionId,
+                    session,
                     timestamp: Date.now(),
                     amount: formData.amount,
                     currency: formData.currency
                 }));
 
+                console.log(`Sessionv ${session.sessionId} created successfully. Redirecting to:`, session.checkoutUrl);
+
                 // Redirect to checkout
-                window.location.href = data.checkoutUrl;
-            } catch (paymentError: any) {
-                console.error('Payment initialization error:', paymentError);
+                window.location.href = session.checkoutUrl;
+
+            } catch (subscriptionError: any) {
+                console.error('Subscription creation error:', subscriptionError);
                 // Format user-friendly error message
-                const errorMessage = formatApiError(paymentError);
-                throw new Error(`Payment initialization failed: ${errorMessage}`);
+                const errorMessage = formatApiError(subscriptionError);
+                throw new Error(`Subscription creation failed: ${errorMessage}`);
             }
         } catch (error: any) {
             console.error('Error in subscription creation flow:', error);

@@ -39,6 +39,8 @@ namespace Controllers
                 {
                     EnableValidation = request.EnableValidation,
                     RequiresApproval = request.RequiresApproval,
+                    SimulateExternalApiFailure = request.SimulateExternalApiFailure,
+                    SimulateValidationFailure = request.SimulateValidationFailure,
                     Items = request.Items.Count > 0 ? request.Items  :  new List<string> { "Item1", "Item2", "Item3", "Item4", "Item5" }
                 };
 
@@ -405,6 +407,8 @@ namespace Controllers
     {
         public bool EnableValidation { get; set; } = true;
         public bool RequiresApproval { get; set; } = false;
+        public bool SimulateValidationFailure { get; set; } = false;
+        public bool SimulateExternalApiFailure { get; set; } = false;
         public List<string> Items { get; set; }
     }
 

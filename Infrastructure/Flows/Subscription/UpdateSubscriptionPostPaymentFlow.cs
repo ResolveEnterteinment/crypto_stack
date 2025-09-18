@@ -69,10 +69,9 @@ namespace Infrastructure.Flows.Payment
 
                     var totalInvestments = subscriptionPaymentsResult?.Data.Select(p => p.TotalAmount).Sum() ?? 0m;
 
-                    return StepResult.Success($"Calculated total investments for subscription ID {subscription.Id}.", new()
-                    {
-                        ["TotalInvestments"] = totalInvestments
-                    });
+                    context.SetData("TotalInvestments", totalInvestments);
+
+                    return StepResult.Success($"Calculated total investments for subscription ID {subscription.Id}.", totalInvestments);
                 })
                 .InParallel()
                 .Build();
@@ -112,10 +111,9 @@ namespace Infrastructure.Flows.Payment
                         };
                     }
 
-                    return StepResult.Success($"Calculated next due date for subscription ID {subscription.Id}.", new()
-                    {
-                        ["NextDueDate"] = nextDueDate
-                    });
+                    context.SetData("NextDueDate", nextDueDate.Value);
+
+                    return StepResult.Success($"Calculated next due date for subscription ID {subscription.Id}.", nextDueDate);
                 })
                 .InParallel()
                 .Build();
@@ -146,10 +144,9 @@ namespace Infrastructure.Flows.Payment
                         throw new DatabaseException($"Failed to update subscription {subscription.Id} with payment details: {updateResult.ErrorMessage}");
                     }
 
-                    return StepResult.Success($"Calculated next due date for subscription ID {subscription.Id}.", new()
-                    {
-                        ["Subscription"] = updateResult.Data.Documents.FirstOrDefault()
-                    });
+                    context.SetData("Subscription", updateResult.Data.Documents.First());
+
+                    return StepResult.Success($"Calculated next due date for subscription ID {subscription.Id}.", updateResult.Data.Documents.First());
                 })
                 .Critical()
                 .Build();

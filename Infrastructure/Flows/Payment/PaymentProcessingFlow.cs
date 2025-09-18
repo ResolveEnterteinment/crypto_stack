@@ -9,7 +9,6 @@ using Infrastructure.Flows.Exchange;
 using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Models;
-using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 
@@ -20,7 +19,6 @@ namespace Infrastructure.Flows.Payment
         private readonly ISubscriptionService _subscriptionService;
         private readonly IPaymentService _paymentService;
         private readonly ILogger<PaymentProcessingFlow> _logger;
-        private readonly FlowStepBuilder _builder;
 
         public PaymentProcessingFlow(
             ILogger<PaymentProcessingFlow> logger,
@@ -30,7 +28,6 @@ namespace Infrastructure.Flows.Payment
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _builder = new FlowStepBuilder(this);
         }
         protected override void DefineSteps()
         {
@@ -79,22 +76,22 @@ namespace Infrastructure.Flows.Payment
                         return StepResult.NotAuthorized("User ID in metadata does not match subscription user ID.");
                     }
 
-                    return StepResult.Success("Stripe invoice validated.", new()
+                    var invoiceRequest = new InvoiceRequest()
                     {
-                        ["InvoiceRequest"] = new InvoiceRequest()
-                        {
-                            Id = invoice.Id,
-                            Provider = "Stripe",
-                            ChargeId = invoice.ChargeId,
-                            PaymentIntentId = invoice.PaymentIntentId,
-                            UserId = userId,
-                            SubscriptionId = subscriptionId,
-                            ProviderSubscripitonId = invoice.SubscriptionId,
-                            Amount = invoice.AmountPaid,
-                            Currency = invoice.Currency,
-                            Status = invoice.Status
-                        }
-                    });
+                        Id = invoice.Id,
+                        Provider = "Stripe",
+                        ChargeId = invoice.ChargeId,
+                        PaymentIntentId = invoice.PaymentIntentId,
+                        UserId = userId,
+                        SubscriptionId = subscriptionId,
+                        ProviderSubscripitonId = invoice.SubscriptionId,
+                        Amount = invoice.AmountPaid,
+                        Currency = invoice.Currency,
+                        Status = invoice.Status
+                    };
+                    context.SetData("InvoiceRequest", invoiceRequest); // Pass the raw invoice for further processing
+
+                    return StepResult.Success("Stripe invoice validated.", invoiceRequest);
                 })
                 .Build();
 
@@ -113,10 +110,9 @@ namespace Infrastructure.Flows.Payment
 
                     if (existingWr != null && existingWr.Data != null)
                     {
-                        return StepResult.Success($"Payment data with invoice ID {invoice.Id} already present.", new()
-                        {
-                            ["Payment"] = existingWr.Data
-                        });
+                        context.SetData("Payment", existingWr.Data); // Pass existing payment data forward
+
+                        return StepResult.Success($"Payment data with invoice ID {invoice.Id} already present.", existingWr.Data);
                     }
 
                     // Calculate amounts
@@ -138,10 +134,8 @@ namespace Infrastructure.Flows.Payment
                         Status = invoice.Status
                     };
 
-                    return StepResult.Success($"Payment data ready", new()
-                    {
-                        ["Payment"] = paymentData
-                    });
+                    context.SetData("Payment", paymentData); // Pass new payment
+                    return StepResult.Success($"Payment data ready", paymentData);
                 })
                 .WithIdempotency()
                 .Build();
@@ -158,15 +152,16 @@ namespace Infrastructure.Flows.Payment
                     if (insertWr == null || !insertWr.IsSuccess)
                         throw new DatabaseException(insertWr?.ErrorMessage ?? "Insert result returned null");
 
-                    return StepResult.Success($"Payment record created.", new()
-                    {
-                        ["Payment"] = insertWr.Data.Documents.FirstOrDefault()
-                    });
+                    return StepResult.Success($"Payment record created.", insertWr.Data.Documents.FirstOrDefault());
                 })
                 .WithIdempotency()
                 .Critical()
                 .InParallel()
-                .Triggers<UpdateSubscriptionPostPaymentFlow>()
+                .Triggers<UpdateSubscriptionPostPaymentFlow>(context => new Dictionary<string, object>()
+                {
+                    ["Payment"] = context.GetData<PaymentData>("Payment"),
+                    ["Subscription"] = context.GetData<SubscriptionData>("Subscription")
+                })
                 .Build();
 
             _builder.Step("FetchAllocations")
@@ -188,36 +183,44 @@ namespace Infrastructure.Flows.Payment
                     _logger.LogInformation("Processing {Count} allocations for subscription {SubscriptionId}",
                         fetchAllocationsResult.Data.Count(), subscription.Id);
 
-                    return StepResult.Success($"Fetched {allocations.Count} allocations for subscription {subscription.Id}.", new()
-                    {
-                        ["Allocations"] = allocations
-                    });
+                    context.SetData("Allocations", allocations);
+
+                    return StepResult.Success($"Fetched {allocations.Count} allocations for subscription {subscription.Id}.", allocations);
                 })
                 .WithDynamicBranches(
                 // Data selector: Your existing allocation fetching logic
-                ctx => ctx.GetData<List<EnhancedAllocationDto>>("Allocations"),
+                    ctx => ctx.GetData<List<EnhancedAllocationDto>>("Allocations"),
 
-                // Step factory: Convert each allocation to a sub-step
+                    // Step factory: Convert each allocation to a sub-step
+                    (builder, allocation, index) => builder.Branch($"ExecuteOrder_{allocation.AssetTicker}_{index}")
+                        .WithSourceData(allocation)
+                        .WithResourceGroup(allocation.Exchange) // For round-robin
+                        .WithPriority(allocation.Priority)
+                        .WithSteps(stepBuilder => stepBuilder
+                            .Step("ProcessSingleAllocation")
+                            .Execute(async ctx =>
+                            {
+                                // Your existing ProcessSingleAllocation logic
+                                var payment = ctx.GetData<PaymentData>("Payment");
+                                return StepResult.Success($"Processing allocation for {allocation.AssetTicker} on {allocation.Exchange}.",
+                                    allocation);
+                            })
+                            .Triggers<AllocationExchangeOrderFlow>(context => new()
+                            {
+                                ["Allocation"] = allocation,
+                                ["Payment"] = context.GetData<PaymentData>("Payment")
+                            })
+                            .Build())
+                        .Build(),
 
-                (allocation, index) => new FlowSubStep
-                {
-                    Name = $"ExecuteOrder_{allocation.AssetTicker}_{index}",
-                    SourceData = allocation,
-                    ResourceGroup = allocation.Exchange, // For round-robin
-                    Priority = allocation.Priority,
-                    ExecuteAsync = async ctx =>
-                    {
-                        // Your existing ProcessSingleAllocation logic
-                        var payment = ctx.GetData<PaymentData>("Payment");
-                        return StepResult.Success($"Processing allocation for {allocation.AssetTicker} on {allocation.Exchange}.",
-                            new Dictionary<string, object> { ["Allocation"] = allocation });
-                    },
-                    TriggeredFlows = new List<Type> { typeof(ExecuteExchangeOrderFlow) }
-                },
-                ExecutionStrategy.RoundRobin // Smart exchange distribution
-                )
+                    ExecutionStrategy.RoundRobin // Smart exchange distribution
+                    )
                 .InParallel()
                 .Critical()
+                .Build();
+
+            _builder.Step("HandleDust")
+                .Triggers<HandleDustFlow>()
                 .Build();
         }
 

@@ -29,6 +29,7 @@ namespace Application.Interfaces
 
         Task<ResultWrapper<LoginResponse>> RefreshToken(string accessToken, string refreshToken);
         Task<bool> UserHasRole(string userId, string roleName);
+        Task<List<string>> GetUserRolesAsync(string userId);
         Task<ResultWrapper> ResendConfirmationEmailAsync(string email);
     }
 }

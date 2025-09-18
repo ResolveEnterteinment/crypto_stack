@@ -1,5 +1,7 @@
 ﻿using Application.Interfaces;
+using Domain.DTOs.Flow;
 using Infrastructure.Hubs;
+using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Exceptions;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
@@ -17,20 +19,20 @@ namespace Infrastructure.Services.FlowEngine.Engine
 {
     public class FlowExecutor : IFlowExecutor
     {
-        private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<FlowExecutor> _logger;
         private readonly IIdempotencyService _idempotency;
+        private readonly IFlowSecurity _security;
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly IFlowNotificationService _notificationService;
 
         public FlowExecutor(
             IServiceProvider serviceProvider, 
-            ILogger<FlowExecutor> logger, 
+            ILogger<FlowExecutor> logger,
             IServiceScopeFactory scopeFactory,
             IHubContext<FlowHub> hubContext)
         {
-            _serviceProvider = serviceProvider;
             _logger = logger;
+            _security = serviceProvider.GetRequiredService<IFlowSecurity>();
             _idempotency = serviceProvider.GetRequiredService<IIdempotencyService>();
             _notificationService = serviceProvider.GetRequiredService<IFlowNotificationService>();
             _scopeFactory = scopeFactory;
@@ -43,10 +45,21 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 flow.State.Status = FlowStatus.Running;
                 flow.State.StartedAt = DateTime.UtcNow;
 
+                flow.State.Events.Add(new FlowEvent
+                {
+                    FlowId = flow.State.FlowId,
+                    EventType = "FlowStarted",
+                    Description = $"Flow execution started.",
+                    Data = new Dictionary<string, object>
+                    {
+                        { "startedAt", flow.State.StartedAt }
+                    }.ToSafe(),
+                });
+
                 // Send initial status update
                 await _notificationService.NotifyFlowStatusChanged(flow);
 
-                while (flow.State.CurrentStepIndex < flow.Definition.Steps.Count)
+                while (flow.State.CurrentStepIndex < flow.Definition.Steps.Count && !cancellationToken.IsCancellationRequested)
                 {
                     var step = flow.Definition.Steps[flow.State.CurrentStepIndex];
 
@@ -54,7 +67,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     flow.State.CurrentStepName = step.Name;
                     flow.State.CurrentStepIndex = flow.Definition.Steps.IndexOf(step);
 
-                    await ExecuteStepAsync(flow, step, cancellationToken);
+                    await ExecuteStepAsync(flow.Context, step, cancellationToken);
 
                     await flow.PersistAsync();
 
@@ -66,6 +79,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                     if (flow.Definition.Steps.Count <= flow.State.CurrentStepIndex + 1)
                         break; // No more steps to execute
+
                     flow.State.CurrentStepIndex++;
                 }
 
@@ -76,7 +90,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                 if (flow.State.Status == FlowStatus.Paused)
                 {
-                    return FlowExecutionResult.Paused(flow.State.FlowId, "Flow is paused");
+                    return FlowExecutionResult.Paused(flow.State.FlowId, "Flow is paused", flow.State.PauseData?.ToValue());
                 }
 
                 flow.State.Status = FlowStatus.Completed;
@@ -87,7 +101,19 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 // Send completion notification
                 await _notificationService.NotifyFlowStatusChanged(flow);
 
-                return FlowExecutionResult.Success(flow.State.FlowId, "Flow completed successfully");
+                flow.State.Events.Add(new FlowEvent
+                {
+                    FlowId = flow.State.FlowId,
+                    EventType = "FlowCompleted",
+                    Description = $"Flow completed successfully.",
+                    Data = new Dictionary<string, object>
+                    {
+                        { "totalSteps", flow.Definition.Steps.Count },
+                        { "completedAt", flow.State.CompletedAt }
+                    }.ToSafe(),
+                });
+
+                return FlowExecutionResult.Success(flow.Id, "Flow completed successfully", data: flow.Context.CurrentStep.Result?.Data?.ToValue());
             }
             catch (Exception ex)
             {
@@ -119,19 +145,50 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
         }
 
-        private async Task ExecuteStepAsync(Flow flow, FlowStep step, CancellationToken cancellationToken)
+        private async Task ExecuteStepAsync(FlowExecutionContext stepContext, FlowStep step, CancellationToken cancellationToken)
         {
+            // Check for cancellation before starting step execution
+            if (cancellationToken.IsCancellationRequested)
+            {
+                step.Status = StepStatus.Cancelled;
+                return;
+            }
+
+            var flow = stepContext.Flow;
+
+            //add stop watch
+            step.StartedAt = DateTime.UtcNow;
+
             try
             {
-                // Check conditional execution
-                if (step.Condition != null && step.Condition?.Invoke(flow.Context) != true)
+                // Check step dependencies
+                foreach (var dependency in step.StepDependencies)
                 {
-                    step.Status = StepStatus.Skipped;
+                    var depStep = flow.Definition.Steps.FirstOrDefault(s => s.Name == dependency);
+                    if (depStep == null || depStep.Status != StepStatus.Completed)
+                    {
+                        step.Status = StepStatus.Skipped;
+                        return; // Skip execution if dependency not met
+                    }
+                }
 
-                    await flow.PersistAsync();
+                // Check role requirements
+                if (step.RequiredRoles != null && step.RequiredRoles.Count > 0)
+                {
+                    var userId = flow.State.UserId ?? "system";
+                    var securityService = flow.GetService<IFlowSecurity>();
 
-                    await _notificationService.NotifyStepStatusChanged(flow, step);
-                    return; // Skip step execution
+                    // Check specific role requirements
+                    foreach (var requiredRole in step.RequiredRoles)
+                    {
+                        var hasRole = await securityService.UserHasRoleAsync(userId, requiredRole);
+                        {
+                            step.Status = StepStatus.Failed;
+                            throw new FlowSecurityException($"User {userId} lacks required role '{requiredRole}' for step {step.Name}");
+                        }
+                    }
+
+                    _logger.LogInformation("Role validation passed for user {UserId} on step {StepName} with roles: {Roles}");
                 }
 
                 // Check data dependencies
@@ -152,20 +209,35 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                 step.Status = StepStatus.InProgress;
 
-                // NEW: Check if step should pause
+                // Check if step should pause
                 if (step.PauseCondition != null)
                 {
-                    var pauseCondition = step.PauseCondition(flow.Context);
+                    var pauseCondition = await step.PauseCondition(flow.Context);
                     if (pauseCondition.ShouldPause)
                     {
                         step.Status = StepStatus.Paused;
+
+                        step.Result = StepResult.Paused(pauseCondition.Message, pauseCondition.Data);
+
                         await PauseInternalAsync(flow, pauseCondition);
+
                         return; // Exit step execution as flow is paused
                     }
                 }
 
-
                 _logger.LogInformation("Executing step {StepName} in flow {FlowId}", step.Name, flow.State.FlowId);
+
+                // Check conditional execution
+                if (step.Condition != null && step.Condition?.Invoke(flow.Context) != true)
+                {
+                    step.Status = StepStatus.Skipped;
+
+                    await flow.PersistAsync();
+
+                    await _notificationService.NotifyStepStatusChanged(flow, step);
+                    return; // Skip step execution
+
+                }
 
                 // Check if step is idempotent
                 string? idempotencyKey = null;
@@ -173,25 +245,16 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 if (step.IsIdempotent)
                 {
                     // Generate idempotency key based on step context and data dependencies
-                    idempotencyKey = GenerateStepIdempotencyKey(flow, step, flow.Context);
+                    idempotencyKey = step.IdempotencyKey ?? step.IdempotencyKeyFactory?.Invoke(flow.Context) ?? GenerateStepIdempotencyKey(flow, step, flow.Context);
 
                     // Check if this step was already executed successfully
-                    var (resultExists, existingResult) = await _idempotency.GetResultAsync<StepResult>(idempotencyKey);
+                    var (resultExists, cachedResult) = await _idempotency.GetResultAsync<StepResult>(idempotencyKey);
 
-                    if (resultExists && existingResult != null)
+                    if (resultExists && cachedResult != null)
                     {
                         _logger.LogInformation("Idempotent step {StepName} already executed successfully, returning cached result", step.Name);
 
-                        // Merge cached result data into flow context if available
-                        if (existingResult.Data != null && existingResult.Data.Count > 0)
-                        {
-                            foreach (var kvp in existingResult.Data)
-                            {
-                                flow.State.Data[kvp.Key] = kvp.Value;
-                            }
-
-                            step.Result = StepResult.ConcurrencyConflict(data: existingResult.Data.FromSafe());
-                        }
+                        step.Result = StepResult.ConcurrencyConflict(data: cachedResult);
 
                         // Skip execution and continue to next step
                         return;
@@ -203,7 +266,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 {
                     try
                     {
-                        var result = await step.ExecuteAsync(flow.Context);
+                        var result = await step.ExecuteAsync(stepContext);
 
                         step.Result = result;
 
@@ -212,24 +275,16 @@ namespace Infrastructure.Services.FlowEngine.Engine
                             throw new FlowExecutionException($"Step {step.Name} failed: {result?.Message ?? "Step result returned null,"}");
                         }
 
-                        if (result.Data != null && result.Data.Count != 0)
+                        if (step.IsIdempotent)
                         {
-                            // Merge result data into flow context
-                            foreach (var kvp in result.Data)
-                            {
-                                flow.State.Data[kvp.Key] = kvp.Value;
-                            }
-
-                            if (step.IsIdempotent)
-                            {
-                                // Store the successful result for future idempotency checks
-                                await _idempotency.StoreResultAsync(idempotencyKey!, result, TimeSpan.FromHours(24));
-                            }
+                            // Store the successful result for future idempotency checks
+                            await _idempotency.StoreResultAsync(idempotencyKey!, result, TimeSpan.FromHours(24));
                         }
                     }
-                    catch (Exception)
+                    catch (Exception ex)
                     {
                         step.Status = StepStatus.Failed;
+                        step.Result = StepResult.Failure(ex.Message, ex);
 
                         if (step.AllowFailure)
                         {
@@ -237,10 +292,17 @@ namespace Infrastructure.Services.FlowEngine.Engine
                         }
                         else
                         {
-                            _logger.LogError("Step {StepName} failed, aborting flow", step.Name);
+                            _logger.LogError("Step {StepName} failed, aborting flow: {Message}", step.Name, ex.Message);
                             throw; // Rethrow to be caught by outer flow execution handler
                         }
                     }
+                }
+
+                if (step.Status == StepStatus.Cancelled)
+                {
+                    // Exit if flow was cancelled during step execution
+                    await CancelFlowAsync(flow, "Step execution cancelled", cancellationToken);
+                    return;
                 }
 
                 // Handle static conditional branching
@@ -255,12 +317,19 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     await ExecuteDynamicSubSteps(flow.Context, step.DynamicBranching, cancellationToken);
                 }
 
+                if (step.Status == StepStatus.Cancelled)
+                {
+                    // Exit if flow was cancelled during step execution
+                    await CancelFlowAsync(flow, "Step execution cancelled", cancellationToken);
+                    return;
+                }
+
                 // Trigger other flows if configured
                 if (step.TriggeredFlows != null && step.TriggeredFlows.Count > 0)
                 {
                     try
                     {
-                        var tasks = step.TriggeredFlows.Select(flowType => TriggerFlow(flow.Context, flowType));
+                        var tasks = step.TriggeredFlows.Select(triggeredFlowData => TriggerFlow(flow.Context, triggeredFlowData, cancellationToken));
                         Task.WhenAll(tasks);
                     }
                     catch (Exception ex)
@@ -290,10 +359,16 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                 step.Status = StepStatus.Completed;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 step.Status = StepStatus.Failed;
+                step.Error = SerializableError.FromException(ex);
+                step.Result = StepResult.Failure(ex.Message, ex);
                 throw;
+            }
+            finally
+            {
+                step.CompletedAt = DateTime.UtcNow;
             }
             
         }
@@ -301,13 +376,13 @@ namespace Infrastructure.Services.FlowEngine.Engine
         /// <summary>
         /// Pause the flow with the specified condition
         /// </summary>
-        private async Task<FlowExecutionResult> PauseInternalAsync(Flow flow, PauseCondition pauseCondition)
+        private async Task PauseInternalAsync(Flow flow, PauseCondition pauseCondition)
         {
             flow.State.Status = FlowStatus.Paused;
             flow.State.PausedAt = DateTime.UtcNow;
             flow.State.PauseReason = pauseCondition.Reason;
             flow.State.PauseMessage = pauseCondition.Message;
-            flow.State.PauseData = pauseCondition.Data.ToSafe();
+            flow.State.PauseData = SafeObject.FromValue(pauseCondition.Data);
 
             var step = flow.Definition.Steps.ElementAtOrDefault(flow.State.CurrentStepIndex);
 
@@ -337,7 +412,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             await _notificationService.NotifyFlowStatusChanged(flow);
             await _notificationService.NotifyStepStatusChanged(flow, step);
 
-            return FlowExecutionResult.Paused(flow.State.FlowId, "Flow is paused");
+            return;
         }
 
         /// <summary>
@@ -432,6 +507,42 @@ namespace Infrastructure.Services.FlowEngine.Engine
             return FlowExecutionResult.Success(flow.State.FlowId, "Flow is retried");
 
         }
+
+        public async Task<FlowExecutionResult> CancelFlowAsync(Flow flow, string reason, CancellationToken cancellationToken)
+        {
+            if (!cancellationToken.CanBeCanceled)
+            {
+                return FlowExecutionResult.Failure(flow.State.FlowId, "Failed to cancel flow. Cancellation token can not be cancelled.");
+            }
+
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.Cancel();
+
+            if (cts.IsCancellationRequested.Equals(true))
+                _logger.LogWarning($"Flow cancellation requested!");
+
+            flow.State.Status = FlowStatus.Cancelled;
+            flow.State.CancelledAt = DateTime.UtcNow;
+            flow.State.CancelReason = reason;
+
+            flow.State.Events.Add(new FlowEvent
+            {
+                EventId = Guid.NewGuid(),
+                FlowId = flow.State.FlowId,
+                EventType = "FlowCancelled",
+                Description = $"Flow cancelled by {"system"} (reason: {reason})",
+                Timestamp = DateTime.UtcNow,
+                Data = new Dictionary<string, object>
+                {
+                    { "cancelReason", reason.ToString() },
+                    { "cancelledBy", "system" }
+                }.ToSafe()
+            });
+
+            await flow.PersistAsync();
+
+            return FlowExecutionResult.Cancelled(flow.State.FlowId, reason);
+        }
         /// <summary>
         /// Execute dynamic sub-steps based on runtime data
         /// </summary>
@@ -446,90 +557,134 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 return;
             }
 
-            // Generate sub-steps from data
-            var subSteps = dataItems
-                .Select((item, index) => config.StepFactory(item, index))
-                .ToList();
+            var branches = new List<FlowBranch>();
 
-            context.CurrentStep.Branches.Add(new FlowBranch
-            {
-                IsDefault = true,
-                Steps = subSteps
-            });
+            // Generate branches from data
+            dataItems
+                .ForEach(item =>
+                {
+                    var index = dataItems.IndexOf(item);
+
+                    var builder = new FlowBranchBuilder(context.CurrentStep);
+                    var branch = config.BranchFactory(builder, item, index);
+
+                    branches.Add(branch);
+                });
 
             _logger.LogInformation("Generated {SubStepCount} dynamic sub-steps for step {StepName} using strategy {Strategy}",
-                subSteps.Count, context.CurrentStep.Name, config.ExecutionStrategy);
+                dataItems.Count, context.CurrentStep.Name, config.ExecutionStrategy);
 
             // Execute based on strategy
             switch (config.ExecutionStrategy)
             {
                 case ExecutionStrategy.Sequential:
-                    await ExecuteSequential(context, subSteps, cancellationToken);
+                    await ExecuteSequential(context, branches, cancellationToken);
                     break;
 
                 case ExecutionStrategy.Parallel:
-                    await ExecuteParallel(context, subSteps, cancellationToken);
+                    await ExecuteParallel(context, branches, cancellationToken);
                     break;
 
                 case ExecutionStrategy.RoundRobin:
-                    await ExecuteRoundRobin(context, subSteps, cancellationToken);
+                    await ExecuteRoundRobin(context, branches, cancellationToken);
                     break;
 
                 case ExecutionStrategy.Batched:
-                    await ExecuteBatched(context, subSteps, config, cancellationToken);
+                    await ExecuteBatched(context, branches, config, cancellationToken);
                     break;
 
                 case ExecutionStrategy.PriorityBased:
-                    await ExecutePriorityBased(context, subSteps, cancellationToken);
+                    await ExecutePriorityBased(context, branches, cancellationToken);
                     break;
             }
+            await context.Flow.PersistAsync();
         }
 
-        private async Task ExecuteSequential(FlowExecutionContext context, List<FlowSubStep> subSteps, CancellationToken cancellationToken)
+        #region Dynamic Sub-Step Execution Strategies
+        private async Task ExecuteSequential(FlowExecutionContext context, List<FlowBranch> branches, CancellationToken cancellationToken)
         {
-            foreach (var subStep in subSteps)
+            
+            foreach (var branch in branches)
             {
-                await ExecuteStepAsync(context.Flow, subStep, cancellationToken);
-                await context.Flow.PersistAsync();
-                await _notificationService.NotifyFlowStatusChanged(context.Flow);
-                await _notificationService.NotifyStepStatusChanged(context.Flow, context.CurrentStep);
+                foreach (var subStep in branch.Steps)
+                {
+                    var stepContext = new FlowExecutionContext
+                    {
+                        Flow = context.Flow,
+                        CurrentStep = subStep,
+                        Services = context.Services
+                    };
+
+                    await ExecuteStepAsync(stepContext, subStep, cancellationToken);
+
+                    await _notificationService.NotifyFlowStatusChanged(context.Flow);
+                    await _notificationService.NotifyStepStatusChanged(context.Flow, context.CurrentStep);
+                }
             }
         }
 
-        private async Task ExecuteParallel(FlowExecutionContext context, List<FlowSubStep> subSteps, CancellationToken cancellationToken)
+        private async Task ExecuteParallel(FlowExecutionContext context, List<FlowBranch> branches, CancellationToken cancellationToken)
         {
-            var tasks = subSteps.Select(subStep => ExecuteStepAsync(context.Flow, subStep, cancellationToken));
+            var tasks = branches.Select(branch =>
+            {
+                return Task.Run(async () =>
+                {
+                    foreach (var subStep in branch.Steps)
+                    {
+                        var stepContext = new FlowExecutionContext
+                        {
+                            Flow = context.Flow,
+                            CurrentStep = subStep,
+                            Services = context.Services
+                        };
+
+                        await ExecuteStepAsync(stepContext, subStep, cancellationToken);
+                    }
+                });
+            });
+
             await Task.WhenAll(tasks);
-            await context.Flow.PersistAsync();
+
             await _notificationService.NotifyFlowStatusChanged(context.Flow);
             await _notificationService.NotifyStepStatusChanged(context.Flow, context.CurrentStep);
         }
 
-        private async Task ExecuteRoundRobin(FlowExecutionContext context, List<FlowSubStep> subSteps, CancellationToken cancellationToken)
+        private async Task ExecuteRoundRobin(FlowExecutionContext context, List<FlowBranch> branches, CancellationToken cancellationToken)
         {
             // Group by resource (e.g., exchange) and distribute evenly
-            var resourceGroups = subSteps
-                .GroupBy(s => s.ResourceGroup ?? "default")
+            var resourceGroups = branches
+                .GroupBy(b => b.ResourceGroup ?? "default")
                 .ToList();
 
             var tasks = resourceGroups.Select(async group =>
             {
-                foreach (var subStep in group)
+                foreach (var branch in group)
                 {
-                    await ExecuteStepAsync(context.Flow, subStep, cancellationToken);
-                    await context.Flow.PersistAsync();
-                    await _notificationService.NotifyFlowStatusChanged(context.Flow);
-                    await _notificationService.NotifyStepStatusChanged(context.Flow, context.CurrentStep);
+                    foreach (var subStep in branch.Steps)
+                    {
+                        var stepContext = new FlowExecutionContext
+                        {
+                            Flow = context.Flow,
+                            CurrentStep = subStep,
+                            Services = context.Services
+                        };
+
+                        await ExecuteStepAsync(stepContext, subStep, cancellationToken);
+
+                        await _notificationService.NotifyFlowStatusChanged(context.Flow);
+                        await _notificationService.NotifyStepStatusChanged(context.Flow, context.CurrentStep);
+                    }
                 }
             });
 
             await Task.WhenAll(tasks);
         }
 
-        private async Task ExecuteBatched(FlowExecutionContext context, List<FlowSubStep> subSteps, DynamicBranchingConfig config, CancellationToken cancellationToken)
+        private async Task ExecuteBatched(FlowExecutionContext context, List<FlowBranch> branches, DynamicBranchingConfig config, CancellationToken cancellationToken)
         {
+            /*
             var batchSize = config.MaxConcurrency;
-            var batches = subSteps
+            var batches = branch.Steps
                 .Select((step, index) => new { step, index })
                 .GroupBy(x => x.index / batchSize)
                 .Select(g => g.Select(x => x.step).ToList())
@@ -544,14 +699,18 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     await Task.Delay(config.BatchDelay, cancellationToken);
                 }
             }
+            */
+
+            throw new NotImplementedException("Batched execution strategy is not implemented yet.");
         }
 
-        private async Task ExecutePriorityBased(FlowExecutionContext context, List<FlowSubStep> subSteps, CancellationToken cancellationToken)
+        private async Task ExecutePriorityBased(FlowExecutionContext context, List<FlowBranch> branches, CancellationToken cancellationToken)
         {
             // Sort by priority (higher number = higher priority)
-            var sortedSteps = subSteps.OrderByDescending(s => s.Priority).ToList();
-            await ExecuteSequential(context, sortedSteps, cancellationToken);
+            var sortedBranches = branches.OrderByDescending(b => b.Priority).ToList();
+            await ExecuteSequential(context, sortedBranches, cancellationToken);
         }
+        #endregion
 
         private async Task ExecuteStaticBranches(FlowExecutionContext context, List<FlowBranch> branches, CancellationToken cancellationToken)
         {
@@ -563,7 +722,14 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 {
                     foreach (var subStep in branch.Steps)
                     {
-                        await ExecuteStepAsync(context.Flow, subStep, cancellationToken);
+                        var stepContext = new FlowExecutionContext
+                        {
+                            Flow = context.Flow,
+                            CurrentStep = subStep,
+                            Services = context.Services
+                        };
+
+                        await ExecuteStepAsync(stepContext, subStep, cancellationToken);
                     }
 
                     break; // Only execute first matching branch
@@ -571,20 +737,85 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
         }
 
-        private Task TriggerFlow(FlowExecutionContext context, Type flowType)
+        private Task TriggerFlow(FlowExecutionContext context, TriggeredFlowData triggeredFlowData, CancellationToken? cancellationToken = null)
         {
+            if (string.IsNullOrEmpty(triggeredFlowData.Type))
+            {
+                _logger.LogError("TriggeredFlowData.Type is null or empty for step {StepName}", context.CurrentStep.Name);
+                return Task.CompletedTask;
+            }
+
+            var flowType = Type.GetType(triggeredFlowData.Type);
+
+            if (flowType == null)
+            {
+                _logger.LogWarning("Failed to resolve type {TypeName} using Type.GetType(), attempting alternative resolution", triggeredFlowData.Type);
+
+                // Try to find the type in currently loaded assemblies
+                flowType = AppDomain.CurrentDomain.GetAssemblies()
+                    .SelectMany(a => a.GetTypes())
+                    .FirstOrDefault(t => t.AssemblyQualifiedName == triggeredFlowData.Type || t.FullName == triggeredFlowData.Type);
+            }
+
+            if (flowType == null)
+            {
+                _logger.LogError("Cannot resolve flow type: {TypeName} for step {StepName}. Flow triggering aborted.",
+                    triggeredFlowData.Type, context.CurrentStep.Name);
+                return Task.CompletedTask;
+            }
+
+            if (context?.CurrentStep?.Name == null)
+            {
+                _logger.LogError("Context or CurrentStep or CurrentStep.Name is null when triggering flow {FlowType}", flowType.Name);
+                return Task.CompletedTask;
+            }
+
             _logger.LogInformation("Triggering flow {FlowType} from step {StepName}", flowType.Name, context.CurrentStep.Name);
 
             // Use the scope factory instead of the potentially disposed service provider
             using var scope = _scopeFactory.CreateScope();
 
-            var flow = Flow.Builder(scope.ServiceProvider)
-                .ForUser(context.State.UserId)
+            // Pass the current flow's cancellation token to create a linked cancellation context
+            var effectiveToken = cancellationToken ?? context.Flow.CancellationToken;
+
+            var initialData = triggeredFlowData.InitialDataFactory?.Invoke(context) ?? [];
+
+            var flow = Flow.Builder(scope.ServiceProvider, effectiveToken)
+                .ForUser(context.State.UserId, context.State.UserEmail)
                 .WithCorrelation($"{context.State.CorrelationId}:triggered:{flowType.Name}")
-                .TriggeredBy(context.Flow.Id)
+                .WithData(initialData)
+                .TriggeredBy(new TriggeredFlowData
+                {
+                    Type = context.State.FlowType,
+                    FlowId = context.State.FlowId,
+                    TiggeredByStep = context.CurrentStep.Name
+                })
                 .Build(flowType);
 
-            // Execute the flow
+            triggeredFlowData.FlowId = flow.Id;
+            triggeredFlowData.TiggeredByStep = context.CurrentStep.Name;
+
+            var triggeredFlow = context.CurrentStep.TriggeredFlows.Find(tf => tf.Type == triggeredFlowData.Type);
+            if (triggeredFlow != null)
+            {
+                triggeredFlow.FlowId = triggeredFlowData.FlowId;
+                triggeredFlow.TiggeredByStep = triggeredFlowData.TiggeredByStep;
+            }
+
+            context.Flow.State.Events.Add(new FlowEvent
+            {
+                FlowId = context.Flow.Id,
+                EventType = "FlowTriggered",
+                Description = $"Triggered flow {flowType.Name} with id {flow.State.FlowId}",
+                Data = new Dictionary<string, object>
+        {
+            { "triggeredFlowId", flow.State.FlowId },
+            { "triggeredFlowType", flowType.Name },
+            { "triggeredByStep", context.CurrentStep.Name }
+        }.ToSafe()
+            });
+
+            // Execute the flow with linked cancellation token
             return flow.ExecuteAsync(); // Fire and forget
         }
 
@@ -605,7 +836,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
 
             // Generate content hash from data dependencies
-            if (step.DataDependencies?.Any() == true)
+            if (step.DataDependencies?.Count > 0)
             {
                 var dependencyData = new Dictionary<string, object>();
 
@@ -616,40 +847,9 @@ namespace Infrastructure.Services.FlowEngine.Engine
                         dependencyData[dependency.Key] = value;
                     }
                 }
-
-                if (dependencyData.Count != 0)
-                {
-                    var contentHash = GenerateContentHash(dependencyData);
-                    keyComponents.Append($":hash:{contentHash}");
-                }
             }
 
             return keyComponents.ToString();
-        }
-
-        /// <summary>
-        /// Generates a SHA256 hash from the given data dependencies
-        /// </summary>
-        private string GenerateContentHash(Dictionary<string, object> data)
-        {
-            try
-            {
-                var json = System.Text.Json.JsonSerializer.Serialize(data, new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                    WriteIndented = false
-                });
-
-                using var sha256 = System.Security.Cryptography.SHA256.Create();
-                var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(json));
-                return Convert.ToBase64String(hashBytes);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to generate content hash for step data dependencies");
-                // Return a fallback hash based on the data count and types
-                return $"fallback:{data.Count}:{string.Join(",", data.Keys.OrderBy(k => k))}";
-            }
         }
     }
 }

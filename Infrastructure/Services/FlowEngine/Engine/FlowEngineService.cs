@@ -1,7 +1,9 @@
-﻿using Infrastructure.Services.FlowEngine.Core.Enums;
+﻿using Domain.Events.Payment;
+using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Exceptions;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
+using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -70,6 +72,8 @@ namespace Infrastructure.Services.FlowEngine.Engine
         private async Task<RestoreRuntimeResult> RestoreRuntimeFlows(List<FlowState> flowsStates)
         {
             var result = new RestoreRuntimeResult();
+
+            // First pass: Restore all flows
             foreach (var flowState in flowsStates)
             {
                 result.TotalFlowsChecked++;
@@ -99,10 +103,53 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 }
             }
 
+            // Second pass: Restore cancellation token relationships
+            foreach (var flow in _runtimeStore.Flows.Values)
+            {
+                try
+                {
+                    await RestoreFlowCancellationContext(flow);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to restore cancellation context for flow {FlowId}", flow.Id);
+                }
+            }
+
             result.CompletedAt = DateTime.UtcNow;
             result.Duration = result.CompletedAt - result.StartedAt;
 
             return result;
+        }
+
+        private async Task RestoreFlowCancellationContext(Flow flow)
+        {
+            // If this flow was triggered by another flow, link cancellation tokens
+            if (flow.State.TriggeredBy?.FlowId.HasValue == true)
+            {
+                var parentFlow = await GetFlowById(flow.State.TriggeredBy.FlowId.Value);
+                if (parentFlow != null)
+                {
+                    // Create a linked cancellation token from the parent
+                    var linkedToken = CancellationTokenSource.CreateLinkedTokenSource(parentFlow.CancellationToken);
+                    flow.LinkToParentCancellation(linkedToken.Token);
+
+                    _logger.LogDebug("Linked cancellation token for triggered flow {FlowId} to parent {ParentFlowId}",
+                        flow.Id, parentFlow.Id);
+                }
+                else
+                {
+                    // Parent flow not found, create independent cancellation token
+                    flow.InitializeCancellationTokenSource(CancellationToken.None);
+                    _logger.LogWarning("Parent flow {ParentFlowId} not found for triggered flow {FlowId}, using independent cancellation",
+                        flow.State.TriggeredBy.FlowId.Value, flow.Id);
+                }
+            }
+            else
+            {
+                // Root flow - create independent cancellation token
+                flow.InitializeCancellationTokenSource(CancellationToken.None);
+            }
         }
 
         public async Task<Flow?> GetFlowById(Guid flowId)
@@ -257,14 +304,13 @@ namespace Infrastructure.Services.FlowEngine.Engine
             return pausedFlows;
         }
 
-
         public async Task PublishEventAsync(string eventType, object eventData, string correlationId = null)
         {
             var eventService = _serviceProvider.GetRequiredService<IFlowEventService>();
             await eventService.PublishAsync(eventType, eventData, correlationId);
         }
 
-        // NEW: Health and Statistics methods for health checks
+        // Health and Statistics methods for health checks
         public async Task<FlowEngineHealth> GetHealth()
         {
             try
@@ -405,5 +451,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 };
             }
         }
+
     }
 }

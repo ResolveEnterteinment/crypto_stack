@@ -1,19 +1,23 @@
 import {
-    ArrowRightOutlined,
+    BranchesOutlined,
+    CaretRightOutlined,
     CheckCircleOutlined,
     ClockCircleOutlined,
     CloseCircleOutlined,
-    DashboardOutlined,
     DownloadOutlined,
+    ExclamationCircleOutlined,
     EyeOutlined,
+    FlagFilled,
     LoadingOutlined,
     NodeIndexOutlined,
     PauseCircleOutlined,
     PlayCircleOutlined,
+    RedoOutlined,
     ReloadOutlined,
     SearchOutlined,
-    StopOutlined,
-    SyncOutlined
+    SisternodeOutlined,
+    StopFilled,
+    StopOutlined
 } from '@ant-design/icons';
 import {
     Alert,
@@ -21,89 +25,98 @@ import {
     Button,
     Card,
     Col,
-    DatePicker,
+    Collapse,
     Descriptions,
-    Divider,
+    Drawer,
     Input,
-    message,
+    Layout,
     Modal,
     Progress,
     Row,
     Select,
     Space,
     Statistic,
+    Steps,
     Table,
-    Tabs,
     Tag,
     Timeline,
     Tooltip,
-    Typography
+    Typography,
+    message
 } from 'antd';
-import { JSX, useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 // Import the flow service and SignalR
 import { useAdminFlowSignalR } from '../../../hooks/useAdminFlowSignalR';
-
+import type { StepStatusUpdateDto } from '../../../services/adminFlowSignalR';
 import type {
+    BranchDto,
     FlowDetailDto,
     FlowStatisticsDto,
     FlowStatusKey,
     FlowSummaryDto,
     StepDto,
-    SubStepDto
+    TriggeredFlowDataDto
 } from '../../../services/flowService';
 import flowService from '../../../services/flowService';
-import FlowStep from './FlowStep';
 
-const updateStyles = `
-    <style>
-        @keyframes pulse {
-            0% {
-                transform: scale(1);
-                opacity: 1;
-            }
-            50% {
-                transform: scale(1.5);
-                opacity: 0.7;
-            }
-            100% {
-                transform: scale(1);
-                opacity: 1;
-            }
-        }
-        
-        .flow-row-updated {
-            animation: highlight 2s ease-out;
-        }
-        
-        @keyframes highlight {
-            0% {
-                background-color: #e6f7ff;
-            }
-            100% {
-                background-color: transparent;
-            }
-        }
-    </style>
-`;
-
-const { Title, Text } = Typography;
-const { RangePicker } = DatePicker;
-const { TabPane } = Tabs;
+const { Header, Content } = Layout;
 const { Option } = Select;
+const { Text, Title } = Typography;
+const { Panel } = Collapse;
 
-// Flow Status Colors and Labels
-const flowStatusConfig: Record<FlowStatusKey, { color: string; icon: JSX.Element; label: string; bgColor: string }> = {
-    Initializing: { color: 'default', icon: <LoadingOutlined />, label: 'Initializing', bgColor: 'bg-gray-100' },
-    Ready: { color: 'cyan', icon: <ClockCircleOutlined />, label: 'Ready', bgColor: 'bg-cyan-100' },
-    Running: { color: 'processing', icon: <SyncOutlined spin />, label: 'Running', bgColor: 'bg-blue-100' },
-    Paused: { color: 'warning', icon: <PauseCircleOutlined />, label: 'Paused', bgColor: 'bg-yellow-100' },
-    Completed: { color: 'success', icon: <CheckCircleOutlined />, label: 'Completed', bgColor: 'bg-green-100' },
-    Failed: { color: 'error', icon: <CloseCircleOutlined />, label: 'Failed', bgColor: 'bg-red-100' },
-    Cancelled: { color: 'default', icon: <StopOutlined />, label: 'Cancelled', bgColor: 'bg-gray-100' }
+// Flow Status Colors and Configuration with Ant Design equivalents
+const flowStatusConfig: Record<FlowStatusKey, {
+    color: string;
+    icon: React.ReactElement;
+    antdColor: string;
+    progressStatus: 'success' | 'normal' | 'exception' | 'active' | undefined;
+}> = {
+    Initializing: {
+        color: 'text-gray-600',
+        icon: <LoadingOutlined spin />,
+        antdColor: 'default',
+        progressStatus: 'active'
+    },
+    Ready: {
+        color: 'text-cyan-600',
+        icon: <ClockCircleOutlined />,
+        antdColor: 'cyan',
+        progressStatus: 'normal'
+    },
+    Running: {
+        color: 'text-blue-600',
+        icon: <LoadingOutlined spin />,
+        antdColor: 'blue',
+        progressStatus: 'active'
+    },
+    Paused: {
+        color: 'text-yellow-600',
+        icon: <PauseCircleOutlined />,
+        antdColor: 'orange',
+        progressStatus: 'normal'
+    },
+    Completed: {
+        color: 'text-green-600',
+        icon: <CheckCircleOutlined />,
+        antdColor: 'green',
+        progressStatus: 'success'
+    },
+    Failed: {
+        color: 'text-red-600',
+        icon: <CloseCircleOutlined />,
+        antdColor: 'red',
+        progressStatus: 'exception'
+    },
+    Cancelled: {
+        color: 'text-gray-600',
+        icon: <StopFilled />,
+        antdColor: 'default',
+        progressStatus: 'normal'
+    }
 };
 
-// Real-time update indicator component
+// Real-time update indicator
 const UpdateIndicator: React.FC<{ lastUpdate?: Date }> = ({ lastUpdate }) => {
     const [pulse, setPulse] = useState(false);
 
@@ -116,221 +129,217 @@ const UpdateIndicator: React.FC<{ lastUpdate?: Date }> = ({ lastUpdate }) => {
     }, [lastUpdate]);
 
     return (
-        <div
-            style={{
-                display: 'inline-block',
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                backgroundColor: '#52c41a',
-                animation: pulse ? 'pulse 1s ease-out' : 'none',
-                marginRight: '8px'
-            }}
+        <Badge
+            status={pulse ? "processing" : "success"}
+            text="Live Updates Active"
         />
     );
 };
 
-// Enhanced Flow Visualization Component with Branch Support
-const FlowVisualization: React.FC<{ flow: FlowDetailDto}> = ({ flow }) => {
-    // Create a map for quick step lookup
-    const stepMap = new Map<string, StepDto>();
-    flow.steps.forEach(step => stepMap.set(step.name, step));
-
-    // Track which steps are rendered as part of branches
-    const stepsInBranches = new Set<SubStepDto>();
-
-    // Identify steps that are part of branches
-    flow.steps.forEach(step => {
-        if (step.branches) {
-            step.branches.forEach(branch => {
-                branch.steps?.forEach(step => {
-                    stepsInBranches.add(step);
-                });
-            });
-        }
-    });
-
-    // Group main flow steps by their dependencies to create a hierarchical view
-    const getMainFlowLevels = () => {
-        const levels: StepDto[][] = [];
-        const processedSteps = new Set<string>();
-
-        // Filter out steps that are only in branches
-        const mainFlowSteps = flow.steps.filter(step => !stepsInBranches.has(step as SubStepDto));
-
-        // First level - steps with no dependencies
-        const firstLevel = mainFlowSteps.filter(step =>
-            !step.stepDependencies || step.stepDependencies.length === 0
-        );
-        if (firstLevel.length > 0) {
-            levels.push(firstLevel);
-            firstLevel.forEach(step => processedSteps.add(step.name));
-        }
-
-        // Subsequent levels - steps that depend on previous levels
-        let remainingSteps = mainFlowSteps.filter(step => !processedSteps.has(step.name));
-        while (remainingSteps.length > 0) {
-            const currentLevel = remainingSteps.filter(step =>
-                step.stepDependencies?.every(dep => processedSteps.has(dep))
-            );
-
-            if (currentLevel.length === 0) {
-                // Add remaining steps that might have circular dependencies
-                levels.push(remainingSteps);
-                break;
-            }
-
-            levels.push(currentLevel);
-            currentLevel.forEach(step => processedSteps.add(step.name));
-            remainingSteps = remainingSteps.filter(step => !processedSteps.has(step.name));
-        }
-
-        return levels;
+// Enhanced SubStep Renderer Component
+const SubStepRenderer: React.FC<{
+    subSteps: any[];
+    onSubStepClick?: (subStep: any) => void;
+    compact?: boolean;
+}> = ({ subSteps = [], onSubStepClick, compact = false }) => {
+    const getStatusConfig = (status: string) => {
+        return flowStatusConfig[status as FlowStatusKey] || flowStatusConfig.Initializing;
     };
 
-    
+    if (!subSteps || subSteps.length === 0) {
+        return <Text type="secondary" style={{ fontSize: '11px' }}>No substeps</Text>;
+    }
 
-    const levels = getMainFlowLevels();
-
-    return (
-        <div style={{ padding: '20px', background: '#fff', borderRadius: '8px', overflowX: 'auto' }}>
-            <div style={{ minWidth: '800px' }}>
-                {/* Flow Header */}
-                <div style={{ marginBottom: '24px' }}>
-                    <Row align="middle" gutter={16}>
-                        <Col>
-                            <Text strong style={{ fontSize: '16px' }}>Flow Progress:</Text>
-                        </Col>
-                        <Col flex="auto">
-                            <Progress
-                                percent={Math.round((flow.currentStepIndex / flow.totalSteps) * 100)}
-                                status={flow.status === 'Failed' ? 'exception' : flow.status === 'Completed' ? 'success' : 'active'}
-                                strokeColor={flow.status === 'Paused' ? '#faad14' : undefined}
-                            />
-                        </Col>
-                        <Col>
-                            <Tag color={flowStatusConfig[flow.status as FlowStatusKey]?.color}>
-                                {flowStatusConfig[flow.status as FlowStatusKey]?.icon}
-                                <span style={{ marginLeft: '4px' }}>{flow.status}</span>
-                            </Tag>
-                        </Col>
-                    </Row>
-                </div>
-
-                {/* Flow Visualization */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
-                    {levels.map((level, levelIndex) => (
-                        <div key={levelIndex}>
-                            {/* Level indicator */}
-                            {levelIndex > 0 && (
-                                <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                                    <ArrowRightOutlined rotate={90} style={{ fontSize: '24px', color: '#d9d9d9' }} />
+    if (compact) {
+        // Compact view for inline display
+        return (
+            <Space wrap size="small" style={{ marginTop: 4 }}>
+                {subSteps.map((subStep, index) => {
+                    const config = getStatusConfig(subStep.status);
+                    return (
+                        <Tooltip
+                            key={index}
+                            title={
+                                <div>
+                                    <div><strong>{subStep.name}</strong></div>
+                                    <div>Status: {subStep.status}</div>
+                                    {subStep.priority > 0 && <div>Priority: {subStep.priority}</div>}
+                                    {subStep.resourceGroup && <div>Resource Group: {subStep.resourceGroup}</div>}
+                                    {subStep.result?.message && <div>Result: {subStep.result.message}</div>}
                                 </div>
-                            )}
+                            }
+                        >
+                            <Tag
+                                color={config.antdColor}
+                                icon={config.icon}
+                                style={{
+                                    fontSize: '10px',
+                                    cursor: onSubStepClick ? 'pointer' : 'default',
+                                    margin: '1px'
+                                }}
+                                onClick={onSubStepClick ? () => onSubStepClick(subStep) : undefined}
+                            >
+                                {subStep.name}
+                            </Tag>
+                        </Tooltip>
+                    );
+                })}
+            </Space>
+        );
+    }
 
-                            {/* Steps in this level */}
-                            <div style={{
-                                display: 'flex',
-                                gap: '20px',
-                                justifyContent: 'center',
-                                flexWrap: 'wrap'
-                            }}>
-                                {level.map((step, stepIndex) => {
-                                    const isCurrentStep = step.name === flow.currentStepName;
-                                    const hasBranches = step.branches && step.branches.length > 0;
-
-                                    return (
-                                        <div key={step.name} style={{ position: 'relative' }}>
-                                            {/* Connection line to next step in same level */}
-                                            {stepIndex < level.length - 1 && !hasBranches && (
-                                                <div style={{
-                                                    position: 'absolute',
-                                                    top: '50%',
-                                                    left: '100%',
-                                                    width: '20px',
-                                                    height: '2px',
-                                                    background: '#d9d9d9',
-                                                    zIndex: 0
-                                                }} />
-                                            )}
-
-                                            {/* Main Step and its Branches */}
-                                            <div>
-                                                <FlowStep step={step} isCurrentStep={isCurrentStep} isBranchStep={false} />
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+    // Detailed view for expanded display
+    return (
+        <div style={{ marginTop: 8, marginLeft: 16 }}>
+            {subSteps.map((subStep, index) => {
+                const config = getStatusConfig(subStep.status);
+                return (
+                    <Card
+                        key={index}
+                        size="small"
+                        style={{
+                            marginBottom: 8,
+                            border: '1px solid #f0f0f0',
+                            cursor: onSubStepClick ? 'pointer' : 'default'
+                        }}
+                        onClick={onSubStepClick ? () => onSubStepClick(subStep) : undefined}
+                    >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <NodeIndexOutlined style={{ color: '#666', fontSize: '12px' }} />
+                                <Text strong style={{ fontSize: '12px' }}>{subStep.name}</Text>
+                                <Tag
+                                    color={config.antdColor}
+                                    icon={config.icon}
+                                    style={{ fontSize: '10px' }}
+                                >
+                                    {subStep.status}
+                                </Tag>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '11px' }}>
+                                {subStep.priority > 0 && (
+                                    <Tag color="blue" style={{ fontSize: '10px' }}>
+                                        P{subStep.priority}
+                                    </Tag>
+                                )}
+                                {subStep.resourceGroup && (
+                                    <Tag color="green" style={{ fontSize: '10px' }}>
+                                        {subStep.resourceGroup}
+                                    </Tag>
+                                )}
+                                {subStep.index >= 0 && (
+                                    <Text type="secondary" style={{ fontSize: '10px' }}>
+                                        #{subStep.index}
+                                    </Text>
+                                )}
                             </div>
                         </div>
-                    ))}
-                </div>
-
-                {/* Flow Summary */}
-                <Divider />
-                <Row gutter={16} style={{ marginTop: '20px' }}>
-                    <Col span={6}>
-                        <Statistic
-                            title="Total Steps"
-                            value={flow.totalSteps}
-                            prefix={<NodeIndexOutlined />}
-                        />
-                    </Col>
-                    <Col span={6}>
-                        <Statistic
-                            title="Completed"
-                            value={flow.steps.filter(s => s.status === 'Completed').length}
-                            valueStyle={{ color: '#52c41a' }}
-                            prefix={<CheckCircleOutlined />}
-                        />
-                    </Col>
-                    <Col span={6}>
-                        <Statistic
-                            title="Failed"
-                            value={flow.steps.filter(s => s.status === 'Failed').length}
-                            valueStyle={{ color: '#ff4d4f' }}
-                            prefix={<CloseCircleOutlined />}
-                        />
-                    </Col>
-                    <Col span={6}>
-                        <Statistic
-                            title="Pending"
-                            value={flow.steps.filter(s => s.status === 'Pending').length}
-                            valueStyle={{ color: '#d9d9d9' }}
-                            prefix={<ClockCircleOutlined />}
-                        />
-                    </Col>
-                </Row>
-            </div>
+                        {subStep.result?.message && (
+                            <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #f0f0f0' }}>
+                                <Text type="secondary" style={{ fontSize: '11px' }}>
+                                    {subStep.result.message}
+                                </Text>
+                            </div>
+                        )}
+                    </Card>
+                );
+            })}
         </div>
     );
 };
 
-// Main Admin Panel Component
-export default function FlowEngineAdminPanel() {
+// FIXED: Enhanced Branch Renderer Component with Independent Context
+const BranchRenderer: React.FC<{
+    branches: BranchDto[];
+    stepName: string; // NEW: Add stepName for unique context
+    onSubStepClick?: (subStep: any) => void;
+    expandedBranches?: string[];
+    onBranchToggle?: (branchKey: string) => void;
+}> = ({ branches = [], stepName, onSubStepClick, expandedBranches = [], onBranchToggle }) => {
+    if (!branches || branches.length === 0) {
+        return null;
+    }
+
+    return (
+        <div style={{ marginTop: 8 }}>
+            <Collapse
+                ghost
+                size="small"
+                expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} />}
+                activeKey={expandedBranches}
+                onChange={(keys) => {
+                    if (onBranchToggle && Array.isArray(keys)) {
+                        // Handle both expand and collapse actions properly
+                        const currentKeys = new Set(expandedBranches);
+                        const newKeys = new Set(keys as string[]);
+
+                        // Find what changed
+                        const added = [...newKeys].filter(key => !currentKeys.has(key));
+                        const removed = [...currentKeys].filter(key => !newKeys.has(key));
+
+                        // Process changes one by one to maintain proper state
+                        [...added, ...removed].forEach(key => onBranchToggle(key));
+                    }
+                }}
+            >
+                {branches.map((branch, branchIndex) => {
+                    // FIXED: Create unique branch keys with step context
+                    const branchKey = `${stepName}-branch-${branchIndex}`;
+                    const hasSubSteps = branch.steps && branch.steps.length > 0;
+
+                    return (
+                        <Panel
+                            key={branchKey}
+                            header={
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <BranchesOutlined style={{ color: '#1890ff', fontSize: '12px' }} />
+                                    <Text style={{ fontSize: '12px' }}>
+                                        Branch {branchIndex + 1} { branch.name }
+                                        {branch.isDefault ? '(Default)' : branch.isConditional ? `(Conditional)` : ''}
+                                    </Text>
+                                    {hasSubSteps && (
+                                        <Badge
+                                            count={branch.steps.length}
+                                            size="small"
+                                            style={{ backgroundColor: '#1890ff' }}
+                                        />
+                                    )}
+                                </div>
+                            }
+                            style={{ fontSize: '12px' }}
+                        >
+                            {hasSubSteps ? (
+                                <SubStepRenderer
+                                    subSteps={branch.steps}
+                                    onSubStepClick={onSubStepClick}
+                                />
+                            ) : (
+                                <Text type="secondary" style={{ fontSize: '11px' }}>
+                                    No substeps in this branch
+                                </Text>
+                            )}
+                        </Panel>
+                    );
+                })}
+            </Collapse>
+        </div>
+    );
+};
+
+const FlowEngineAdminPanel: React.FC = () => {
     const [flows, setFlows] = useState<FlowSummaryDto[]>([]);
     const [loading, setLoading] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
     const [selectedFlow, setSelectedFlow] = useState<FlowDetailDto | null>(null);
-    const [flowDetailModal, setFlowDetailModal] = useState(false);
-    const [selectedRows, setSelectedRows] = useState<string[]>([]);
-    const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-    const [flowDetailsCache, setFlowDetailsCache] = useState<Map<string, FlowDetailDto>>(new Map());
-    const [loadingFlowDetails, setLoadingFlowDetails] = useState<Set<string>>(new Set());
-
+    const [selectedStep, setSelectedStep] = useState<StepDto | null>(null);
+    const [flowChartVisible, setFlowChartVisible] = useState(false);
+    const [stepModalVisible, setStepModalVisible] = useState(false);
+    const [statusFilter, setStatusFilter] = useState<string>('ALL');
     const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null);
-    const [recentUpdates, setRecentUpdates] = useState<Map<string, Date>>(new Map());
-
-    const [filters, setFilters] = useState<{
-        status: string | null;
-        userId: string;
-        dateRange: any;
-        flowType: string | null;
-    }>({
-        status: null,
-        userId: '',
-        dateRange: null,
-        flowType: null
-    });
+    const [statistics, setStatistics] = useState<FlowStatisticsDto | null>(null);
+    const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>('disconnected');
+    const [actionLoading, setActionLoading] = useState<{ [key: string]: boolean }>({});
+    const [expandedBranches, setExpandedBranches] = useState<string[]>([]);
 
     const [pagination, setPagination] = useState({
         current: 1,
@@ -338,320 +347,334 @@ export default function FlowEngineAdminPanel() {
         total: 0
     });
 
-    const [statistics, setStatistics] = useState<FlowStatisticsDto | null>(null);
+    // Enhanced SignalR handlers
+    const handleFlowStatusChanged = useCallback((update: FlowDetailDto) => {
+        setLastUpdateTime(new Date());
 
-    // Connection state
-    const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>('disconnected');
+        // Update flows list - handle both existing and new flows
+        setFlows(prev => {
+            const existingIndex = prev.findIndex(flow => flow.flowId === update.flowId);
 
-    // Real-time updates for ALL flows (admin subscription)
-    const { isConnected: isAdminConnected, reconnect: reconnectAdmin } = useAdminFlowSignalR(
-        (update) => {
-            // All the logic from handleFlowUpdate inline here
-            // Visual feedback
-            setLastUpdateTime(new Date());
-            setRecentUpdates(prev => {
-                const newMap = new Map(prev);
-                newMap.set(update.flowId, new Date());
-                return newMap;
-            });
-
-            setTimeout(() => {
-                setRecentUpdates(prev => {
-                    const newMap = new Map(prev);
-                    newMap.delete(update.flowId);
-                    return newMap;
-                });
-            }, 5000);
-
-            // Update cache
-            setFlowDetailsCache(prev => {
-                if (prev.has(update.flowId)) {
-                    const newCache = new Map(prev);
-                    newCache.set(update.flowId, update);
-                    return newCache;
-                }
-                return prev;
-            });
-
-            // Update selected flow
-            if (selectedFlow && update.flowId === selectedFlow.flowId) {
-                setSelectedFlow(update);
-            }
-
-            // Update main table
-            setFlows(prev => prev.map(flow => {
-                if (flow.flowId === update.flowId) {
-                    return {
-                        ...flow,
+            if (existingIndex >= 0) {
+                // Update existing flow
+                const updatedFlows = [...prev];
+                updatedFlows[existingIndex] = {
+                    ...updatedFlows[existingIndex],
+                    status: update.status,
+                    currentStepName: update.currentStepName,
+                    currentStepIndex: update.currentStepIndex,
+                    duration: update.completedAt && update.startedAt
+                        ? Math.round((new Date(update.completedAt).getTime() - new Date(update.startedAt).getTime()) / 1000)
+                        : updatedFlows[existingIndex].duration
+                };
+                return updatedFlows;
+            } else {
+                // Add new flow to the list if it matches current filters
+                const matchesFilter = statusFilter === 'ALL' || update.status === statusFilter;
+                if (matchesFilter) {
+                    const newFlowSummary: FlowSummaryDto = {
+                        flowId: update.flowId,
+                        flowType: update.flowType,
                         status: update.status,
+                        userId: update.userId,
+                        correlationId: update.correlationId,
+                        createdAt: update.createdAt,
                         currentStepName: update.currentStepName,
                         currentStepIndex: update.currentStepIndex,
-                        pauseReason: update.pauseReason,
-                        errorMessage: update.lastError,
+                        totalSteps: update.totalSteps,
                         duration: update.completedAt && update.startedAt
                             ? Math.round((new Date(update.completedAt).getTime() - new Date(update.startedAt).getTime()) / 1000)
-                            : flow.duration,
-                        startedAt: update.startedAt,
-                        completedAt: update.completedAt,
-                        totalSteps: update.totalSteps
+                            : undefined
                     };
+
+                    // Add to beginning of list (most recent first)
+                    return [newFlowSummary, ...prev];
                 }
-                return flow;
-            }));
-
-            // Refresh statistics on terminal states
-            if (['Completed', 'Failed', 'Cancelled'].includes(update.status)) {
-                setTimeout(fetchStatistics, 1000);
+                return prev;
             }
-        },
-        (result) => {
-            // Handle batch operation results
-            message.success(`Batch operation completed: ${result.successCount} succeeded, ${result.failureCount} failed`);
-            fetchFlows();
-            // Clear cache for affected flows
-            result.results?.forEach(item => flowDetailsCache.delete(item.flowId));
-        },
-        (error) => {
-            message.error(error || 'Flow admin connection error');
-        }
-    );
+        });
 
-    // Remove the useFlowSignalR hook entirely - it's not needed
+        // Update selected flow if it's the same and modal is open
+        if (selectedFlow && update.flowId === selectedFlow.flowId && flowChartVisible) {
+            setSelectedFlow(update);
+
+            // Show a subtle notification for live updates
+            const statusChanged = selectedFlow.status !== update.status;
+            if (statusChanged) {
+                message.info({
+                    content: `Flow status updated to ${update.status}`,
+                    duration: 2,
+                    style: { marginTop: '20vh' }
+                });
+            }
+        }
+
+        // Refresh statistics on terminal states
+        if (['Completed', 'Failed', 'Cancelled'].includes(update.status)) {
+            setTimeout(fetchStatistics, 1000);
+        }
+    }, [selectedFlow, flowChartVisible, statusFilter]);
+
+    // NEW: Handle step status changes specifically
+    const handleStepStatusChanged = useCallback((stepUpdate: StepStatusUpdateDto) => {
+        setLastUpdateTime(new Date());
+
+        // Only update if the modal is open for this flow
+        if (selectedFlow && stepUpdate.flowId === selectedFlow.flowId && flowChartVisible) {
+            setSelectedFlow(prev => {
+                if (!prev) return prev;
+
+                // Update the specific step in the steps array
+                const updatedSteps = prev.steps.map(step =>
+                    step.name === stepUpdate.stepName
+                        ? {
+                            ...step,
+                            status: stepUpdate.stepStatus,
+                            result: stepUpdate.stepResult || step.result
+                        }
+                        : step
+                );
+
+                // Return updated flow with new step status and current step info
+                return {
+                    ...prev,
+                    steps: updatedSteps,
+                    currentStepIndex: stepUpdate.currentStepIndex,
+                    currentStepName: stepUpdate.currentStepName,
+                    status: stepUpdate.flowStatus
+                };
+            });
+
+            // Show step-level notification
+            message.info({
+                content: `Step "${stepUpdate.stepName}" status: ${stepUpdate.stepStatus}`,
+                duration: 1.5,
+                style: { marginTop: '20vh' }
+            });
+
+            console.log(`Step update: ${stepUpdate.stepName} -> ${stepUpdate.stepStatus}`);
+        }
+
+        // Also update the flows list for current step info
+        setFlows(prev => prev.map(flow =>
+            flow.flowId === stepUpdate.flowId
+                ? {
+                    ...flow,
+                    currentStepIndex: stepUpdate.currentStepIndex,
+                    currentStepName: stepUpdate.currentStepName,
+                    status: stepUpdate.flowStatus
+                }
+                : flow
+        ));
+    }, [selectedFlow, flowChartVisible]);
+
+    const handleError = useCallback((error: string) => {
+        console.error('Flow admin connection error:', error);
+        message.error('Flow admin connection error');
+    }, []);
+
+    // Real-time updates with both flow and step handlers
+    const { isConnected: isAdminConnected, reconnect: reconnectAdmin } = useAdminFlowSignalR(
+        handleFlowStatusChanged,
+        handleStepStatusChanged, // NEW: Pass step handler
+        handleError
+    );
 
     // Update connection state
     useEffect(() => {
         setConnectionState(isAdminConnected ? 'connected' : 'disconnected');
     }, [isAdminConnected]);
 
-    // Effect to refresh statistics when flows update
-    useEffect(() => {
-        if (lastUpdateTime) {
-            // Debounce statistics refresh
-            const timer = setTimeout(() => {
-                fetchStatistics();
-            }, 1000);
+    const filteredFlows = useMemo(() => {
+        return flows.filter(flow => {
+            const matchesSearch = flow.flowId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                flow.flowType.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                flow.userId.toLowerCase().includes(searchTerm.toLowerCase());
+            const matchesStatus = statusFilter === 'ALL' || flow.status === statusFilter;
+            return matchesSearch && matchesStatus;
+        });
+    }, [flows, searchTerm, statusFilter]);
 
-            return () => clearTimeout(timer);
-        }
-    }, [lastUpdateTime]);
-
-    // Fetch flows data using the service
     const fetchFlows = useCallback(async () => {
         setLoading(true);
         try {
             const result = await flowService.getFlows({
                 page: pagination.current,
                 pageSize: pagination.pageSize,
-                status: filters.status || undefined,
-                userId: filters.userId || undefined,
-                flowType: filters.flowType || undefined,
-                createdAfter: filters.dateRange?.[0]?.format ? filters.dateRange[0].toISOString() : undefined,
-                createdBefore: filters.dateRange?.[1]?.format ? filters.dateRange[1].toISOString() : undefined
+                status: statusFilter !== 'ALL' ? statusFilter : undefined
             });
 
             setFlows(result.items);
             setPagination(prev => ({ ...prev, total: result.totalCount }));
-
-            // Fetch statistics
             await fetchStatistics();
         } catch (error: any) {
-            message.error(error.message || 'Failed to fetch flows');
+            console.error('Failed to fetch flows:', error);
+            message.error('Failed to fetch flows');
         } finally {
             setLoading(false);
         }
-    }, [pagination.current, pagination.pageSize, filters]);
+    }, [pagination.current, pagination.pageSize, statusFilter]);
 
-    // Fetch statistics
     const fetchStatistics = async () => {
         try {
             const stats = await flowService.getStatistics();
             setStatistics(stats);
         } catch (error: any) {
             console.error('Failed to fetch statistics:', error);
+            message.error('Failed to fetch statistics');
         }
     };
 
     useEffect(() => {
         fetchFlows();
-        //const interval = setInterval(fetchFlows, 5000); // Refresh every 5 seconds
-        //return () => clearInterval(interval);
     }, [fetchFlows]);
 
-    useEffect(() => {
-        const styleElement = document.createElement('style');
-        styleElement.innerHTML = updateStyles.replace('<style>', '').replace('</style>', '');
-        document.head.appendChild(styleElement);
-
-        return () => {
-            document.head.removeChild(styleElement);
-        };
-    }, []);
-
-    // Toggle row expansion
-    const toggleRowExpansion = async (flowId: string) => {
-        const newExpanded = new Set(expandedRows);
-
-        if (newExpanded.has(flowId)) {
-            // Collapse row
-            newExpanded.delete(flowId);
-            setExpandedRows(newExpanded);
-        } else {
-            // Expand row - load full details if not cached
-            const flow = await loadFlowDetails(flowId);
-            if (flow) {
-                newExpanded.add(flowId);
-                setExpandedRows(newExpanded);
-            }
-        }
+    const getStatusConfig = (status: string) => {
+        return flowStatusConfig[status as FlowStatusKey] || flowStatusConfig.Initializing;
     };
 
-    // Load flow details (with caching)
-    const loadFlowDetails = async (flowId: string): Promise<FlowDetailDto | null> => {
-        // Check cache first
-        if (flowDetailsCache.has(flowId)) {
-            return flowDetailsCache.get(flowId)!;
-        }
-
-        // Add to loading set
-        setLoadingFlowDetails(prev => new Set(prev).add(flowId));
-
+    const openFlowChart = async (flow: FlowSummaryDto) => {
         try {
-            const flow = await flowService.getFlowById(flowId);
-
-            // Update cache
-            const newCache = new Map(flowDetailsCache);
-            newCache.set(flowId, flow);
-            setFlowDetailsCache(newCache);
-
-            return flow;
+            setLoading(true);
+            const flowDetails = await flowService.getFlowById(flow.flowId);
+            setSelectedFlow(flowDetails);
+            setFlowChartVisible(true);
         } catch (error) {
-            console.error(`Failed to load flow details for ${flowId}:`, error);
+            console.error('Failed to load flow details:', error);
             message.error('Failed to load flow details');
-            return null;
         } finally {
-            // Remove from loading set
-            setLoadingFlowDetails(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(flowId);
-                return newSet;
-            });
+            setLoading(false);
         }
     };
 
-    // Flow Actions using the service
-    const handlePauseFlow = async (flowId: string) => {
+    const closeFlowChart = () => {
+        setFlowChartVisible(false);
+        setSelectedStep(null);
+        setSelectedFlow(null);
+        setExpandedBranches([]);
+        // Clear any action loading states
+        setActionLoading({});
+    };
+
+    const handleStepClick = (step: StepDto) => {
+        setSelectedStep(step);
+        setStepModalVisible(true);
+    };
+
+    const handleSubStepClick = (subStep: any) => {
+        setSelectedStep(subStep);
+        setStepModalVisible(true);
+    };
+
+    // FIXED: Enhanced branch toggle handler with proper state management
+    const handleBranchToggle = (branchKey: string) => {
+        setExpandedBranches(prev => {
+            if (prev.includes(branchKey)) {
+                // Remove the key (collapse)
+                return prev.filter(key => key !== branchKey);
+            } else {
+                // Add the key (expand)
+                return [...prev, branchKey];
+            }
+        });
+    };
+
+    // Enhanced flow actions that don't close the modal
+    const handlePauseFlow = async (flowId: string, keepModalOpen: boolean = false) => {
+        const actionKey = `pause-${flowId}`;
+        setActionLoading(prev => ({ ...prev, [actionKey]: true }));
+
         try {
-            await flowService.pauseFlow(flowId, {
-                message: 'Manually paused by admin'
-            });
+            await flowService.pauseFlow(flowId, { message: 'Manually paused by admin' });
             message.success('Flow paused successfully');
-            fetchFlows();
-            // Clear cache to force reload
-            flowDetailsCache.delete(flowId);
+
+            if (!keepModalOpen) {
+                // Only refresh flows if modal is not open
+                fetchFlows();
+            }
+            // If modal is open, the live update will handle the refresh
         } catch (error: any) {
-            message.error(error.message || 'Failed to pause flow');
+            console.error('Failed to pause flow:', error);
+            message.error('Failed to pause flow');
+        } finally {
+            setActionLoading(prev => ({ ...prev, [actionKey]: false }));
         }
     };
 
-    const handleResumeFlow = async (flowId: string) => {
+    const handleResumeFlow = async (flowId: string, keepModalOpen: boolean = false) => {
+        const actionKey = `resume-${flowId}`;
+        setActionLoading(prev => ({ ...prev, [actionKey]: true }));
+
         try {
             await flowService.resumeFlow(flowId);
             message.success('Flow resumed successfully');
-            fetchFlows();
-            flowDetailsCache.delete(flowId);
+
+            if (!keepModalOpen) {
+                fetchFlows();
+            }
         } catch (error: any) {
-            message.error(error.message || 'Failed to resume flow');
+            console.error('Failed to resume flow:', error);
+            message.error('Failed to resume flow');
+        } finally {
+            setActionLoading(prev => ({ ...prev, [actionKey]: false }));
         }
     };
 
-    const handleCancelFlow = async (flowId: string) => {
+    const handleCancelFlow = async (flowId: string, keepModalOpen: boolean = false) => {
+        const actionKey = `cancel-${flowId}`;
+
         Modal.confirm({
             title: 'Cancel Flow',
             content: 'Are you sure you want to cancel this flow?',
             onOk: async () => {
+                setActionLoading(prev => ({ ...prev, [actionKey]: true }));
                 try {
-                    await flowService.cancelFlow(flowId, {
-                        reason: 'Cancelled by admin'
-                    });
+                    await flowService.cancelFlow(flowId, { reason: 'Cancelled by admin' });
                     message.success('Flow cancelled successfully');
-                    fetchFlows();
-                    flowDetailsCache.delete(flowId);
+
+                    if (!keepModalOpen) {
+                        fetchFlows();
+                    }
                 } catch (error: any) {
-                    message.error(error.message || 'Failed to cancel flow');
+                    console.error('Failed to cancel flow:', error);
+                    message.error('Failed to cancel flow');
+                } finally {
+                    setActionLoading(prev => ({ ...prev, [actionKey]: false }));
                 }
             }
         });
     };
 
-    const handleResolveFlow = async (flowId: string) => {
-        try {
-            await flowService.resolveFlow(flowId, {
-                resolution: 'Manually resolved by admin'
-            });
-            message.success('Flow resolved successfully');
-            fetchFlows();
-            flowDetailsCache.delete(flowId);
-        } catch (error: any) {
-            message.error(error.message || 'Failed to resolve flow');
-        }
-    };
+    const handleRetryFlow = async (flowId: string, keepModalOpen: boolean = false) => {
+        const actionKey = `retry-${flowId}`;
+        setActionLoading(prev => ({ ...prev, [actionKey]: true }));
 
-    const handleRetryFlow = async (flowId: string) => {
         try {
             await flowService.retryFlow(flowId);
-            message.success('Flow retry initiated successfully');
-            fetchFlows();
-            flowDetailsCache.delete(flowId);
-        } catch (error: any) {
-            message.error(error.message || 'Failed to retry flow');
-        }
-    };
+            message.success('Flow retry initiated');
 
-    // Batch Operations using the service
-    const handleBatchOperation = async (operation: 'pause' | 'resume' | 'cancel' | 'resolve') => {
-        if (selectedRows.length === 0) {
-            message.warning('Please select flows first');
-            return;
-        }
-
-        Modal.confirm({
-            title: `Batch ${operation}`,
-            content: `Are you sure you want to ${operation} ${selectedRows.length} flows?`,
-            onOk: async () => {
-                try {
-                    const result = await flowService.batchOperation(operation, {
-                        flowIds: selectedRows
-                    });
-
-                    message.success(
-                        `Batch ${operation} completed: ${result.successCount} succeeded, ${result.failureCount} failed`
-                    );
-
-                    setSelectedRows([]);
-                    fetchFlows();
-                    // Clear cache for affected flows
-                    selectedRows.forEach(id => flowDetailsCache.delete(id));
-                } catch (error: any) {
-                    message.error(error.message || `Failed to ${operation} flows`);
-                }
+            if (!keepModalOpen) {
+                fetchFlows();
             }
-        });
+        } catch (error: any) {
+            console.error('Failed to retry flow:', error);
+            message.error('Failed to retry flow');
+        } finally {
+            setActionLoading(prev => ({ ...prev, [actionKey]: false }));
+        }
     };
 
-    // Export functionality
     const handleExport = async () => {
         try {
             // Create CSV content
-            const headers = ['Flow ID', 'Type', 'Status', 'User', 'Created', 'Started', 'Completed', 'Duration'];
+            const headers = ['Flow ID', 'Type', 'Status', 'User', 'Created', 'Duration'];
             const rows = flows.map(flow => [
                 flow.flowId,
                 flow.flowType,
                 flow.status,
                 flow.userId,
                 flow.createdAt,
-                flow.startedAt || '',
-                flow.completedAt || '',
-                flow.duration || ''
+                flow.duration ? `${Math.round(flow.duration)}s` : ''
             ]);
 
             const csvContent = [
@@ -659,79 +682,72 @@ export default function FlowEngineAdminPanel() {
                 ...rows.map(row => row.join(','))
             ].join('\n');
 
-            // Create and download file
             const blob = new Blob([csvContent], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `flow-report-${new Date().toISOString()}.csv`;
+            a.download = `flows-report-${new Date().toISOString()}.csv`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
-
             message.success('Export completed');
         } catch (error) {
-            message.error('Failed to export data');
+            console.error('Failed to export:', error);
+            message.error('Failed to export');
         }
     };
 
-    // Table columns
     const columns = [
         {
             title: 'Flow Details',
             key: 'details',
-            width: 200,
-            render: (_: any, record: FlowSummaryDto) => (
+            render: (record: FlowSummaryDto) => (
                 <div>
-                    <div style={{ fontWeight: 500 }}>{record.flowId.substring(0, 8)}...</div>
-                    <div style={{ fontSize: '12px', color: '#666' }}>Type: {record.flowType}</div>
-                    <div style={{ fontSize: '12px', color: '#666' }}>{new Date(record.createdAt).toLocaleString()}</div>
+                    <Text strong>{record.flowId.substring(0, 8)}...</Text>
+                    <br />
+                    <Text type="secondary">Type: {record.flowType}</Text>
+                    <br />
+                    <Text type="secondary">
+                        {new Date(record.createdAt).toLocaleString()}
+                    </Text>
                 </div>
             )
         },
         {
             title: 'Status',
-            dataIndex: 'status',
             key: 'status',
-            width: 120,
-            render: (status: string) => {
-                const config = flowStatusConfig[status as FlowStatusKey];
-                return config ? (
-                    <Badge status={config.color === 'processing' ? 'processing' : 'default'}>
-                        <Tag color={config.color} icon={config.icon}>
-                            {config.label}
-                        </Tag>
-                    </Badge>
-                ) : (
-                    <Tag>{status}</Tag>
+            render: (record: FlowSummaryDto) => {
+                const config = getStatusConfig(record.status);
+                return (
+                    <Tag color={config.antdColor} icon={config.icon}>
+                        {record.status}
+                    </Tag>
                 );
             }
         },
         {
             title: 'Progress',
             key: 'progress',
-            width: 200,
-            render: (_: any, record: FlowSummaryDto) => {
-                const progress = record.currentStepIndex && record.totalSteps
+            render: (record: FlowSummaryDto) => {
+                const percent = record.totalSteps > 0
                     ? Math.round((record.currentStepIndex / record.totalSteps) * 100)
                     : 0;
+                const config = getStatusConfig(record.status);
+
                 return (
                     <div>
-                        <div style={{ marginBottom: '4px' }}>
-                            <Text type="secondary" style={{ fontSize: '12px' }}>
-                                Step {record.currentStepIndex || 0} of {record.totalSteps || 0}
-                            </Text>
-                        </div>
+                        <Text>{record.currentStepIndex || 0}/{record.totalSteps || 0}</Text>
                         <Progress
-                            percent={progress}
+                            percent={percent}
                             size="small"
-                            status={record.status === 'Failed' ? 'exception' : 'active'}
+                            status={config.progressStatus}
+                            style={{ marginTop: 4 }}
                         />
                         {record.currentStepName && (
-                            <div style={{ marginTop: '4px' }}>
-                                <Text style={{ fontSize: '11px' }}>Current: {record.currentStepName}</Text>
-                            </div>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                                Current: {record.currentStepName}
+                            </Text>
                         )}
                     </div>
                 );
@@ -740,395 +756,674 @@ export default function FlowEngineAdminPanel() {
         {
             title: 'User',
             dataIndex: 'userId',
-            key: 'userId',
-            width: 100
+            key: 'userId'
         },
         {
             title: 'Duration',
-            dataIndex: 'duration',
             key: 'duration',
-            width: 100,
-            render: (duration: number) => duration ? `${Math.round(duration)}s` : '-'
+            render: (record: FlowSummaryDto) =>
+                record.duration ? `${Math.round(record.duration)}s` : '-'
         },
         {
             title: 'Actions',
             key: 'actions',
-            fixed: 'right' as const,
-            width: 250,
-            render: (_: any, record: FlowSummaryDto) => {
-                const isExpanded = expandedRows.has(record.flowId);
-                const isLoadingDetails = loadingFlowDetails.has(record.flowId);
-
-                return (
-                    <Space size="small">
+            render: (record: FlowSummaryDto) => (
+                <Space size="small">
+                    <Tooltip title="View Flow Chart">
                         <Button
-                            type="link"
-                            icon={isLoadingDetails ? <LoadingOutlined /> : isExpanded ? <EyeOutlined /> : <EyeOutlined />}
-                            onClick={() => toggleRowExpansion(record.flowId)}
-                            loading={isLoadingDetails}
-                        >
-                            {isExpanded ? 'Hide' : 'Details'}
-                        </Button>
-
-                        {record.status === 'Running' && (
-                            <Tooltip title="Pause">
-                                <Button
-                                    type="link"
-                                    icon={<PauseCircleOutlined />}
-                                    onClick={() => handlePauseFlow(record.flowId)}
-                                />
-                            </Tooltip>
-                        )}
-
-                        {record.status === 'Paused' && (
-                            <Tooltip title="Resume">
-                                <Button
-                                    type="link"
-                                    icon={<PlayCircleOutlined />}
-                                    onClick={() => handleResumeFlow(record.flowId)}
-                                />
-                            </Tooltip>
-                        )}
-
-                        {['Running', 'Paused'].includes(record.status) && (
-                            <Tooltip title="Cancel">
-                                <Button
-                                    type="link"
-                                    danger
-                                    icon={<StopOutlined />}
-                                    onClick={() => handleCancelFlow(record.flowId)}
-                                />
-                            </Tooltip>
-                        )}
-
-                        {record.status === 'Failed' && (
-                            <>
-                                <Tooltip title="Retry">
-                                    <Button
-                                        type="link"
-                                        icon={<ReloadOutlined />}
-                                        onClick={() => handleRetryFlow(record.flowId)}
-                                    />
-                                </Tooltip>
-                                <Tooltip title="Resolve">
-                                    <Button
-                                        type="link"
-                                        icon={<CheckCircleOutlined />}
-                                        onClick={() => handleResolveFlow(record.flowId)}
-                                    />
-                                </Tooltip>
-                            </>
-                        )}
-                    </Space>
-                );
-            }
+                            type="text"
+                            icon={<EyeOutlined />}
+                            onClick={() => openFlowChart(record)}
+                        />
+                    </Tooltip>
+                    {record.status === 'Running' && (
+                        <Tooltip title="Pause Flow">
+                            <Button
+                                type="text"
+                                icon={<PauseCircleOutlined />}
+                                loading={actionLoading[`pause-${record.flowId}`]}
+                                onClick={() => handlePauseFlow(record.flowId)}
+                            />
+                        </Tooltip>
+                    )}
+                    {record.status === 'Paused' && (
+                        <Tooltip title="Resume Flow">
+                            <Button
+                                type="text"
+                                icon={<PlayCircleOutlined />}
+                                loading={actionLoading[`resume-${record.flowId}`]}
+                                onClick={() => handleResumeFlow(record.flowId)}
+                            />
+                        </Tooltip>
+                    )}
+                    {record.status === 'Failed' && (
+                        <Tooltip title="Retry Flow">
+                            <Button
+                                type="text"
+                                icon={<RedoOutlined />}
+                                loading={actionLoading[`retry-${record.flowId}`]}
+                                onClick={() => handleRetryFlow(record.flowId)}
+                            />
+                        </Tooltip>
+                    )}
+                    {['Running', 'Paused'].includes(record.status) && (
+                        <Tooltip title="Cancel Flow">
+                            <Button
+                                type="text"
+                                danger
+                                icon={<StopOutlined />}
+                                loading={actionLoading[`cancel-${record.flowId}`]}
+                                onClick={() => handleCancelFlow(record.flowId)}
+                            />
+                        </Tooltip>
+                    )}
+                </Space>
+            )
         }
     ];
 
+    // Add new navigation handler
+    const navigateToTriggeredFlow = async (flowId: string) => {
+        try {
+            setLoading(true);
+            const flowDetails = await flowService.getFlowById(flowId);
+            setSelectedFlow(flowDetails);
+            // Don't close current modal, just update content
+        } catch (error) {
+            console.error('Failed to load triggered flow details:', error);
+            message.error('Failed to load triggered flow details');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Add component for triggered flow cards
+    const TriggeredFlowCard: React.FC<{
+        triggeredFlow: TriggeredFlowDataDto;
+        onNavigate: (flowId: string) => void;
+        title: string;
+    }> = ({ triggeredFlow, onNavigate, title }) => {
+        const getStatusColor = (status?: string) => {
+            const config = getStatusConfig(status || 'Unknown');
+            return config.antdColor;
+        };
+
+        return (
+            <Card
+                size="small"
+                title={title}
+                extra={
+                    triggeredFlow.flowId && (
+                        <Button
+                            type="link"
+                            size="small"
+                            icon={<EyeOutlined />}
+                            onClick={() => onNavigate(triggeredFlow.flowId!)}
+                        >
+                            View Flow
+                        </Button>
+                    )
+                }
+                style={{ marginBottom: 8, cursor: triggeredFlow.flowId ? 'pointer' : 'default' }}
+                onClick={() => triggeredFlow.flowId && onNavigate(triggeredFlow.flowId)}
+            >
+                <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                    <div>
+                        <Text strong>Type:</Text> <Text code>{triggeredFlow.type}</Text>
+                    </div>
+                    {triggeredFlow.triggeredByStep && (
+                        <div>
+                            <Text strong>Triggered by Step:</Text> <Text>{triggeredFlow.triggeredByStep}</Text>
+                        </div>
+                    )}
+                    {triggeredFlow.status && (
+                        <div>
+                            <Text strong>Status:</Text>{' '}
+                            <Tag color={getStatusColor(triggeredFlow.status)} icon={getStatusConfig(triggeredFlow.status).icon}>
+                                {triggeredFlow.status}
+                            </Tag>
+                        </div>
+                    )}
+                    {triggeredFlow.createdAt && (
+                        <div>
+                            <Text strong>Created:</Text>{' '}
+                            <Text type="secondary">{new Date(triggeredFlow.createdAt).toLocaleString()}</Text>
+                        </div>
+                    )}
+                    {triggeredFlow.flowId && (
+                        <div>
+                            <Text strong>Flow ID:</Text>{' '}
+                            <Text code style={{ fontSize: '12px' }}>{triggeredFlow.flowId.substring(0, 8)}...</Text>
+                        </div>
+                    )}
+                </Space>
+            </Card>
+        );
+    };
+
     return (
-        <div style={{ padding: '24px', background: '#f0f2f5', minHeight: '100vh' }}>
-            <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
-                <Col>
-                    <Title level={2} style={{ margin: 0 }}>
-                        <DashboardOutlined /> FlowEngine Admin Panel
-                    </Title>
-                </Col>
-                <Col>
+        <Layout style={{ minHeight: '100vh', background: '#f5f5f5' }}>
+            {/* Header */}
+            <Header style={{ background: '#fff', padding: '0 24px', borderBottom: '1px solid #f0f0f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <div>
+                        <Title level={2} style={{ margin: 0 }}>Flow Engine</Title>
+                        <Text type="secondary">Manage and monitor your automated workflows</Text>
+                    </div>
                     <Space>
                         {lastUpdateTime && <UpdateIndicator lastUpdate={lastUpdateTime} />}
                         <Badge
-                            status={connectionState === 'connected' ? 'success' : connectionState === 'connecting' ? 'processing' : 'error'}
-                            text={connectionState === 'connected' ? 'Live Updates Active' : connectionState === 'connecting' ? 'Connecting...' : 'Disconnected'}
+                            status={connectionState === 'connected' ? 'success' : 'error'}
+                            text={connectionState === 'connected' ? 'Connected' : 'Disconnected'}
                         />
                         {connectionState === 'disconnected' && (
                             <Button
-                                size="small"
-                                type="link"
-                                onClick={reconnectAdmin}
+                                type="primary"
                                 icon={<ReloadOutlined />}
+                                onClick={reconnectAdmin}
                             >
                                 Reconnect
                             </Button>
                         )}
-                        {lastUpdateTime && (
-                            <Text type="secondary" style={{ fontSize: '12px' }}>
-                                Last update: {new Date(lastUpdateTime).toLocaleTimeString()}
-                            </Text>
-                        )}
                     </Space>
-                </Col>
-            </Row>
+                </div>
+            </Header>
 
-            {/* Statistics Cards */}
-            <Row gutter={16} style={{ marginBottom: 24 }}>
-                <Col span={4}>
-                    <Card>
-                        <Statistic
-                            title="Total Flows"
-                            value={statistics?.total || 0}
-                            prefix={<NodeIndexOutlined />}
+            <Content style={{ padding: '24px' }}>
+                {/* Search and Filters */}
+                <Card style={{ marginBottom: 24 }}>
+                    <Space size="large" style={{ width: '100%' }}>
+                        <Input
+                            placeholder="Search flows by ID, type, or user..."
+                            prefix={<SearchOutlined />}
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            style={{ width: 300 }}
                         />
-                    </Card>
-                </Col>
-                <Col span={5}>
-                    <Card>
-                        <Statistic
-                            title="Running"
-                            value={statistics?.running || 0}
-                            valueStyle={{ color: '#1890ff' }}
-                            prefix={<SyncOutlined spin />}
-                        />
-                    </Card>
-                </Col>
-                <Col span={5}>
-                    <Card>
-                        <Statistic
-                            title="Completed"
-                            value={statistics?.completed || 0}
-                            valueStyle={{ color: '#52c41a' }}
-                            prefix={<CheckCircleOutlined />}
-                        />
-                    </Card>
-                </Col>
-                <Col span={5}>
-                    <Card>
-                        <Statistic
-                            title="Failed"
-                            value={statistics?.failed || 0}
-                            valueStyle={{ color: '#ff4d4f' }}
-                            prefix={<CloseCircleOutlined />}
-                        />
-                    </Card>
-                </Col>
-                <Col span={5}>
-                    <Card>
-                        <Statistic
-                            title="Paused"
-                            value={statistics?.paused || 0}
-                            valueStyle={{ color: '#faad14' }}
-                            prefix={<PauseCircleOutlined />}
-                        />
-                    </Card>
-                </Col>
-            </Row>
-
-            {/* Filters and Actions */}
-            <Card style={{ marginBottom: 16 }}>
-                <Row gutter={16} align="middle">
-                    <Col span={4}>
                         <Select
-                            placeholder="Filter by Status"
-                            style={{ width: '100%' }}
-                            allowClear
-                            onChange={(value) => setFilters({ ...filters, status: value })}
+                            value={statusFilter}
+                            onChange={setStatusFilter}
+                            style={{ width: 150 }}
                         >
+                            <Option value="ALL">All Status</Option>
                             {Object.keys(flowStatusConfig).map(status => (
-                                <Option key={status} value={status}>
-                                    {flowStatusConfig[status as FlowStatusKey].label}
-                                </Option>
+                                <Option key={status} value={status}>{status}</Option>
                             ))}
                         </Select>
-                    </Col>
-                    <Col span={4}>
-                        <Input
-                            placeholder="Filter by User ID"
-                            prefix={<SearchOutlined />}
-                            onChange={(e) => setFilters({ ...filters, userId: e.target.value })}
-                        />
+                        <Button
+                            type="primary"
+                            icon={<ReloadOutlined />}
+                            onClick={fetchFlows}
+                        >
+                            Refresh
+                        </Button>
+                        <Button
+                            icon={<DownloadOutlined />}
+                            onClick={handleExport}
+                        >
+                            Export
+                        </Button>
+                    </Space>
+                </Card>
+
+                {/* Stats Cards */}
+                <Row gutter={16} style={{ marginBottom: 24 }}>
+                    <Col span={6}>
+                        <Card>
+                            <Statistic
+                                title="Total Flows"
+                                value={statistics?.total || flows.length}
+                                prefix={<BranchesOutlined />}
+                            />
+                        </Card>
                     </Col>
                     <Col span={6}>
-                        <RangePicker
-                            style={{ width: '100%' }}
-                            onChange={(dates) => setFilters({ ...filters, dateRange: dates as any })}
-                        />
+                        <Card>
+                            <Statistic
+                                title="Running"
+                                value={statistics?.running || flows.filter(f => f.status === 'Running').length}
+                                prefix={<LoadingOutlined />}
+                                valueStyle={{ color: '#1890ff' }}
+                            />
+                        </Card>
                     </Col>
-                    <Col span={10} style={{ textAlign: 'right' }}>
-                        <Space>
-                            <Button
-                                type="primary"
-                                icon={<ReloadOutlined />}
-                                onClick={fetchFlows}
-                                loading={loading}
-                            >
-                                Refresh
-                            </Button>
-                            <Button
-                                icon={<DownloadOutlined />}
-                                onClick={handleExport}
-                            >
-                                Export
-                            </Button>
-                            <Button
-                                onClick={() => handleBatchOperation('pause')}
-                                disabled={selectedRows.length === 0}
-                            >
-                                Batch Pause
-                            </Button>
-                            <Button
-                                onClick={() => handleBatchOperation('resume')}
-                                disabled={selectedRows.length === 0}
-                            >
-                                Batch Resume
-                            </Button>
-                            <Button
-                                danger
-                                onClick={() => handleBatchOperation('cancel')}
-                                disabled={selectedRows.length === 0}
-                            >
-                                Batch Cancel
-                            </Button>
-                        </Space>
+                    <Col span={6}>
+                        <Card>
+                            <Statistic
+                                title="Completed"
+                                value={statistics?.completed || flows.filter(f => f.status === 'Completed').length}
+                                prefix={<CheckCircleOutlined />}
+                                valueStyle={{ color: '#52c41a' }}
+                            />
+                        </Card>
+                    </Col>
+                    <Col span={6}>
+                        <Card>
+                            <Statistic
+                                title="Failed"
+                                value={statistics?.failed || flows.filter(f => f.status === 'Failed').length}
+                                prefix={<ExclamationCircleOutlined />}
+                                valueStyle={{ color: '#ff4d4f' }}
+                            />
+                        </Card>
                     </Col>
                 </Row>
-            </Card>
 
-            {/* Flows Table with Expandable Rows */}
-            <Card>
-                <Table
-                    columns={columns}
-                    dataSource={flows}
-                    rowKey="flowId"
-                    loading={loading}
-                    rowClassName={(record) => {
-                        // Highlight recently updated rows
-                        return recentUpdates.has(record.flowId) ? 'flow-row-updated' : '';
-                    }}
-                    pagination={{
-                        ...pagination,
-                        showSizeChanger: true,
-                        showTotal: (total) => `Total ${total} flows`,
-                        onChange: (page, pageSize) => {
-                            setPagination({ ...pagination, current: page, pageSize: pageSize! });
-                        }
-                    }}
-                    rowSelection={{
-                        selectedRowKeys: selectedRows,
-                        onChange: (keys) => setSelectedRows(keys as string[])
-                    }}
-                    expandable={{
-                        expandedRowRender: (record) => {
-                            const flowDetails = flowDetailsCache.get(record.flowId);
-                            if (!flowDetails) return null;
+                {/* Flows Table */}
+                <Card>
+                    <Table
+                        columns={columns}
+                        dataSource={filteredFlows}
+                        rowKey="flowId"
+                        loading={loading}
+                        pagination={{
+                            current: pagination.current,
+                            pageSize: pagination.pageSize,
+                            total: pagination.total,
+                            onChange: (page, pageSize) => {
+                                setPagination({ current: page, pageSize, total: pagination.total });
+                            }
+                        }}
+                    />
+                </Card>
+            </Content>
 
-                            return (
-                                <FlowVisualization
-                                    flow={flowDetails}
-                                />
-                            );
-                        },
-                        expandedRowKeys: Array.from(expandedRows),
-                        onExpand: () => { }, // Handled by our custom expand button
-                        expandIcon: () => null // Hide default expand icon
-                    }}
-                    scroll={{ x: 1000 }}
-                />
-            </Card>
-
-            {/* Flow Detail Modal */}
-            <Modal
+            {/* Enhanced Flow Chart Drawer */}
+            <Drawer
                 title={
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>{selectedFlow ? `${selectedFlow.flowType} - ${selectedFlow.flowId}` : ''}</span>
+                        {selectedFlow && (
+                            <Tag color={getStatusConfig(selectedFlow.status).antdColor}>
+                                {selectedFlow.status}
+                            </Tag>
+                        )}
+                        {lastUpdateTime && flowChartVisible && (
+                            <Badge
+                                status="processing"
+                                text="Live Updates"
+                                style={{ marginLeft: '8px' }}
+                            />
+                        )}
+                    </div>
+                }
+                placement="bottom"
+                size="large"
+                onClose={closeFlowChart}
+                open={flowChartVisible}
+                extra={
                     <Space>
-                        <NodeIndexOutlined />
-                        Flow Details: {selectedFlow?.flowId}
+                        {selectedFlow && selectedFlow.status === 'Running' && (
+                            <Button
+                                type="primary"
+                                danger
+                                icon={<PauseCircleOutlined />}
+                                loading={actionLoading[`pause-${selectedFlow.flowId}`]}
+                                onClick={() => handlePauseFlow(selectedFlow.flowId, true)}
+                            >
+                                Pause Flow
+                            </Button>
+                        )}
+                        {selectedFlow && selectedFlow.status === 'Paused' && (
+                            <Button
+                                type="primary"
+                                icon={<PlayCircleOutlined />}
+                                loading={actionLoading[`resume-${selectedFlow.flowId}`]}
+                                onClick={() => handleResumeFlow(selectedFlow.flowId, true)}
+                            >
+                                Resume Flow
+                            </Button>
+                        )}
+                        {selectedFlow && selectedFlow.status === 'Failed' && (
+                            <Button
+                                type="primary"
+                                icon={<RedoOutlined />}
+                                loading={actionLoading[`retry-${selectedFlow.flowId}`]}
+                                onClick={() => handleRetryFlow(selectedFlow.flowId, true)}
+                            >
+                                Retry Flow
+                            </Button>
+                        )}
+                        {selectedFlow && ['Running', 'Paused'].includes(selectedFlow.status) && (
+                            <Button
+                                danger
+                                icon={<StopOutlined />}
+                                loading={actionLoading[`cancel-${selectedFlow.flowId}`]}
+                                onClick={() => handleCancelFlow(selectedFlow.flowId, true)}
+                            >
+                                Cancel Flow
+                            </Button>
+                        )}
                     </Space>
                 }
-                visible={flowDetailModal}
-                onCancel={() => {
-                    setFlowDetailModal(false);
-                    setSelectedFlow(null);
-                }}
-                width={1200}
-                footer={[
-                    <Button key="close" onClick={() => {
-                        setFlowDetailModal(false);
-                        setSelectedFlow(null);
-                    }}>
-                        Close
-                    </Button>
-                ]}
             >
                 {selectedFlow && (
-                    <Tabs defaultActiveKey="visualization">
-                        <TabPane tab="Flow Visualization" key="visualization">
-                            <FlowVisualization
-                                flow={selectedFlow}
+                    <Row gutter={24}>
+                        <Col span={16}>
+                            {/* NEW: Triggered By Information */}
+                            {selectedFlow.triggeredBy && (
+                                <Card title="Triggered By" style={{ marginBottom: 16 }}>
+                                    <TriggeredFlowCard
+                                        triggeredFlow={selectedFlow.triggeredBy}
+                                        onNavigate={navigateToTriggeredFlow}
+                                        title="Parent Flow"
+                                    />
+                                </Card>
+                            )}
+
+                            {/* Flow Steps - FIXED WITH PROPER BRANCH RENDERING */}
+                            <Card title="Flow Steps" style={{ marginBottom: 16 }}>
+                                <Steps
+                                    direction="vertical"
+                                    current={selectedFlow.currentStepIndex}
+                                    items={[
+                                        {
+                                            title: 'Start',
+                                            description: 'Flow initialization',
+                                            icon: <BranchesOutlined />,
+                                            status: 'finish'
+                                        },
+                                        ...selectedFlow.steps.map((step) => {
+                                            const config = getStatusConfig(step.status);
+                                            let status: 'wait' | 'process' | 'finish' | 'error' = 'wait';
+
+                                            if (step.status === 'Completed') status = 'finish';
+                                            else if (step.status === 'Failed') status = 'error';
+                                            else if (step.status === 'InProgress') status = 'process';
+
+                                            return {
+                                                title: (
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                                                        onClick={() => handleStepClick(step)}>
+                                                        <span >{step.name}</span>
+                                                        {step.triggeredFlows && step.triggeredFlows.length > 0 && (
+                                                            <Badge
+                                                                count={step.triggeredFlows.length}
+                                                                size="small"
+                                                                title={`${step.triggeredFlows.length} triggered flow(s)`}
+                                                            >
+                                                                <SisternodeOutlined style={{ color: '#1890ff' }} />
+                                                            </Badge>
+                                                        )}
+                                                        {step.branches && step.branches.length > 0 && (
+                                                            <Badge
+                                                                count={step.branches.length}
+                                                                size="small"
+                                                                title={`${step.branches.length} branch(es)`}
+                                                            >
+                                                                <BranchesOutlined style={{ color: '#1890ff' }} />
+                                                            </Badge>
+                                                        )}
+                                                    </div>
+                                                ),
+                                                description: (
+                                                    <div>
+                                                        <div>{step.result?.message || 'Step'}</div>
+
+                                                        {/* FIXED: Proper Branch Rendering with Step Context */}
+                                                        {step.branches && step.branches.length > 0 && (
+                                                            <BranchRenderer
+                                                                branches={step.branches}
+                                                                stepName={step.name} // Pass step name for unique context
+                                                                onSubStepClick={handleSubStepClick}
+                                                                expandedBranches={expandedBranches}
+                                                                onBranchToggle={handleBranchToggle}
+                                                            />
+                                                        )}
+
+                                                        {/* Show triggered flows inline */}
+                                                        {step.triggeredFlows && step.triggeredFlows.length > 0 && (
+                                                            <div style={{ marginTop: 8 }}>
+                                                                <Text type="secondary" style={{ fontSize: '12px' }}>
+                                                                    Triggered Flows:
+                                                                </Text>
+                                                                <div style={{ marginTop: 4 }}>
+                                                                    {step.triggeredFlows.map((tf, index) => (
+                                                                        <div onClick={tf.flowId ? () => navigateToTriggeredFlow(tf.flowId!) : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                                            <NodeIndexOutlined style={{ color: '#666', fontSize: '12px' }} />
+                                                                            <Text strong style={{ fontSize: '12px' }}>{tf.type}</Text>
+                                                                            <Tag
+                                                                                color={config.antdColor}
+                                                                                icon={config.icon}
+                                                                                style={{ fontSize: '10px' }}
+                                                                            >
+                                                                                 {tf.status && `(${tf.status})`}
+                                                                            </Tag>
+                                                                            {tf.flowId && <EyeOutlined style={{ marginLeft: 4 }} />}
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ),
+                                                icon: config.icon,
+                                                status,
+                                                style: { cursor: 'pointer' }
+                                            };
+                                        }),
+                                        {
+                                            title: 'End',
+                                            description: 'Flow completion',
+                                            icon: <FlagFilled />,
+                                            status: selectedFlow.status === 'Completed' ? 'finish' : 'wait'
+                                        }
+                                    ]}
+                                />
+                            </Card>
+                        </Col>
+                        <Col span={8}>
+                            {/* Flow Information */}
+                            <Card title="Flow Information" style={{ marginBottom: 16 }}>
+                                <Descriptions column={1} size="small">
+                                    <Descriptions.Item label="Status">
+                                        <Tag color={getStatusConfig(selectedFlow.status).antdColor}>
+                                            {selectedFlow.status}
+                                        </Tag>
+                                    </Descriptions.Item>
+                                    <Descriptions.Item label="Total Steps">
+                                        {selectedFlow.totalSteps}
+                                    </Descriptions.Item>
+                                    <Descriptions.Item label="Current Step">
+                                        {selectedFlow.currentStepIndex}/{selectedFlow.totalSteps}
+                                    </Descriptions.Item>
+                                    <Descriptions.Item label="User">
+                                        {selectedFlow.userId}
+                                    </Descriptions.Item>
+                                    <Descriptions.Item label="Created">
+                                        {new Date(selectedFlow.createdAt).toLocaleDateString()}
+                                    </Descriptions.Item>
+                                    {selectedFlow.startedAt && (
+                                        <Descriptions.Item label="Started">
+                                            {new Date(selectedFlow.startedAt).toLocaleString()}
+                                        </Descriptions.Item>
+                                    )}
+                                    {selectedFlow.completedAt && (
+                                        <Descriptions.Item label="Completed">
+                                            {new Date(selectedFlow.completedAt).toLocaleString()}
+                                        </Descriptions.Item>
+                                    )}
+                                    {selectedFlow.pausedAt && (
+                                        <Descriptions.Item label="Paused">
+                                            {new Date(selectedFlow.pausedAt).toLocaleString()}
+                                        </Descriptions.Item>
+                                    )}
+                                    {selectedFlow.pauseMessage && (
+                                        <Descriptions.Item label="Pause Reason">
+                                            {selectedFlow.pauseMessage}
+                                        </Descriptions.Item>
+                                    )}
+                                </Descriptions>
+                            </Card>
+
+                            {/* Error Information */}
+                            <Card title="Error" style={{ marginBottom: 16 }}>
+                                <Descriptions column={1} size="small">
+                                    <Descriptions.Item label="Message">
+                                        {selectedFlow.lastError}
+                                    </Descriptions.Item>
+                                </Descriptions>
+                            </Card>
+
+                            {/* Triggered Flows Summary */}
+                            {selectedFlow.steps.some(step => step.triggeredFlows && step.triggeredFlows.length > 0) && (
+                                <Card title="Triggered Flows Summary" style={{ marginBottom: 16 }}>
+                                    {selectedFlow.steps
+                                        .filter(step => step.triggeredFlows && step.triggeredFlows.length > 0)
+                                        .map(step => (
+                                            <div key={step.name} style={{ marginBottom: 12 }}>
+                                                <Text strong>{step.name}:</Text>
+                                                <div style={{ marginTop: 4 }}>
+                                                    {step.triggeredFlows!.map((tf, index) => (
+                                                        <TriggeredFlowCard
+                                                            key={index}
+                                                            triggeredFlow={tf}
+                                                            onNavigate={navigateToTriggeredFlow}
+                                                            title={`Triggered Flow ${index + 1}`}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                </Card>
+                            )}
+
+                            {/* Recent Events */}
+                            {selectedFlow.events && selectedFlow.events.length > 0 && (
+                                <Card title="Recent Events">
+                                    <Timeline
+                                        items={selectedFlow.events.slice(-5).map((event) => ({
+                                            children: (
+                                                <div>
+                                                    <Text strong>{event.eventType}</Text>
+                                                    <br />
+                                                    <Text type="secondary">{event.description}</Text>
+                                                    <br />
+                                                    <Text type="secondary" style={{ fontSize: 12 }}>
+                                                        {new Date(event.timestamp).toLocaleTimeString()}
+                                                    </Text>
+                                                </div>
+                                            )
+                                        }))}
+                                    />
+                                </Card>
+                            )}
+                        </Col>
+                    </Row>
+                )}
+            </Drawer>
+
+            {/* Enhanced Step Details Modal */}
+            <Modal
+                title={selectedStep ? `${selectedStep.name} - Step Details` : ''}
+                open={stepModalVisible}
+                onCancel={() => setStepModalVisible(false)}
+                footer={null}
+                width={800}
+            >
+                {selectedStep && (
+                    <div>
+                        <Descriptions title="Step Information" column={2} style={{ marginBottom: 16 }}>
+                            <Descriptions.Item label="Status">
+                                <Tag color={getStatusConfig(selectedStep.status).antdColor} icon={getStatusConfig(selectedStep.status).icon}>
+                                    {selectedStep.status}
+                                </Tag>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Critical">
+                                {selectedStep.isCritical ? 'Yes' : 'No'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Idempotent">
+                                {selectedStep.isIdempotent ? 'Yes' : 'No'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Max Retries">
+                                {selectedStep.maxRetries}
+                            </Descriptions.Item>
+                            {(selectedStep as any).priority !== undefined && (
+                                <Descriptions.Item label="Priority">
+                                    {(selectedStep as any).priority}
+                                </Descriptions.Item>
+                            )}
+                            {(selectedStep as any).resourceGroup && (
+                                <Descriptions.Item label="Resource Group">
+                                    {(selectedStep as any).resourceGroup}
+                                </Descriptions.Item>
+                            )}
+                            {(selectedStep as any).index !== undefined && (selectedStep as any).index >= 0 && (
+                                <Descriptions.Item label="Index">
+                                    {(selectedStep as any).index}
+                                </Descriptions.Item>
+                            )}
+                        </Descriptions>
+
+                        {/* Step Result */}
+                        {selectedStep.result && (
+                            <Alert
+                                message="Result"
+                                description={selectedStep.result.message}
+                                type={selectedStep.result.isSuccess ? 'success' : 'error'}
+                                style={{ marginBottom: 16 }}
                             />
-                        </TabPane>
+                        )}
 
-                        <TabPane tab="Flow Information" key="info">
-                            <Descriptions bordered column={2}>
-                                <Descriptions.Item label="Flow ID" span={2}>
-                                    {selectedFlow.flowId}
-                                </Descriptions.Item>
-                                <Descriptions.Item label="Type">
-                                    {selectedFlow.flowType}
-                                </Descriptions.Item>
-                                <Descriptions.Item label="Status">
-                                    <Tag color={flowStatusConfig[selectedFlow.status as FlowStatusKey]?.color}>
-                                        {flowStatusConfig[selectedFlow.status as FlowStatusKey]?.label || selectedFlow.status}
-                                    </Tag>
-                                </Descriptions.Item>
-                                <Descriptions.Item label="User ID">
-                                    {selectedFlow.userId}
-                                </Descriptions.Item>
-                                <Descriptions.Item label="Correlation ID">
-                                    {selectedFlow.correlationId}
-                                </Descriptions.Item>
-                                <Descriptions.Item label="Current Step">
-                                    {selectedFlow.currentStepName || '-'}
-                                </Descriptions.Item>
-                                <Descriptions.Item label="Progress">
-                                    {selectedFlow.currentStepIndex}/{selectedFlow.totalSteps || 0} steps
-                                </Descriptions.Item>
-                                <Descriptions.Item label="Created At">
-                                    {new Date(selectedFlow.createdAt).toLocaleString()}
-                                </Descriptions.Item>
-                                <Descriptions.Item label="Started At">
-                                    {selectedFlow.startedAt ? new Date(selectedFlow.startedAt).toLocaleString() : '-'}
-                                </Descriptions.Item>
-                                <Descriptions.Item label="Completed At">
-                                    {selectedFlow.completedAt ? new Date(selectedFlow.completedAt).toLocaleString() : '-'}
-                                </Descriptions.Item>
-                                {selectedFlow.pauseReason && (
-                                    <Descriptions.Item label="Pause Reason" span={2}>
-                                        <Alert
-                                            message={selectedFlow.pauseReason}
-                                            description={selectedFlow.pauseMessage}
-                                            type="warning"
-                                            showIcon
-                                        />
-                                    </Descriptions.Item>
-                                )}
-                                {selectedFlow.lastError && (
-                                    <Descriptions.Item label="Error" span={2}>
-                                        <Alert
-                                            message={selectedFlow.lastError}
-                                            type="error"
-                                            showIcon
-                                        />
-                                    </Descriptions.Item>
-                                )}
-                            </Descriptions>
-                        </TabPane>
+                        {/* Step Error */}
+                        {selectedStep.status == 'Failed' && (
+                            <Alert
+                                banner={ true }
+                                message={selectedStep.error?.message ?? "Error"}
+                                description={selectedStep.error?.stackTrace ?? "An unknown error occured during step execution"}
+                                type={'error'}
+                                style={{ marginBottom: 16 }}
+                            />
+                        )}
 
-                        <TabPane tab="Timeline" key="timeline">
-                            <Timeline mode="left">
-                                {selectedFlow.events?.map((event, index) => (
-                                    <Timeline.Item
+                        {/* Triggered Flows in Step Modal */}
+                        {selectedStep.triggeredFlows && selectedStep.triggeredFlows.length > 0 && (
+                            <div style={{ marginBottom: 16 }}>
+                                <Title level={5}>Triggered Flows</Title>
+                                {selectedStep.triggeredFlows.map((tf, index) => (
+                                    <TriggeredFlowCard
                                         key={index}
-                                        color={event.eventType === 'FlowFailed' ? 'red' : 'blue'}
-                                        label={new Date(event.timestamp).toLocaleString()}
-                                    >
-                                        <Text strong>{event.eventType}</Text>
-                                        <br />
-                                        <Text>{event.description}</Text>
-                                    </Timeline.Item>
+                                        triggeredFlow={tf}
+                                        onNavigate={navigateToTriggeredFlow}
+                                        title={`Triggered Flow ${index + 1}`}
+                                    />
                                 ))}
-                            </Timeline>
-                        </TabPane>
-                    </Tabs>
+                            </div>
+                        )}
+
+                        {/* Branches in Step Modal - FIXED */}
+                        {selectedStep.branches && selectedStep.branches.length > 0 && (
+                            <div style={{ marginBottom: 16 }}>
+                                <Title level={5}>Branches</Title>
+                                <BranchRenderer
+                                    branches={selectedStep.branches}
+                                    stepName={`modal-${selectedStep.name}`} // Unique context for modal
+                                    onSubStepClick={handleSubStepClick}
+                                    expandedBranches={expandedBranches}
+                                    onBranchToggle={handleBranchToggle}
+                                />
+                            </div>
+                        )}
+
+                        {/* Dependencies */}
+                        {Object.keys(selectedStep.dataDependencies || {}).length > 0 && (
+                            <div>
+                                <Title level={5}>Data Dependencies</Title>
+                                <Card size="small">
+                                    {Object.entries(selectedStep.dataDependencies || {}).map(([key, type]) => (
+                                        <div key={key} style={{ marginBottom: 8 }}>
+                                            <Text strong>{key}</Text>
+                                            <Text type="secondary" style={{ marginLeft: 8 }}>({type})</Text>
+                                        </div>
+                                    ))}
+                                </Card>
+                            </div>
+                        )}
+                    </div>
                 )}
             </Modal>
-        </div>
+        </Layout>
     );
-}
+};
+
+export default FlowEngineAdminPanel;

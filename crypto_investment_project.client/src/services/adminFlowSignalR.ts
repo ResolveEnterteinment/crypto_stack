@@ -1,7 +1,19 @@
 import { signalRManager, type SignalRConnectionConfig, type ConnectionState } from "./signalRService";
-import { FlowDetailDto, BatchOperationResultDto } from "../services/flowService";
+import { FlowDetailDto, BatchOperationResultDto, StepResultDto } from "../services/flowService";
 
 const FLOW_HUB = 'flow';
+
+// New interface for step status updates
+interface StepStatusUpdateDto {
+    flowId: string;
+    stepName: string;
+    stepStatus: string;
+    stepResult?: StepResultDto;
+    currentStepIndex: number;
+    currentStepName: string;
+    flowStatus: string;
+    timestamp: string;
+}
 
 /**
  * SignalR service for admin-level flow monitoring
@@ -10,6 +22,7 @@ const FLOW_HUB = 'flow';
 export class AdminFlowSignalRService {
     private hubName = FLOW_HUB;
     private onFlowStatusChanged?: (update: FlowDetailDto) => void;
+    private onStepStatusChanged?: (update: StepStatusUpdateDto) => void;
     private onBatchOperationCompleted?: (result: BatchOperationResultDto) => void;
     private onError?: (error: string) => void;
     private unsubscribeHandlers: (() => void)[] = [];
@@ -37,6 +50,17 @@ export class AdminFlowSignalRService {
             }
         );
         this.unsubscribeHandlers.push(flowStatusUnsubscribe);
+
+        // NEW: Listen for step status changes
+        const stepStatusUnsubscribe = signalRManager.on(
+            this.hubName,
+            "StepStatusChanged",
+            (update: StepStatusUpdateDto) => {
+                console.log("Admin received step status update:", update);
+                this.onStepStatusChanged?.(update);
+            }
+        );
+        this.unsubscribeHandlers.push(stepStatusUnsubscribe);
 
         // Batch operation completed event
         const batchOpUnsubscribe = signalRManager.on(
@@ -115,6 +139,10 @@ export class AdminFlowSignalRService {
         this.onFlowStatusChanged = handler;
     }
 
+    setStepStatusChangedHandler(handler: (update: StepStatusUpdateDto) => void): void {
+        this.onStepStatusChanged = handler;
+    }
+
     setBatchOperationCompletedHandler(handler: (result: BatchOperationResultDto) => void): void {
         this.onBatchOperationCompleted = handler;
     }
@@ -141,3 +169,6 @@ export class AdminFlowSignalRService {
         return signalRManager.isConnected(this.hubName);
     }
 }
+
+// Export the type for use in components
+export type { StepStatusUpdateDto };

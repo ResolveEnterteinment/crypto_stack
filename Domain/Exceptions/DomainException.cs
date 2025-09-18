@@ -507,6 +507,10 @@ namespace Domain.Exceptions
         /// Gets the payment ID.
         /// </summary>
         public string PaymentId { get; }
+        public PaymentApiException() : base("Payment processing error", "PAYMENT_PROCESSING_ERROR")
+        {
+            
+        }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="PaymentApiException"/> class.
