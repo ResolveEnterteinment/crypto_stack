@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 using Stripe;
+using System.Diagnostics;
 using System.Text;
 
 namespace crypto_investment_project.Server.Controllers
@@ -90,8 +91,9 @@ namespace crypto_investment_project.Server.Controllers
                     throw new IdempotencyException(idempotencyKey);
                 }
 
+                var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
                 // Handle the webhook event
-                var result = await _webhookHandler.HandleStripeEventAsync(stripeEvent);
+                var result = await _webhookHandler.HandleStripeEventAsync(stripeEvent, correlationId);
 
                 if (result == null || !result.IsSuccess)
                 {

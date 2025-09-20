@@ -13,8 +13,11 @@ using Infrastructure.Flows.Exchange;
 using Infrastructure.Flows.Payment;
 using Infrastructure.Flows.Subscription;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
+using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Engine;
+using Microsoft.AspNetCore.Http;
 using MongoDB.Driver;
+using System.Diagnostics;
 
 namespace Infrastructure.Services.Payment
 {
@@ -54,7 +57,7 @@ namespace Infrastructure.Services.Payment
         /// <summary>
         /// Handles a Stripe event
         /// </summary>
-        public async Task<ResultWrapper> HandleStripeEventAsync(object stripeEventObject)
+        public async Task<ResultWrapper> HandleStripeEventAsync(object stripeEventObject, string? correlationId = null)
         {
             using var Scope = _logger.BeginScope("StripeWebhookHandler => HandleStripeEventAsync");
             var stripeEvent = stripeEventObject as Stripe.Event;
@@ -73,19 +76,19 @@ namespace Infrastructure.Services.Payment
                 switch (stripeEvent.Type)
                 {
                     case "checkout.session.completed":
-                        return await HandleCheckoutSessionCompletedAsync(stripeEvent);
+                        return await HandleCheckoutSessionCompletedAsync(stripeEvent, correlationId);
                     case "invoice.paid":
-                        return await HandleInvoicePaidAsync(stripeEvent);
+                        return await HandleInvoicePaidAsync(stripeEvent, correlationId);
                     case "setup_intent.succeeded":
-                        return await HandleSetupIntentSucceededAsync(stripeEvent);
+                        return await HandleSetupIntentSucceededAsync(stripeEvent, correlationId);
                     case "payment_intent.payment_failed":
-                        return await HandlePaymentFailedAsync(stripeEvent);
+                        return await HandlePaymentFailedAsync(stripeEvent, correlationId);
                     case "customer.subscription.deleted":
-                        return await HandleSubscriptionDeletedAsync(stripeEvent);
+                        return await HandleSubscriptionDeletedAsync(stripeEvent, correlationId);
                     case "customer.subscription.paused":
-                        return await HandleSubscriptionPausedAsync(stripeEvent);
+                        return await HandleSubscriptionPausedAsync(stripeEvent, correlationId);
                     case "customer.subscription.resumed":
-                        return await HandleSubscriptionResumedAsync(stripeEvent);
+                        return await HandleSubscriptionResumedAsync(stripeEvent, correlationId);
                     default:
                         _logger.LogInformation("Unhandled Stripe event type: {EventType}", stripeEvent.Type);
                         break;
@@ -104,7 +107,7 @@ namespace Infrastructure.Services.Payment
         /// <summary>
         /// Handles the checkout.session.completed event with resilience patterns
         /// </summary>
-        private async Task<ResultWrapper> HandleCheckoutSessionCompletedAsync(Stripe.Event stripeEvent)
+        private async Task<ResultWrapper> HandleCheckoutSessionCompletedAsync(Stripe.Event stripeEvent, string? correlationId = null)
         {
             #region Validation
             if (stripeEvent.Data.Object is not Stripe.Checkout.Session session)
@@ -133,8 +136,8 @@ namespace Infrastructure.Services.Payment
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing userId in Session metadata");
             }
 
-            if (!metadata.TryGetValue("correlationId", out var correlationId) ||
-                string.IsNullOrEmpty(correlationId))
+            if (!metadata.TryGetValue("correlationId", out var parentCorrelationId) ||
+                string.IsNullOrEmpty(parentCorrelationId))
             {
                 await _logger.LogTraceAsync("Missing or invalid correlationId in Session metadata", "Extract correlation ID from metadata", LogLevel.Warning, false);
             }
@@ -153,35 +156,14 @@ namespace Infrastructure.Services.Payment
                 },
                 async () =>
                 {
-                    /*
-                    var processResult = await _paymentService.ProcessCheckoutSessionCompletedAsync(new SessionDto()
-                    {
-                        Id = session.Id,
-                        Provider = "Stripe",
-                        ClientSecret = session.ClientSecret,
-                        Url = session.Url,
-                        SubscriptionId = session.SubscriptionId,
-                        InvoiceId = session.InvoiceId,
-                        Metadata = session.Metadata,
-                        Status = session.Status
-                    });
-
-                    if (processResult == null || !processResult.IsSuccess)
-                    {
-                        throw processResult == null
-                            ? new ServiceUnavailableException("PaymentService")
-                            : new PaymentApiException(processResult?.ErrorMessage ?? "", "Stripe");
-                    }
-                    */
-
-                    _flowEngineService.PublishEventAsync("CheckoutSessionCompleted", session, correlationId);
+                    _flowEngineService.PublishEventAsync("CheckoutSessionCompleted", session, parentCorrelationId ?? correlationId);
                 });
         }
 
         /// <summary>
         /// Handles the payment_intent.succeeded event
         /// </summary>
-        private async Task<ResultWrapper> HandleInvoicePaidAsync(Stripe.Event stripeEvent)
+        private async Task<ResultWrapper> HandleInvoicePaidAsync(Stripe.Event stripeEvent, string? correlationId = null)
         {
             #region Validations
             _logger.LogInformation($"Handling stripe event invoice.paid");
@@ -205,6 +187,13 @@ namespace Infrastructure.Services.Payment
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing or invalid subscriptionId in Invoice metadata");
             }
 
+            var subscriptionResult = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
+
+            if (subscriptionResult == null || !subscriptionResult.IsSuccess)
+            {
+                return ResultWrapper.NotFound("Subscription", subscriptionId);
+            }
+
             // Extract user ID from metadata
             if (!metadata.TryGetValue("userId", out var userId) ||
                 string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out Guid parsedUserId))
@@ -213,11 +202,16 @@ namespace Infrastructure.Services.Payment
                 return ResultWrapper.Failure(FailureReason.ValidationError, "Missing userId in Invoice metadata");
             }
 
-            // Extract correlation ID from metadata if present
-            if (!metadata.TryGetValue("correlationId", out var correlationId) ||
-                string.IsNullOrEmpty(correlationId))
+            if (subscriptionResult.Data.UserId != parsedUserId)
             {
-                correlationId = $"stripe-{invoice.Id}";
+                return ResultWrapper.Unauthorized("User ID in metadata does not match subscription user ID.");
+            }
+
+            // Extract correlation ID from metadata if present
+            if (!metadata.TryGetValue("correlationId", out var parentCorrelationId) ||
+                string.IsNullOrEmpty(parentCorrelationId))
+            {
+                await _logger.LogTraceAsync("Missing or correlationId in Invoice metadata", "Extract correlation ID from metadata", LogLevel.Warning, true);
             }
 
             #endregion
@@ -228,7 +222,7 @@ namespace Infrastructure.Services.Payment
                 new Dictionary<string, object>
                 {
                     ["InvoiceId"] = invoice.Id,
-                    ["SubscriptionId"] = subscriptionId,
+                    ["SubscriptionId"] = subscriptionResult.Data,
                     ["UserId"] = userId,
                     ["EventId"] = stripeEvent.Id,
                     ["EventType"] = stripeEvent.Type,
@@ -246,13 +240,26 @@ namespace Infrastructure.Services.Payment
                         throw new ResourceNotFoundException("User", parsedUserId.ToString());
                     }
 
+                    var invoiceDto = new InvoiceRequest
+                    {
+                        Id = invoice.Id,
+                        Provider = "Stripe",
+                        ChargeId = invoice.ChargeId,
+                        PaymentIntentId = invoice.PaymentIntentId,
+                        UserId = invoice.SubscriptionDetails.Metadata["userId"],
+                        SubscriptionId = invoice.SubscriptionDetails.Metadata["subscriptionId"],
+                        ProviderSubscripitonId = invoice.SubscriptionId,
+                        Amount = invoice.AmountPaid,
+                        Currency = invoice.Currency,
+                        Status = invoice.Status,
+                        Metadata = invoice.Metadata.ToDictionary(kv => kv.Key, kv => kv.Value)
+                    };
+
                     var flow = Flow.Builder(_serviceProvider)
-                        .WithData(new Dictionary<string, object>
-                        {
-                            ["Invoice"] = invoice
-                        })
                         .ForUser(userId, user.Email)
-                        .WithCorrelation(correlationId)
+                        .WithData("InvoiceRequest", invoiceDto)
+                        .WithData("Subscription", subscriptionResult.Data)
+                        .WithCorrelation(parentCorrelationId ?? correlationId)
                         .Build<PaymentProcessingFlow>();
 
                     var result = await flow.ExecuteAsync();
@@ -267,7 +274,7 @@ namespace Infrastructure.Services.Payment
         /// <summary>
         /// Handles the customer.subscription.deleted event
         /// </summary>
-        private async Task<ResultWrapper> HandleSubscriptionDeletedAsync(Stripe.Event stripeEvent)
+        private async Task<ResultWrapper> HandleSubscriptionDeletedAsync(Stripe.Event stripeEvent, string? correlationId = null)
         {
             var stripeSubscription = stripeEvent.Data.Object as Stripe.Subscription;
             if (stripeSubscription == null)
@@ -324,7 +331,7 @@ namespace Infrastructure.Services.Payment
         /// <summary>
         /// Handles the customer.subscription.paused event
         /// </summary>
-        private async Task<ResultWrapper> HandleSubscriptionPausedAsync(Stripe.Event stripeEvent)
+        private async Task<ResultWrapper> HandleSubscriptionPausedAsync(Stripe.Event stripeEvent, string? correlationId = null)
         {
             var stripeSubscription = stripeEvent.Data.Object as Stripe.Subscription;
             if (stripeSubscription == null)
@@ -387,7 +394,7 @@ namespace Infrastructure.Services.Payment
         /// <summary>
         /// Handles the customer.subscription.resumed event
         /// </summary>
-        private async Task<ResultWrapper> HandleSubscriptionResumedAsync(Stripe.Event stripeEvent)
+        private async Task<ResultWrapper> HandleSubscriptionResumedAsync(Stripe.Event stripeEvent, string? correlationId = null)
         {
             var stripeSubscription = stripeEvent.Data.Object as Stripe.Subscription;
             if (stripeSubscription == null)
@@ -447,7 +454,7 @@ namespace Infrastructure.Services.Payment
                 });
         }
 
-        private async Task<ResultWrapper> HandlePaymentFailedAsync(Stripe.Event stripeEvent)
+        private async Task<ResultWrapper> HandlePaymentFailedAsync(Stripe.Event stripeEvent, string? correlationId = null)
         {
             var paymentIntent = stripeEvent.Data.Object as Stripe.PaymentIntent;
             if (paymentIntent == null)
@@ -521,7 +528,7 @@ namespace Infrastructure.Services.Payment
                         subscriptionId);
                 });
         }
-        private async Task<ResultWrapper> HandleSetupIntentSucceededAsync(Stripe.Event stripeEvent)
+        private async Task<ResultWrapper> HandleSetupIntentSucceededAsync(Stripe.Event stripeEvent, string? correlationId = null)
         {
             var setupIntent = stripeEvent.Data.Object as Stripe.SetupIntent;
             if (setupIntent == null)

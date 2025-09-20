@@ -226,7 +226,9 @@ namespace Infrastructure.Flows.Subscription
                     // Resume when checkout session is completed
                     resume.OnEvent("CheckoutSessionCompleted", (context, eventData) =>
                     {
-                        var sessionData = eventData as SessionDto;
+                        if (eventData == null || eventData is not SessionDto sessionData)
+                            return false;
+
                         var subscriptionId = context.GetData<Guid>("SubscriptionId");
 
                         // Check if this event is for our subscription

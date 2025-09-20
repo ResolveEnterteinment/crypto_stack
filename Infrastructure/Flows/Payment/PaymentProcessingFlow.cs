@@ -31,72 +31,7 @@ namespace Infrastructure.Flows.Payment
         }
         protected override void DefineSteps()
         {
-            _builder.Step("ValidateInvoiceAndExtractMetadata")
-                .RequiresData<Stripe.Invoice>("Invoice")
-                .Execute(async context =>
-                {
-                    _logger.LogInformation($"Handling stripe event invoice.paid");
-
-                    var invoice = context.GetData<Stripe.Invoice>("Invoice");
-
-                    var metadata = invoice.SubscriptionDetails.Metadata;
-                    // Extract subscription ID from metadata
-
-                    if (metadata == null || metadata.Count == 0)
-                    {
-                        return StepResult.Failure("Invalid metadata");
-                    }
-
-                    if (!metadata.TryGetValue("subscriptionId", out var subscriptionId) ||
-                        string.IsNullOrEmpty(subscriptionId) ||
-                        !Guid.TryParse(subscriptionId, out var parsedSubscriptionId))
-                    {
-                        return StepResult.Failure("Missing or invalid subscriptionId in Invoice metadata");
-                    }
-
-                    var subscriptionResult = await _subscriptionService.GetByIdAsync(parsedSubscriptionId);
-
-                    if (subscriptionResult == null || !subscriptionResult.IsSuccess)
-                    {
-                        return StepResult.NotFound("Subscription", subscriptionId);
-                    }
-
-                    context.SetData("Subscription", subscriptionResult.Data);
-
-                    // Extract user ID from metadata
-                    if (!metadata.TryGetValue("userId", out var userId) ||
-                        string.IsNullOrEmpty(userId) ||
-                        !Guid.TryParse(userId, out var parsedUserId))
-                    {
-                        return StepResult.Failure("Missing or invalid userId in Invoice metadata");
-                    }
-
-                    if (subscriptionResult.Data.UserId != parsedUserId)
-                    {
-                        return StepResult.NotAuthorized("User ID in metadata does not match subscription user ID.");
-                    }
-
-                    var invoiceRequest = new InvoiceRequest()
-                    {
-                        Id = invoice.Id,
-                        Provider = "Stripe",
-                        ChargeId = invoice.ChargeId,
-                        PaymentIntentId = invoice.PaymentIntentId,
-                        UserId = userId,
-                        SubscriptionId = subscriptionId,
-                        ProviderSubscripitonId = invoice.SubscriptionId,
-                        Amount = invoice.AmountPaid,
-                        Currency = invoice.Currency,
-                        Status = invoice.Status
-                    };
-                    context.SetData("InvoiceRequest", invoiceRequest); // Pass the raw invoice for further processing
-
-                    return StepResult.Success("Stripe invoice validated.", invoiceRequest);
-                })
-                .Build();
-
             _builder.Step("PreparePayment")
-                .After("ValidateInvoiceAndExtractMetadata")
                 .RequiresData<InvoiceRequest>("InvoiceRequest")
                 .Execute(async context =>
                 {

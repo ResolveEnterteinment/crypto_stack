@@ -9,10 +9,12 @@ using Infrastructure.Services.FlowEngine.Core.PauseResume;
 using Infrastructure.Utilities;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
+using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Options;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
+using StringSerializer = MongoDB.Bson.Serialization.Serializers.StringSerializer; // Resolve ambiguity at top
 
 namespace Infrastructure.Services.FlowEngine.Services.Persistence
 {
@@ -268,30 +270,46 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
 
         private void ConfigureMongoSerialization()
         {
-            // Register SafeObject class map
+            // Register optimized SafeObject class map with custom serializer
             if (!BsonClassMap.IsClassMapRegistered(typeof(SafeObject)))
             {
                 BsonClassMap.RegisterClassMap<SafeObject>(cm =>
                 {
                     cm.AutoMap();
                     cm.SetIgnoreExtraElements(true);
+                    // Map to shorter field names for reduced storage
+                    cm.MapProperty(x => x.TypeCode).SetElementName("t");
+                    cm.MapProperty(x => x.Value).SetElementName("v");
+                    cm.MapProperty(x => x.TypeHint).SetElementName("h").SetIgnoreIfNull(true);
                 });
             }
 
-            // Register ObjectSerializer with ALL the types SafeObject might use
-            // This should be sufficient to handle List<SafeObject>
+            // Register custom SafeObject serializer
+            try
+            {
+                BsonSerializer.RegisterSerializer(typeof(SafeObject), new SafeObjectBsonSerializer());
+            }
+            catch (BsonSerializationException)
+            {
+                // Already registered
+            }
+
+            // Register TypeDiscriminator enum serializer
+            try
+            {
+                BsonSerializer.RegisterSerializer(typeof(TypeDiscriminator), new EnumSerializer<TypeDiscriminator>(BsonType.Int32));
+            }
+            catch (BsonSerializationException)
+            {
+                // Already registered
+            }
+
+            // Register high-performance object serializer
             try
             {
                 BsonSerializer.RegisterSerializer(
                     typeof(object),
-                    new ObjectSerializer(
-                        type =>
-                            type == typeof(SafeObject) ||
-                            type == typeof(List<SafeObject>) ||  // This allows List<SafeObject>
-                            type == typeof(Dictionary<string, SafeObject>) ||
-                            type == typeof(EnhancedAllocationDto) ||
-                            ObjectSerializer.DefaultAllowedTypes(type)
-                    )
+                    new HighPerformanceObjectSerializer()
                 );
             }
             catch (Exception)
@@ -299,13 +317,15 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                 // Already registered
             }
 
-            // Register Dictionary<string, SafeObject> serializer
+            // Register Dictionary<string, SafeObject> serializer with custom SafeObject handling
             try
             {
                 BsonSerializer.RegisterSerializer(
                     typeof(Dictionary<string, SafeObject>),
                     new DictionaryInterfaceImplementerSerializer<Dictionary<string, SafeObject>>(
-                        DictionaryRepresentation.Document)
+                        DictionaryRepresentation.Document,
+                        new StringSerializer(), // Now resolves to MongoDB's StringSerializer
+                        new SafeObjectBsonSerializer())
                 );
             }
             catch (BsonSerializationException)
@@ -320,7 +340,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                     typeof(Dictionary<string, Type>),
                     new DictionaryInterfaceImplementerSerializer<Dictionary<string, Type>>(
                         DictionaryRepresentation.Document,
-                        new StringSerializer(),
+                        new StringSerializer(), // Now resolves to MongoDB's StringSerializer
                         new TypeStringSerializer()) // Use custom type serializer
                 );
             }
@@ -369,7 +389,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                     cm.SetIgnoreExtraElements(true);
                     cm.MapProperty(c => c.Data)
                       .SetDefaultValue(new Dictionary<string, SafeObject>())
-                      .SetIgnoreIfDefault(false);
+                      .SetIgnoreIfDefault(true);
                 });
             }
 
@@ -490,6 +510,82 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
     }
 
     /// <summary>
+    /// Custom BSON serializer for SafeObject that integrates with MongoDB's native BSON system
+    /// </summary>
+    public class SafeObjectBsonSerializer : SerializerBase<SafeObject>
+    {
+        public override SafeObject Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+        {
+            var currentBsonType = context.Reader.GetCurrentBsonType();
+
+            if (currentBsonType == BsonType.Null)
+            {
+                context.Reader.ReadNull();
+                return null;
+            }
+
+            if (currentBsonType != BsonType.Document)
+            {
+                throw new BsonSerializationException($"Expected Document but got {currentBsonType}");
+            }
+
+            context.Reader.ReadStartDocument();
+
+            // FIXED: Direct instantiation - no pooling issues
+            var safeObject = new SafeObject();
+
+            while (context.Reader.ReadBsonType() != BsonType.EndOfDocument)
+            {
+                var elementName = context.Reader.ReadName();
+
+                switch (elementName)
+                {
+                    case "t":
+                        safeObject.TypeCode = (TypeDiscriminator)context.Reader.ReadInt32();
+                        break;
+                    case "v":
+                        safeObject.Value = BsonValueSerializer.Instance.Deserialize(context, args);
+                        break;
+                    case "h":
+                        safeObject.TypeHint = context.Reader.ReadString();
+                        break;
+                    default:
+                        context.Reader.SkipValue();
+                        break;
+                }
+            }
+
+            context.Reader.ReadEndDocument();
+            return safeObject;
+        }
+
+        public override void Serialize(BsonSerializationContext context, BsonSerializationArgs args, SafeObject value)
+        {
+            if (value == null)
+            {
+                context.Writer.WriteNull();
+                return;
+            }
+
+            context.Writer.WriteStartDocument();
+
+            context.Writer.WriteName("t");
+            context.Writer.WriteInt32((int)value.TypeCode);
+
+            context.Writer.WriteName("v");
+            BsonValueSerializer.Instance.Serialize(context, args, BsonValue.Create(value.Value));
+
+            if (!string.IsNullOrEmpty(value.TypeHint))
+            {
+                context.Writer.WriteName("h");
+                context.Writer.WriteString(value.TypeHint);
+            }
+
+            context.Writer.WriteEndDocument();
+        }
+    }
+
+    /// <summary>
     /// Custom BSON serializer for Type objects that handles both string and document representations
     /// </summary>
     public class TypeStringSerializer : SerializerBase<Type>
@@ -583,6 +679,74 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
                 // Store the AssemblyQualifiedName for full type resolution
                 context.Writer.WriteString(value.AssemblyQualifiedName ?? value.FullName ?? value.Name);
             }
+        }
+    }
+
+    /// <summary>
+    /// High-performance object serializer that bypasses SafeObject for simple types
+    /// </summary>
+    public class HighPerformanceObjectSerializer : SerializerBase<object>
+    {
+        public override object Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
+        {
+            var currentBsonType = context.Reader.GetCurrentBsonType();
+
+            // Fast path for simple BSON types - no SafeObject overhead
+            return currentBsonType switch
+            {
+                BsonType.String => context.Reader.ReadString(),
+                BsonType.Int32 => context.Reader.ReadInt32(),
+                BsonType.Int64 => context.Reader.ReadInt64(),
+                BsonType.Double => context.Reader.ReadDouble(),
+                BsonType.Boolean => context.Reader.ReadBoolean(),
+                BsonType.DateTime => context.Reader.ReadDateTime(),
+                BsonType.Null => ReadNull(context),
+                BsonType.Document => BsonDocumentSerializer.Instance.Deserialize(context, args),
+                BsonType.Array => BsonArraySerializer.Instance.Deserialize(context, args),
+                _ => BsonValueSerializer.Instance.Deserialize(context, args)
+            };
+        }
+
+        public override void Serialize(BsonSerializationContext context, BsonSerializationArgs args, object value)
+        {
+            if (value == null)
+            {
+                context.Writer.WriteNull();
+                return;
+            }
+
+            // Fast path for simple types - no SafeObject overhead
+            switch (value)
+            {
+                case string s:
+                    context.Writer.WriteString(s);
+                    break;
+                case int i:
+                    context.Writer.WriteInt32(i);
+                    break;
+                case long l:
+                    context.Writer.WriteInt64(l);
+                    break;
+                case double d:
+                    context.Writer.WriteDouble(d);
+                    break;
+                case bool b:
+                    context.Writer.WriteBoolean(b);
+                    break;
+                case DateTime dt:
+                    context.Writer.WriteDateTime(BsonUtils.ToMillisecondsSinceEpoch(dt));
+                    break;
+                default:
+                    // Use default serialization for complex types
+                    BsonSerializer.Serialize(context.Writer, value.GetType(), value);
+                    break;
+            }
+        }
+
+        private static object ReadNull(BsonDeserializationContext context)
+        {
+            context.Reader.ReadNull();
+            return null;
         }
     }
 }

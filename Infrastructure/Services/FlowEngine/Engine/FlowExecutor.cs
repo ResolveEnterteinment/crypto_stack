@@ -10,6 +10,7 @@ using Infrastructure.Services.FlowEngine.Core.PauseResume;
 using Infrastructure.Utilities;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyModel;
 using Microsoft.Extensions.Logging;
 using Stripe;
 using System.Text;
@@ -162,16 +163,32 @@ namespace Infrastructure.Services.FlowEngine.Engine
             try
             {
                 // Check step dependencies
-                foreach (var dependency in step.StepDependencies)
+                if (step.StepDependencies != null && step.StepDependencies.Count > 0)
                 {
-                    var depStep = flow.Definition.Steps.FirstOrDefault(s => s.Name == dependency);
-                    if (depStep == null || depStep.Status != StepStatus.Completed)
+                    var stepDepPassed = false;
+                    foreach (var dependency in step.StepDependencies)
                     {
-                        step.Status = StepStatus.Skipped;
-                        return; // Skip execution if dependency not met
+                        var depStep = flow.Definition.Steps.FirstOrDefault(s => s.Name == dependency);
+
+                        if (depStep == null)
+                        {
+                            throw new FlowExecutionException($"Step dependency {dependency} not found for step {step.Name}");
+                        }
+
+                        if (depStep.Status == StepStatus.Completed)
+                        {
+                            stepDepPassed = true;
+                            break;
+                        }
+                    }
+
+                    if (!stepDepPassed)
+                    {
+                        step.Status = StepStatus.Failed;
+                        throw new FlowExecutionException($"Missing or incomplete step dependency for step {step.Name}");
                     }
                 }
-
+                
                 // Check role requirements
                 if (step.RequiredRoles != null && step.RequiredRoles.Count > 0)
                 {
@@ -363,7 +380,20 @@ namespace Infrastructure.Services.FlowEngine.Engine
             {
                 step.Status = StepStatus.Failed;
                 step.Error = SerializableError.FromException(ex);
-                step.Result = StepResult.Failure(ex.Message, ex);
+
+                // Create step result with safe exception handling
+                try
+                {
+                    step.Result = StepResult.Failure(ex.Message, ex);
+                }
+                catch (Exception serializationEx)
+                {
+                    _logger.LogWarning(serializationEx, "Failed to serialize exception in step result for step {StepName}, using fallback", step.Name);
+
+                    // Fallback: Create a result without the problematic exception
+                    step.Result = StepResult.Failure($"Step failed: {ex.Message} (serialization error: {serializationEx.Message})", null);
+                }
+
                 throw;
             }
             finally
@@ -782,7 +812,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
             var flow = Flow.Builder(scope.ServiceProvider, effectiveToken)
                 .ForUser(context.State.UserId, context.State.UserEmail)
-                .WithCorrelation($"{context.State.CorrelationId}:triggered:{flowType.Name}")
+                .WithCorrelation(context.State.CorrelationId)
                 .WithData(initialData)
                 .TriggeredBy(new TriggeredFlowData
                 {

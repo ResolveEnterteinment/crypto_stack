@@ -13,9 +13,9 @@
         public DateTime? PausedAt { get; set; }
         public string CurrentStepName { get; set; }
         public int CurrentStepIndex { get; set; }
-        public string PauseReason { get; set; }
-        public string PauseMessage { get; set; }
-        public string LastError { get; set; }
+        public string? PauseReason { get; set; }
+        public string? PauseMessage { get; set; }
+        public string? LastError { get; set; }
         public List<StepDto> Steps { get; set; } = [];
         public List<FlowEventDto> Events { get; set; } = [];
         public Dictionary<string, object> Data { get; set; } = [];

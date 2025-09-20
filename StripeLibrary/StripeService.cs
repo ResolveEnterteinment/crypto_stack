@@ -866,7 +866,11 @@ namespace StripeLibrary
                     // If this is a subscription checkout, make sure the metadata transfers to the subscription
                     sessionOptions.SubscriptionData = new SessionSubscriptionDataOptions
                     {
-                        Metadata = sessionOptions.Metadata // This is the key part - it copies the metadata to the subscription
+                        Metadata = new Dictionary<string, string>
+                        { // This is the key part - it copies the metadata to the subscription
+                            ["userId"] = sessionOptions.Metadata["userId"],
+                            ["subscriptionId"] = sessionOptions.Metadata["subscriptionId"],
+                        }
                     };
                 }
 

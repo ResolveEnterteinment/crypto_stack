@@ -53,5 +53,7 @@ namespace Domain.DTOs.Payment
         /// Additional metadata to include with the payment
         /// </summary>
         public Dictionary<string, string>? Metadata { get; set; }
+
+        public string? CorrelationId { get; set; }
     }
 }

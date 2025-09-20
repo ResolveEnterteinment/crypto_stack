@@ -1396,9 +1396,13 @@ namespace Infrastructure.Services
                 SuccessUrl = r.ReturnUrl,
                 CancelUrl = r.CancelUrl,
                 CustomerId = customerId,
-                Metadata = new() { ["userId"] = r.UserId, ["subscriptionId"] = r.SubscriptionId },
+                Metadata = r.Metadata,
                 LineItems = new List<SessionLineItem> { new() { Currency = r.Currency, UnitAmount = (long)(r.Amount * 100), Name = "Investment", Quantity = 1, Interval = r.Interval } }
             };
+            if(r.CorrelationId != null)
+            {
+                opts.Metadata["correlationId"] = r.CorrelationId;
+            }
             if (!string.IsNullOrEmpty(corr)) opts.Metadata["correlationId"] = corr;
             return opts;
         }

@@ -2,6 +2,7 @@
 using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Logging;
+using CryptoExchange.Net.CommonObjects;
 using Domain.Constants.Logging;
 using Domain.DTOs.Exchange;
 using Domain.DTOs.Subscription;
@@ -10,10 +11,11 @@ using Domain.Exceptions;
 using Domain.Models.Asset;
 using Domain.Models.Exchange;
 using Domain.Models.Payment;
+using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
-using Infrastructure.Services.FlowEngine.Core.Exceptions;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
+using Stripe;
 
 namespace Infrastructure.Flows.Exchange
 {
@@ -214,7 +216,7 @@ namespace Infrastructure.Flows.Exchange
                     })
                     .WithSteps(stepBuilder =>
                     {
-                        stepBuilder.Step("MinNotinalCheckFailed")
+                        stepBuilder.Step("FailedPath")
                         .Execute(async context =>
                         {
                             var exchange = context.GetRuntime<IExchange>("Exchange");
@@ -229,147 +231,150 @@ namespace Infrastructure.Flows.Exchange
                             // Create success result for already processed order
                             var orderResult = OrderResult.Success(exchange.Name, 0, assetId, remainingQuantity, 0, "BELOW_MIN_NOTIONAL");
 
-                            return StepResult.Success("Minimum notional check failed.", new Dictionary<string, object>
-                            {
-                                ["MinNotional"] = minNotional,
-                                ["OrderResult"] = orderResult,
-                            });
+                            context.SetData("OrderResult", orderResult);
+
+                            return StepResult.Success($"Minimum notional check failed. Order for asset {assetId} already fully processed or remaining quantity {remainingQuantity} is less than minimum notional {minNotional}. Jumping to step OrderResult", orderResult);
                         })
+                        .JumpTo("OrderResult")
                         .Build();
-                    })
-                    .Build();
-
-                    builder.Branch("MinNotinalCheckPassed")
-                    .Otherwise()
-                    .WithSteps(stepBuilder =>
-                    {
-                        stepBuilder.Step("PlaceExchangeOrder")
-                        .RequiresData<PaymentData>("Payment")
-                        .RequiresData<EnhancedAllocationDto>("Allocation")
-                        .RequiresData<AssetData>("Asset")
-                        .RequiresData<decimal>("RemainingQuantity")
-                        .Execute(async context =>
-                        {
-                            var payment = context.GetData<PaymentData>("Payment");
-                            var allocation = context.GetData<EnhancedAllocationDto>("Allocation");
-                            var asset = context.GetData<AssetData>("Asset");
-                            var exchange = context.GetRuntime<IExchange>("Exchange") ?? _exchangeService.Exchanges[asset!.Exchange];
-                            var remainingQuantity = context.GetData<decimal>("RemainingQuantity");
-
-                            _logger.LogInformation("Placing order for {Ticker}: {Amount} {Currency} ({Percent}%)",
-                                asset.Ticker, remainingQuantity, exchange.QuoteAssetTicker, allocation.PercentAmount);
-
-                            // Place the order
-                            var placedOrderResult = await _orderManagementService.PlaceExchangeOrderAsync(
-                                exchange, asset.Ticker, remainingQuantity, payment.PaymentProviderId);
-
-                            if (placedOrderResult == null || !placedOrderResult.IsSuccess || placedOrderResult.Data is null)
-                            {
-                                throw new OrderExecutionException(
-                                    $"Unable to place order: {placedOrderResult?.ErrorMessage ?? "Order result returned null"}",
-                                    exchange.Name);
-                            }
-
-                            var placedOrder = placedOrderResult.Data;
-
-                            _logger.LogInformation("Successfully placed order {OrderId} for {Ticker}: {Quantity} @ {Price}",
-                                placedOrder.OrderId, asset.Ticker, placedOrder.QuantityFilled, placedOrder.Price);
-
-                            context.SetData("PlacedOrder", placedOrder);
-
-                            return StepResult.Success($"Order placed successfully: {placedOrder.OrderId}", placedOrder);
-                        })
-                        .Critical()
-                        .WithIdempotency()
-                        .Build();
-
-                        stepBuilder.Step("RecordExchangeOrder")
-                            .After("PlaceExchangeOrder")
-                            .RequiresData<PaymentData>("Payment")
-                            .RequiresData<EnhancedAllocationDto>("Allocation")
-                            .RequiresData<PlacedExchangeOrder>("PlacedOrder")
-                            .Execute(async context =>
-                            {
-                                var payment = context.GetData<PaymentData>("Payment");
-                                var allocation = context.GetData<EnhancedAllocationDto>("Allocation");
-                                var placedOrder = context.GetData<PlacedExchangeOrder>("PlacedOrder");
-
-                                var quoteTicker = _exchangeService.Exchanges[placedOrder.Exchange].QuoteAssetTicker;
-                                var exchangeOrder = new ExchangeOrderData
-                                {
-                                    UserId = payment.UserId,
-                                    PaymentProviderId = payment.PaymentProviderId,
-                                    SubscriptionId = payment.SubscriptionId,
-                                    Exchange = placedOrder.Exchange,
-                                    Side = placedOrder.Side.ToString().ToLowerInvariant(),
-                                    PlacedOrderId = placedOrder.OrderId,
-                                    AssetId = allocation.AssetId,
-                                    Ticker = allocation.AssetTicker,
-                                    Quantity = placedOrder.QuantityFilled,
-                                    QuoteTicker = quoteTicker,
-                                    QuoteQuantity = placedOrder.QuoteQuantity,
-                                    QuoteQuantityFilled = placedOrder.QuoteQuantityFilled,
-                                    Price = placedOrder.Price,
-                                    Status = placedOrder.Status
-                                };
-
-                                var insertOrderResult = await _exchangeService.InsertAsync(exchangeOrder);
-                                if (insertOrderResult == null || !insertOrderResult.IsSuccess || !insertOrderResult.Data.IsSuccess)
-                                {
-                                    await _logger.LogTraceAsync($"Failed to create exchange order record: {insertOrderResult?.ErrorMessage ?? "Unknown error"}",
-                                        action: "RecordExchangeOrder", level: LogLevel.Error);
-                                    throw new DatabaseException($"Failed to record exchange order: {insertOrderResult?.ErrorMessage ?? "Unknown error"}");
-                                }
-
-                                var recordedOrder = insertOrderResult.Data.Documents.First();
-
-                                context.SetData("ExchangeOrderData", recordedOrder);
-
-                                return StepResult.Success($"Exchange order recorded with ID: {recordedOrder.Id}", recordedOrder);
-                            })
-                            .WithIdempotency()
-                            .Critical()
-                            .Build();
-
-                        stepBuilder.Step("PublishOrderCompletedEvent")
-                            .After("RecordExchangeOrder")
-                            .RequiresData<ExchangeOrderData>("ExchangeOrderData")
-                            .Execute(async context =>
-                            {
-                                var exchangeOrderData = context.GetData<ExchangeOrderData>("ExchangeOrderData");
-
-                                await _eventService.PublishAsync(new ExchangeOrderCompletedEvent(exchangeOrderData, _logger.Context));
-
-                                return StepResult.Success($"Order completed event published for order {exchangeOrderData.Id}");
-                            })
-                            .InParallel()
-                            .AllowFailure() // Don't fail the entire flow if event publishing fails
-                            .Build();
-
-                        stepBuilder.Step("OrderResult")
-                            .After("PublishOrderCompletedEvent", "CheckMinimumNotional") // Can come from either path
-                            .Execute(async context =>
-                            {
-                                // Create result from placed order
-                                var placedOrder = context.GetData<PlacedExchangeOrder>("PlacedOrder");
-                                var assetId = context.GetData<string>("AssetId");
-
-                                var orderResult = OrderResult.Success(
-                                    placedOrder.Exchange,
-                                    placedOrder.OrderId,
-                                    assetId,
-                                    placedOrder.QuoteQuantity,
-                                    placedOrder.QuantityFilled,
-                                    placedOrder.Status);
-
-                                return StepResult.Success("Order result finalized", orderResult);
-                            })
-                            .InParallel()
-                            .Critical()
-                            .Build();
                     })
                     .Build();
                 })
+                .Build();
+
+            _builder.Step("PlaceExchangeOrder")
+                .After("GetAndCheckMinimumNotional")
+                .RequiresData<PaymentData>("Payment")
+                .RequiresData<EnhancedAllocationDto>("Allocation")
+                .RequiresData<AssetData>("Asset")
+                .RequiresData<decimal>("RemainingQuantity")
+                .Execute(async context =>
+                {
+                    var payment = context.GetData<PaymentData>("Payment");
+                    var allocation = context.GetData<EnhancedAllocationDto>("Allocation");
+                    var asset = context.GetData<AssetData>("Asset");
+                    var exchange = context.GetRuntime<IExchange>("Exchange") ?? _exchangeService.Exchanges[asset!.Exchange];
+                    var remainingQuantity = context.GetData<decimal>("RemainingQuantity");
+
+                    _logger.LogInformation("Placing order for {Ticker}: {Amount} {Currency} ({Percent}%)",
+                        asset.Ticker, remainingQuantity, exchange.QuoteAssetTicker, allocation.PercentAmount);
+
+                    // Place the order
+                    var placedOrderResult = await _orderManagementService.PlaceExchangeOrderAsync(
+                        exchange, asset.Ticker, remainingQuantity, payment.PaymentProviderId);
+
+                    if (placedOrderResult == null || !placedOrderResult.IsSuccess || placedOrderResult.Data is null)
+                    {
+                        throw new OrderExecutionException(
+                            $"Unable to place order: {placedOrderResult?.ErrorMessage ?? "Order result returned null"}",
+                            exchange.Name);
+                    }
+
+                    var placedOrder = placedOrderResult.Data;
+
+                    _logger.LogInformation("Successfully placed order {OrderId} for {Ticker}: {Quantity} @ {Price}",
+                        placedOrder.OrderId, asset.Ticker, placedOrder.QuantityFilled, placedOrder.Price);
+
+                    context.SetData("PlacedOrder", placedOrder);
+
+                    return StepResult.Success($"Successfully placed order {placedOrder.OrderId} for {asset.Ticker}: {placedOrder.QuantityFilled} @ {placedOrder.Price}", placedOrder);
+                })
+                .Critical()
+                .WithIdempotency()
+                .Build();
+
+            _builder.Step("RecordExchangeOrder")
+                .After("PlaceExchangeOrder")
+                .RequiresData<PaymentData>("Payment")
+                .RequiresData<EnhancedAllocationDto>("Allocation")
+                .RequiresData<PlacedExchangeOrder>("PlacedOrder")
+                .Execute(async context =>
+                {
+                    var payment = context.GetData<PaymentData>("Payment");
+                    var allocation = context.GetData<EnhancedAllocationDto>("Allocation");
+                    var placedOrder = context.GetData<PlacedExchangeOrder>("PlacedOrder");
+
+                    var quoteTicker = _exchangeService.Exchanges[placedOrder.Exchange].QuoteAssetTicker;
+                    var exchangeOrder = new ExchangeOrderData
+                    {
+                        UserId = payment.UserId,
+                        PaymentProviderId = payment.PaymentProviderId,
+                        SubscriptionId = payment.SubscriptionId,
+                        Exchange = placedOrder.Exchange,
+                        Side = placedOrder.Side.ToString().ToLowerInvariant(),
+                        PlacedOrderId = placedOrder.OrderId,
+                        AssetId = allocation.AssetId,
+                        Ticker = allocation.AssetTicker,
+                        Quantity = placedOrder.QuantityFilled,
+                        QuoteTicker = quoteTicker,
+                        QuoteQuantity = placedOrder.QuoteQuantity,
+                        QuoteQuantityFilled = placedOrder.QuoteQuantityFilled,
+                        Price = placedOrder.Price,
+                        Status = placedOrder.Status
+                    };
+
+                    var insertOrderResult = await _exchangeService.InsertAsync(exchangeOrder);
+                    if (insertOrderResult == null || !insertOrderResult.IsSuccess || !insertOrderResult.Data.IsSuccess)
+                    {
+                        await _logger.LogTraceAsync($"Failed to create exchange order record: {insertOrderResult?.ErrorMessage ?? "Unknown error"}",
+                            action: "RecordExchangeOrder", level: LogLevel.Error);
+                        throw new DatabaseException($"Failed to record exchange order: {insertOrderResult?.ErrorMessage ?? "Unknown error"}");
+                    }
+
+                    var recordedOrder = insertOrderResult.Data.Documents.First();
+
+                    context.SetData("ExchangeOrderData", recordedOrder);
+
+                    return StepResult.Success($"Exchange order recorded with ID: {recordedOrder.Id}", recordedOrder);
+                })
+                .WithIdempotency()
+                .Critical()
+                .Build();
+
+            _builder.Step("PublishOrderCompletedEvent")
+                .After("RecordExchangeOrder")
+                .RequiresData<ExchangeOrderData>("ExchangeOrderData")
+                .Execute(async context =>
+                {
+                    var exchangeOrderData = context.GetData<ExchangeOrderData>("ExchangeOrderData");
+
+                    await _eventService.PublishAsync(new ExchangeOrderCompletedEvent(exchangeOrderData, _logger.Context));
+
+                    return StepResult.Success($"Order completed event published for order {exchangeOrderData.Id}");
+                })
+                .InParallel()
+                .AllowFailure() // Don't fail the entire flow if event publishing fails
+                .Build();
+
+            _builder.Step("OrderResult")
+                .After("PublishOrderCompletedEvent", "CheckMinimumNotional") // Can come from either path
+                .Execute(async context =>
+                {
+                    // If order result already exists (from min notional check failure), reuse it
+                    var existingResult = context.GetData<OrderResult>("OrderResult");
+                    if (existingResult != null)
+                    {
+                        return StepResult.Success("Using existing order result from previous step", existingResult);
+                    }
+
+                    // Otherwise, create result from placed order
+                    var placedOrder = context.GetData<PlacedExchangeOrder>("PlacedOrder");
+                    var assetId = context.GetData<string>("AssetId");
+
+                    var orderResult = OrderResult.Success(
+                        placedOrder.Exchange,
+                        placedOrder.OrderId,
+                        assetId,
+                        placedOrder.QuoteQuantity,
+                        placedOrder.QuantityFilled,
+                        placedOrder.Status);
+
+                    context.SetData("OrderResult", orderResult);
+
+                    return StepResult.Success("Order result finalized", orderResult);
+                })
+                .InParallel()
+                .Critical()
                 .Build();
         }
     }

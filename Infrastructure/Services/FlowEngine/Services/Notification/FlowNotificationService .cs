@@ -80,7 +80,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                     {
                         IsSuccess = step.Result.IsSuccess,
                         Message = step.Result.Message,
-                        Data = step.Result.Data?.ToValue(),
+                        Data = SafelyExtractSingleData(step.Result.Data), // Fixed: Handle single SafeObject
                     } : null,
                     CurrentStepIndex = flow.State.CurrentStepIndex + 1,
                     CurrentStepName = flow.State.CurrentStepName,
@@ -141,96 +141,151 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                 return new FlowDetailDto();
             }
 
-            // Map FlowDefinition to FlowDetailDto
-            return new FlowDetailDto
+            try
             {
-                FlowId = flow.State.FlowId,
-                FlowType = flow.State.FlowType,
-                Status = flow.State.Status.ToString(),
-                UserId = flow.State.UserId,
-                CorrelationId = flow.State.CorrelationId,
-                CreatedAt = flow.State.CreatedAt,
-                StartedAt = flow.State.StartedAt,
-                CompletedAt = flow.State.CompletedAt,
-                PausedAt = flow.State.PausedAt,
-                CurrentStepName = flow.State.CurrentStepName,
-                CurrentStepIndex = flow.State.CurrentStepIndex + 1,
-                PauseReason = flow.State.PauseReason?.ToString(),
-                PauseMessage = flow.State.PauseMessage,
-                LastError = flow.State.LastError?.Message,
-                Steps = flow.Definition.Steps?.Select(s => new StepDto
+                // Map FlowDefinition to FlowDetailDto
+                return new FlowDetailDto
                 {
-                    Name = s?.Name ?? "Unknown Step",
-                    Status = s?.Status.ToString() ?? "Unknown",
-                    StepDependencies = s?.StepDependencies ?? [],
-                    DataDependencies = s?.DataDependencies?.ToDictionary(kv => kv.Key, kv => kv.Value?.Name ?? "Unknown") ?? [],
-                    MaxRetries = s?.MaxRetries ?? 0,
-                    RetryDelay = s?.RetryDelay.ToString() ?? "00:00:00",
-                    Timeout = s?.Timeout?.ToString(),
-                    IsCritical = s?.IsCritical ?? false,
-                    IsIdempotent = s?.IsIdempotent ?? false,
-                    CanRunInParallel = s?.CanRunInParallel ?? false,
-                    Result = s?.Result != null ? new StepResultDto
+                    FlowId = flow.State.FlowId,
+                    FlowType = flow.State.FlowType,
+                    Status = flow.State.Status.ToString(),
+                    UserId = flow.State.UserId,
+                    CorrelationId = flow.State.CorrelationId,
+                    CreatedAt = flow.State.CreatedAt,
+                    StartedAt = flow.State.StartedAt,
+                    CompletedAt = flow.State.CompletedAt,
+                    PausedAt = flow.State.PausedAt,
+                    CurrentStepName = flow.State.CurrentStepName,
+                    CurrentStepIndex = flow.State.CurrentStepIndex + 1,
+                    PauseReason = flow.State.PauseReason?.ToString(),
+                    PauseMessage = flow.State.PauseMessage,
+                    LastError = flow.State.LastError?.Message,
+                    Steps = flow.Definition.Steps?.Select(s => new StepDto
                     {
-                        IsSuccess = s.Result.IsSuccess,
-                        Message = s.Result.Message,
-                        Data = s.Result.Data?.ToValue()
-                    } : null,
-                    Error = s?.Error,
-                    Branches = s?.Branches?.Select(b => new BranchDto
-                    {
-                        Name = b?.Name ?? string.Empty,
-                        IsDefault = b?.IsDefault ?? false,
-                        IsConditional = b?.Condition != null,
-                        Steps = b?.Steps?.Select(bs => new SubStepDto
+                        Name = s?.Name ?? "Unknown Step",
+                        Status = s?.Status.ToString() ?? "Unknown",
+                        StepDependencies = s?.StepDependencies ?? [],
+                        DataDependencies = s?.DataDependencies?.ToDictionary(kv => kv.Key, kv => kv.Value?.Name ?? "Unknown") ?? [],
+                        MaxRetries = s?.MaxRetries ?? 0,
+                        RetryDelay = s?.RetryDelay.ToString() ?? "00:00:00",
+                        Timeout = s?.Timeout?.ToString(),
+                        IsCritical = s?.IsCritical ?? false,
+                        IsIdempotent = s?.IsIdempotent ?? false,
+                        CanRunInParallel = s?.CanRunInParallel ?? false,
+                        Result = s?.Result != null ? new StepResultDto
                         {
-                            Name = bs?.Name ?? "Unknown SubStep",
-                            Status = bs?.Status.ToString() ?? "Unknown",
-                            StepDependencies = bs?.StepDependencies ?? [],
-                            DataDependencies = bs?.DataDependencies?.ToDictionary(kv => kv.Key, kv => kv.Value?.Name ?? "Unknown") ?? new(),
-                            MaxRetries = bs?.MaxRetries ?? 0,
-                            RetryDelay = bs?.RetryDelay.ToString() ?? "00:00:00",
-                            Timeout = bs?.Timeout?.ToString(),
-                            IsCritical = bs?.IsCritical ?? false,
-                            IsIdempotent = bs?.IsIdempotent ?? false,
-                            CanRunInParallel = bs?.CanRunInParallel ?? false,
-                            Result = bs?.Result != null ? new StepResultDto
+                            IsSuccess = s.Result.IsSuccess,
+                            Message = s.Result.Message,
+                            Data = SafelyExtractSingleData(s.Result.Data) // Fixed: Handle single SafeObject
+                        } : null,
+                        Error = s?.Error,
+                        Branches = s?.Branches?.Select(b => new BranchDto
+                        {
+                            Name = b?.Name ?? string.Empty,
+                            IsDefault = b?.IsDefault ?? false,
+                            IsConditional = b?.Condition != null,
+                            Steps = b?.Steps?.Select(bs => new SubStepDto
                             {
-                                IsSuccess = bs.Result.IsSuccess,
-                                Message = bs.Result.Message,
-                                Data = bs.Result.Data?.ToValue()
-                            } : null,
-                            Error = bs?.Error,
-                            Branches = bs?.Branches?.Select(b => new BranchDto
-                            {
-                                // Handle recursive branches safely
-                                IsDefault = b?.IsDefault ?? false,
-                                IsConditional = b?.Condition != null
-                            }).ToList() ?? [],
-                            Priority = (bs as FlowSubStep)?.Priority ?? 0,
-                            SourceData = (bs as FlowSubStep)?.SourceData,
-                            Index = (bs as FlowSubStep)?.Index ?? 0,
-                            Metadata = (bs as FlowSubStep)?.Metadata?.FromSafe() ?? new Dictionary<string, object>(),
-                            EstimatedDuration = (bs as FlowSubStep)?.EstimatedDuration,
-                            ResourceGroup = (bs as FlowSubStep)?.ResourceGroup
+                                Name = bs?.Name ?? "Unknown SubStep",
+                                Status = bs?.Status.ToString() ?? "Unknown",
+                                StepDependencies = bs?.StepDependencies ?? [],
+                                DataDependencies = bs?.DataDependencies?.ToDictionary(kv => kv.Key, kv => kv.Value?.Name ?? "Unknown") ?? new(),
+                                MaxRetries = bs?.MaxRetries ?? 0,
+                                RetryDelay = bs?.RetryDelay.ToString() ?? "00:00:00",
+                                Timeout = bs?.Timeout?.ToString(),
+                                IsCritical = bs?.IsCritical ?? false,
+                                IsIdempotent = bs?.IsIdempotent ?? false,
+                                CanRunInParallel = bs?.CanRunInParallel ?? false,
+                                Result = bs?.Result != null ? new StepResultDto
+                                {
+                                    IsSuccess = bs.Result.IsSuccess,
+                                    Message = bs.Result.Message,
+                                    Data = SafelyExtractSingleData(bs.Result.Data) // Fixed: Handle single SafeObject
+                                } : null,
+                                Error = bs?.Error,
+                                Branches = bs?.Branches?.Select(b => new BranchDto
+                                {
+                                    // Handle recursive branches safely
+                                    IsDefault = b?.IsDefault ?? false,
+                                    IsConditional = b?.Condition != null
+                                }).ToList() ?? [],
+                                Priority = (bs as FlowSubStep)?.Priority ?? 0,
+                                SourceData = (bs as FlowSubStep)?.SourceData,
+                                Index = (bs as FlowSubStep)?.Index ?? 0,
+                                Metadata = SafelyExtractData((bs as FlowSubStep)?.Metadata), // Fixed: Handle single SafeObject
+                                EstimatedDuration = (bs as FlowSubStep)?.EstimatedDuration,
+                                ResourceGroup = (bs as FlowSubStep)?.ResourceGroup
 
-                        }).ToList() ?? [],
-                        Priority = b?.Priority ?? 0,
-                        ResourceGroup = b?.ResourceGroup,
-                    }).ToList() ?? []
-                }).ToList() ?? [],
-                Events = flow.State.Events?.Select(e => new FlowEventDto
+                            }).ToList() ?? [],
+                            Priority = b?.Priority ?? 0,
+                            ResourceGroup = b?.ResourceGroup,
+                        }).ToList() ?? []
+                    }).ToList() ?? [],
+                    Events = flow.State.Events?.Select(e => new FlowEventDto
+                    {
+                        EventId = e?.EventId ?? Guid.Empty,
+                        FlowId = e?.FlowId ?? flow.State.FlowId,
+                        EventType = e?.EventType ?? "Unknown",
+                        Description = e?.Description ?? "No description",
+                        Timestamp = e?.Timestamp ?? DateTime.UtcNow,
+                        Data = SafelyExtractData(e?.Data) // Correct: Handle dictionary
+                    }).ToList() ?? [],
+                    Data = SafelyExtractData(flow.State.Data), // Correct: Handle dictionary
+                    TotalSteps = flow.Definition.Steps?.Count ?? 0
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error mapping flow {FlowId} to DTO", flow.State.FlowId);
+                return new FlowDetailDto
                 {
-                    EventId = e?.EventId ?? Guid.Empty,
-                    FlowId = e?.FlowId ?? flow.State.FlowId,
-                    EventType = e?.EventType ?? "Unknown",
-                    Description = e?.Description ?? "No description",
-                    Timestamp = e?.Timestamp ?? DateTime.UtcNow,
-                    Data = e?.Data?.FromSafe() ?? new Dictionary<string, object>()
-                }).ToList() ?? [],
-                Data = flow.State.Data?.FromSafe() ?? new Dictionary<string, object>(),
-                TotalSteps = flow.Definition.Steps?.Count ?? 0
-            };
+                    FlowId = flow.State.FlowId,
+                    FlowType = flow.State.FlowType ?? "Unknown",
+                    Status = flow.State.Status.ToString(),
+                    LastError = $"Mapping error: {ex.Message}"
+                };
+            }
+        }
+
+        /// <summary>
+        /// Safely extracts data from SafeObject dictionary with error handling
+        /// </summary>
+        private Dictionary<string, object> SafelyExtractData(Dictionary<string, SafeObject> safeData)
+        {
+            if (safeData == null)
+                return new Dictionary<string, object>();
+
+            try
+            {
+                return safeData.FromSafe();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to extract SafeObject data, returning empty dictionary");
+                return new Dictionary<string, object>
+                {
+                    ["_extraction_error"] = ex.Message
+                };
+            }
+        }
+
+        /// <summary>
+        /// Safely extracts data from a single SafeObject with error handling
+        /// </summary>
+        private object SafelyExtractSingleData(SafeObject safeObject)
+        {
+            if (safeObject == null)
+                return null;
+
+            try
+            {
+                return safeObject.ToValue();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to extract single SafeObject data, returning error message");
+                return $"_extraction_error: {ex.Message}";
+            }
         }
     }
 
