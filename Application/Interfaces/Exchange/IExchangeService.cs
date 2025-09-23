@@ -38,7 +38,7 @@ namespace Application.Interfaces.Exchange
         /// </summary>
         /// <param name="userId">Optional user ID filter.</param>
         /// <param name="subscriptionId">Optional subscription ID filter.</param>
-        /// <param name="status">Optional status filter.</param>
+        /// <param name="statuses">Optional statuses to filter by. Can be a single status or multiple statuses.</param>
         /// <param name="assetId">Optional asset ID filter.</param>
         /// <param name="page">Page number (1-based).</param>
         /// <param name="pageSize">Items per page.</param>
@@ -47,7 +47,7 @@ namespace Application.Interfaces.Exchange
         Task<ResultWrapper<PaginatedResult<ExchangeOrderData>>> GetOrdersAsync(
             Guid? userId = null,
             Guid? subscriptionId = null,
-            string status = null,
+            IEnumerable<string>? statuses = null,
             Guid? assetId = null,
             int page = 1,
             int pageSize = 20,

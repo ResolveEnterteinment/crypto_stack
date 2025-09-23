@@ -8,5 +8,18 @@
         public const string PartiallyFilled = "PARTIALLY_FILLED";
         public const string Failed = "FAILED";
         public const string InsufficientFunds = "INSUFFICIENTT_FUNDS";
+
+        public static List<string> AllValues()
+        {
+            return new List<string>
+            {
+                Queued,
+                Pending,
+                Filled,
+                PartiallyFilled,
+                Failed,
+                InsufficientFunds
+            };
+        }
     }
 }

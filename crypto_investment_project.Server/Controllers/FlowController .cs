@@ -7,7 +7,6 @@ using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
-using Infrastructure.Utilities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -418,7 +417,7 @@ namespace Controllers
                 await flow.PersistAsync();
 
                 // Re-execute the flow
-                var result = await _flowEngineService.ResumeRuntimeAsync(flowId);
+                var result = await _flowEngineService.ResumeRuntimeAsync(flowId, "Manual retry");
 
                 if (result.Error == null && result.Status != FlowStatus.Paused)
                 {

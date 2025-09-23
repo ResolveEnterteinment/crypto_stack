@@ -24,7 +24,7 @@ namespace Domain.DTOs.Balance
                 TransactionActionType.Sell => new BalanceUpdateDto
                 {
                     AssetId = transaction.AssetId,
-                    Available = -transaction.Quantity,
+                    Available = transaction.Quantity,
                     LastTransactionId = transaction.Id,
                 },
                 TransactionActionType.Deposit => new BalanceUpdateDto
@@ -36,7 +36,7 @@ namespace Domain.DTOs.Balance
                 TransactionActionType.Withdrawal => new BalanceUpdateDto
                 {
                     AssetId = transaction.AssetId,
-                    Available = -transaction.Quantity,
+                    Available = transaction.Quantity,
                     LastTransactionId = transaction.Id,
                 },
                 TransactionActionType.Lock => new BalanceUpdateDto

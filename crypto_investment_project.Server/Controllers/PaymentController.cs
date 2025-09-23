@@ -154,9 +154,9 @@ namespace crypto_investment_project.Server.Controllers
                         CancelUrl = cancelUrl,
                         Metadata = new Dictionary<string, string>
                         {
-                            ["correlation_id"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
-                            ["user_id"] = request.UserId,
-                            ["subscription_id"] = subscriptionId.ToString()
+                            ["correlationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier,
+                            ["userId"] = request.UserId,
+                            ["subscriptionId"] = subscriptionId.ToString()
                         }
                     });
 

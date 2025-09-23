@@ -317,51 +317,6 @@ namespace crypto_investment_project.Server.Controllers
 
                     var subscriptionCreateResult = await flow.ExecuteAsync();
 
-                    /*
-                    // Validate request
-                    var validationResult = await _createValidator.ValidateAsync(subscriptionRequest);
-                    if (!validationResult.IsValid)
-                    {
-                        var errors = validationResult.Errors
-                            .GroupBy(e => e.PropertyName)
-                            .ToDictionary(
-                                g => g.Key,
-                                g => g.Select(e => e.ErrorMessage).ToArray()
-                            );
-
-                        _logger.LogWarning("Validation failed for subscription creation: {ValidationErrors}",
-                            string.Join("; ", validationResult.Errors.Select(e => e.ErrorMessage)));
-
-                        return ResultWrapper.ValidationError(errors, "Validation failed")
-                            .ToActionResult(this);
-                    }
-
-                    // Process the request
-                    var subscriptionCreateResult = await _subscriptionService.CreateAsync(subscriptionRequest);
-
-                    if (subscriptionCreateResult == null || !subscriptionCreateResult.IsSuccess)
-                    {
-                        return ResultWrapper.Failure(subscriptionCreateResult.Reason,
-                            "Failed to create subscription")
-                            .ToActionResult(this);
-                    }
-
-                    // Store the result for idempotency
-                    await _idempotencyService.StoreResultAsync(idempotencyKey, subscriptionCreateResult.Data);
-
-                    _logger.LogInformation("Successfully created subscription {SubscriptionId} for user {UserId}",
-                        subscriptionCreateResult.Data, subscriptionRequest.UserId);
-
-
-                    var response = new SubscriptionCreateResponse
-                    {
-                        Id = subscriptionCreateResult.Data.AffectedIds.First().ToString()
-                    };
-
-                    return ResultWrapper.Success(response, "Subscription created successfully")
-                        .ToActionResult(this);
-                    */
-
                     if (subscriptionCreateResult.Error != null)
                     {
                         throw subscriptionCreateResult.Error;

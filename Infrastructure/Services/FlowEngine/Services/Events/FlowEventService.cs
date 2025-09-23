@@ -42,7 +42,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
 
         public async Task ProcessEventAsync(string eventType, object eventData)
         {
-            var pausedFlows = _flowEngineService.GetPausedFlowsAsync();
+            var pausedFlows = _flowEngineService.GetPausedFlows();
             // Check if any paused flows are waiting for this event
             //var persistence = _serviceProvider.GetRequiredService<IFlowPersistence>();
             //var pausedFlows = await persistence.GetPausedFlowsForAutoResumeAsync();
@@ -60,7 +60,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
                             if (shouldResume)
                             {
                                 _logger.LogInformation("Resuming flow {FlowId} due to event {EventType}", flow.Id, eventType);
-                                await _flowEngineService.ResumeRuntimeAsync(flow.Id);
+                                await _flowEngineService.ResumeRuntimeAsync(flow.Id, $"Resuming flow {flow.Id} due to event {eventType}");
                             }
                         }
                     }

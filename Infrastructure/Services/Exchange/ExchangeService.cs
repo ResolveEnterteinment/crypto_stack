@@ -3,6 +3,7 @@ using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Subscription;
 using Binan‌​ceLibrary;
+using Domain.Constants;
 using Domain.Constants.Logging;
 using Domain.DTOs;
 using Domain.DTOs.Exchange;
@@ -329,9 +330,9 @@ namespace Infrastructure.Services.Exchange
         public async Task<ResultWrapper<PaginatedResult<ExchangeOrderData>>> GetOrdersAsync(
             Guid? userId = null,
             Guid? subscriptionId = null,
-            string? status = null,
+            IEnumerable<string>? statuses = null,
             Guid? assetId = null,
-            int page = 1, 
+            int page = 1,
             int pageSize = 20,
             CancellationToken ct = default)
         {
@@ -340,11 +341,11 @@ namespace Infrastructure.Services.Exchange
                  {
                      NameSpace = "Infrastructure.Services.Exchange",
                      FileName = "ExchangeService",
-                     OperationName = "GetOrdersAsync(Guid? userId = null, Guid? subscriptionId = null, string? status = null, Guid? assetId = null, int page = 1, int pageSize = 20, CancellationToken ct = default)",
+                     OperationName = "GetOrdersAsync(Guid? userId = null, Guid? subscriptionId = null, IEnumerable<string>? statuses = null, Guid? assetId = null, int page = 1, int pageSize = 20, CancellationToken ct = default)",
                      State = {
                         ["UserId"] = userId,
                         ["SubscriptionId"] = subscriptionId,
-                        ["Status"] = status,
+                        ["Statuses"] = statuses != null ? string.Join(",", statuses) : null,
                         ["AssetId"] = assetId,
                      },
                      LogLevel = LogLevel.Critical
@@ -355,7 +356,26 @@ namespace Infrastructure.Services.Exchange
                      var fb = Builders<ExchangeOrderData>.Filter;
                      if (userId.HasValue) filters.Add(fb.Eq(o => o.UserId, userId.Value));
                      if (subscriptionId.HasValue) filters.Add(fb.Eq(o => o.SubscriptionId, subscriptionId.Value));
-                     if (!string.IsNullOrEmpty(status)) filters.Add(fb.Eq(o => o.Status, status));
+
+                     // Handle multiple statuses filtering
+                     if (statuses != null && statuses.Any())
+                     {
+                         var validStatuses = statuses.Where(s => !string.IsNullOrWhiteSpace(s) && OrderStatus.AllValues().Contains(s)).ToList();
+                         if (validStatuses.Any())
+                         {
+                             if (validStatuses.Count == 1)
+                             {
+                                 // Single status - use equality filter for better performance
+                                 filters.Add(fb.Eq(o => o.Status, validStatuses.First()));
+                             }
+                             else
+                             {
+                                 // Multiple statuses - use In filter
+                                 filters.Add(fb.In(o => o.Status, validStatuses));
+                             }
+                         }
+                     }
+
                      if (assetId.HasValue) filters.Add(fb.Eq(o => o.AssetId, assetId.Value));
 
                      var filter = filters.Any() ? fb.And(filters) : fb.Empty;

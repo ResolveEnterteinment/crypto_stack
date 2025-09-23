@@ -9,15 +9,10 @@ using Domain.Constants.Logging;
 using Domain.DTOs;
 using Domain.Exceptions;
 using Domain.Models.Subscription;
-using Infrastructure.Flows.Exchange;
 using Infrastructure.Flows.Payment;
-using Infrastructure.Flows.Subscription;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
-using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Engine;
-using Microsoft.AspNetCore.Http;
 using MongoDB.Driver;
-using System.Diagnostics;
 
 namespace Infrastructure.Services.Payment
 {
@@ -156,7 +151,7 @@ namespace Infrastructure.Services.Payment
                 },
                 async () =>
                 {
-                    _flowEngineService.PublishEventAsync("CheckoutSessionCompleted", session, parentCorrelationId ?? correlationId);
+                    await _flowEngineService.PublishEventAsync("CheckoutSessionCompleted", session, parentCorrelationId ?? correlationId);
                 });
         }
 
@@ -211,7 +206,7 @@ namespace Infrastructure.Services.Payment
             if (!metadata.TryGetValue("correlationId", out var parentCorrelationId) ||
                 string.IsNullOrEmpty(parentCorrelationId))
             {
-                await _logger.LogTraceAsync("Missing or correlationId in Invoice metadata", "Extract correlation ID from metadata", LogLevel.Warning, true);
+                await _logger.LogTraceAsync("Missing correlationId in Invoice metadata", "Extract correlation ID from metadata", LogLevel.Warning);
             }
 
             #endregion

@@ -5,11 +5,7 @@ using Domain.DTOs;
 using Domain.DTOs.Base;
 using Domain.DTOs.Logging;
 using Domain.Exceptions;
-using Domain.Models;
-using MongoDB.Driver;
-using Polly;
 using Polly.CircuitBreaker;
-using Polly.Retry;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
@@ -111,6 +107,12 @@ namespace Infrastructure.Services.Base
             try
             {
                 var result = await ExecuteWithResilience(work, options, scope);
+
+                if (options?.OnSuccess != null && result.IsSuccess)
+                {
+                    await ExecuteCallback(() => options?.OnSuccess(result.Data), "OnSuccess", scope);
+                }
+
                 return result;
             }
             catch (Exception ex)
@@ -120,6 +122,11 @@ namespace Infrastructure.Services.Base
                 {
                     _logger.LogError("Operation {OperationName} failed: {ErrorMessage}",
                         scope.OperationName, ex.Message);
+                }
+
+                if (options?.OnError != null)
+                {
+                    await ExecuteCallback(() => options.OnError(ex), "OnError", scope);
                 }
 
                 return ResultWrapper<TResult>.FromException(ex, includeStackTrace: options?.IncludeStackTrace ?? false);
@@ -163,16 +170,7 @@ namespace Infrastructure.Services.Base
                 // Execute success callback without logging overhead
                 if (options?.OnSuccess != null && result.IsSuccess)
                 {
-                    try
-                    {
-                        await options.OnSuccess(result.Data);
-                    }
-                    catch (Exception callbackEx)
-                    {
-                        // Don't fail the operation due to callback failure
-                        _logger.LogWarning("Success callback failed for {OperationName}: {ErrorMessage}",
-                            scope.OperationName, callbackEx.Message);
-                    }
+                    await ExecuteCallback(() => options?.OnSuccess(result.Data), "OnSuccess", scope);
                 }
 
                 return result;
@@ -203,14 +201,7 @@ namespace Infrastructure.Services.Base
                 // Execute error callback
                 if (options?.OnError != null)
                 {
-                    try
-                    {
-                        await options.OnError(ex);
-                    }
-                    catch
-                    {
-                        // Ignore callback failures
-                    }
+                    await ExecuteCallback(() => options.OnError(ex), "OnError", scope);
                 }
 
                 return ResultWrapper<TResult>.FromException(ex, includeStackTrace: options?.IncludeStackTrace ?? true);
@@ -296,7 +287,7 @@ namespace Infrastructure.Services.Base
                 // Execute success callback
                 if (options?.OnSuccess != null && result.IsSuccess)
                 {
-                    await ExecuteCallback(() => options.OnSuccess(result.Data), "OnSuccess", enrichedScope);
+                    await ExecuteCallback(() => options?.OnSuccess(result.Data), "OnSuccess", scope);
                 }
 
                 return result;
@@ -328,7 +319,7 @@ namespace Infrastructure.Services.Base
                     level: scope.LogLevel,
                     requiresResolution: ShouldRequireResolution(ex, options));
 
-                if (options?.OnError != null)
+                if (options?.OnSuccess != null )
                 {
                     await ExecuteCallback(() => options.OnError(ex), "OnError", enrichedScope);
                 }
@@ -354,6 +345,7 @@ namespace Infrastructure.Services.Base
                 {
                     return await work();
                 }, CancellationToken.None);
+
 
                 return ResultWrapper<T>.Success(result);
             }
@@ -481,6 +473,12 @@ namespace Infrastructure.Services.Base
                 try
                 {
                     await ExecuteWithResilienceVoid(work, options, scope);
+
+                    if (options?.OnSuccess != null)
+                    {
+                        await ExecuteCallbackVoid(() => options.OnSuccess(), "OnSuccess", scope);
+                    }
+
                     return ResultWrapper.Success();
                 }
                 catch (Exception ex)

@@ -1,7 +1,10 @@
 ﻿using Application.Contracts.Requests.Payment;
+using Application.Interfaces.Base;
+using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.DTOs.Subscription;
+using Domain.Events.Payment;
 using Domain.Exceptions;
 using Domain.Models.Payment;
 using Domain.Models.Subscription;
@@ -18,15 +21,18 @@ namespace Infrastructure.Flows.Payment
     {
         private readonly ISubscriptionService _subscriptionService;
         private readonly IPaymentService _paymentService;
+        private readonly IEventService _eventService;
         private readonly ILogger<PaymentProcessingFlow> _logger;
 
         public PaymentProcessingFlow(
             ILogger<PaymentProcessingFlow> logger,
             ISubscriptionService subscriptionService,
-            IPaymentService paymentService)
+            IPaymentService paymentService,
+            IEventService eventService)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
+            _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
         protected override void DefineSteps()
@@ -82,10 +88,12 @@ namespace Infrastructure.Flows.Payment
                 {
                     var paymentData = context.GetData<PaymentData>("Payment");
                     // Update status to processing
-                    var insertWr = await _paymentService.InsertAsync(paymentData);
+                    var insertWr = await _paymentService.InsertAsync(paymentData!);
 
                     if (insertWr == null || !insertWr.IsSuccess)
                         throw new DatabaseException(insertWr?.ErrorMessage ?? "Insert result returned null");
+
+                    await _eventService.PublishAsync(new PaymentReceivedEvent(paymentData!, context.State.Data.FromSafe()));
 
                     return StepResult.Success($"Payment record created.", insertWr.Data.Documents.FirstOrDefault());
                 })

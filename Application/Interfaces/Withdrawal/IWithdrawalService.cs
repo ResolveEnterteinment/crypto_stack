@@ -16,7 +16,7 @@ namespace Application.Interfaces.Withdrawal
         Task<ResultWrapper<WithdrawalLimitDto>> GetUserWithdrawalLimitsAsync(Guid userId);
         Task<ResultWrapper<WithdrawalReceiptDto>> RequestCryptoWithdrawalAsync(CryptoWithdrawalRequest request);
         //Task<ResultWrapper<WithdrawalReceiptDto>> RequestBankWithdrawalAsync(CryptoWithdrawalRequest request);
-        Task<ResultWrapper<List<WithdrawalData>>> GetUserWithdrawalHistoryAsync(Guid userId);
+        Task<ResultWrapper<List<WithdrawalData>>> GetUserWithdrawalHistoryAsync(Guid userId, string? filterAssetTicker = null);
         Task<ResultWrapper<WithdrawalData>> GetWithdrawalDetailsAsync(Guid withdrawalId);
         Task<ResultWrapper<CrudResult<WithdrawalData>>> UpdateWithdrawalStatusAsync(Guid withdrawalId, string status, Guid processedBy, string? comment = null, string? transationHash = null);
         Task<ResultWrapper<PaginatedResult<WithdrawalData>>> GetPendingWithdrawalsAsync(int page = 1, int pageSize = 20);

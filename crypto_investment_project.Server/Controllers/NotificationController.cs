@@ -95,7 +95,7 @@ namespace crypto_investment_project.Server.Controllers
         /// </summary>
         /// <param name="notificationId">Notification ID</param>
         /// <returns>Result of the operation</returns>
-        [HttpPost("read/{notificationId}")]
+        [HttpPut("read/{notificationId}")]
         public async Task<IActionResult> MarkAsRead(string notificationId)
         {
             using (_logger.BeginScope(new

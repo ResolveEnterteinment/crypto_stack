@@ -120,7 +120,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Persistence
             var flowStates = await _flowsCollection.Find(filter)
                 .Skip(skip)
                 .Limit(query.PageSize)
-                .SortByDescending(x => x.CreatedAt)
+                .SortBy(x => x.CreatedAt)
                 .ToListAsync();
 
             var summaries = flowStates.Select(state => new FlowSummary

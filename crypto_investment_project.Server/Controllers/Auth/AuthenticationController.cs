@@ -534,11 +534,26 @@ namespace crypto_investment_project.Server.Controllers.Auth
                     return result.ToActionResult(this);
                 }
 
-                // Cast to LoginResponse to access the tokens
-                var loginResponse = result.Data as LoginResponse;
+                // Safely access the LoginResponse data
+                if (result.Data == null)
+                {
+                    _logger.LogError("RefreshToken service returned success but with null data");
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
+
+                var loginResponse = result.Data;
+
+                // Validate that we can parse the UserId
+                if (!Guid.TryParse(loginResponse.UserId, out Guid userId))
+                {
+                    _logger.LogError("Invalid UserId format in refresh token response: {UserId}", loginResponse.UserId);
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
 
                 // ✅ Trigger cache warmup on token refresh too
-                cacheWarmup.QueueUserCacheWarmup(Guid.Parse(loginResponse.UserId));
+                cacheWarmup.QueueUserCacheWarmup(userId);
 
                 // Set new refresh token in cookie
                 SetRefreshTokenCookie(loginResponse.RefreshToken);

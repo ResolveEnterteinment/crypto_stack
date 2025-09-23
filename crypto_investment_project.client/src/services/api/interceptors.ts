@@ -63,6 +63,7 @@ export class InterceptorManager {
         );
     }
 
+    // ✅ FIXED: Add proper refresh token endpoint exclusion
     private static setupResponseInterceptor(axiosInstance: AxiosInstance): void {
         axiosInstance.interceptors.response.use(
             (response) => {
@@ -88,8 +89,19 @@ export class InterceptorManager {
                     return Promise.reject(error);
                 }
 
-                // Handle 401 errors with token refresh
-                if (error.response?.status === 401 && !originalRequest._retry && originalRequest.url !== API_CONFIG.CSRF.REFRESH_URL) {
+                // ✅ FIXED: Properly exclude refresh token endpoint and add more exclusions
+                const isRefreshTokenRequest = originalRequest.url?.includes('/auth/refresh-token');
+                const isAuthRequest = originalRequest.url?.includes('/auth/login') ||
+                    originalRequest.url?.includes('/auth/register') ||
+                    originalRequest.url?.includes('/auth/logout');
+
+                // Handle 401 errors with token refresh - but NOT for auth endpoints
+                if (error.response?.status === 401 &&
+                    !originalRequest._retry &&
+                    !isRefreshTokenRequest &&
+                    !isAuthRequest &&
+                    originalRequest.url !== API_CONFIG.CSRF.REFRESH_URL) {
+
                     originalRequest._retry = true;
 
                     try {
@@ -105,8 +117,18 @@ export class InterceptorManager {
                     } catch (refreshError) {
                         // Refresh failed, redirect to login
                         tokenManager.clearAll();
-                        window.location.href = '/login';
+
+                        // ✅ FIXED: Prevent redirect loops
+                        if (!window.location.pathname.includes('/login')) {
+                            window.location.href = '/login';
+                        }
                         return Promise.reject(refreshError);
+                    }
+
+                    // ✅ FIXED: If refresh failed, clear tokens and redirect
+                    tokenManager.clearAll();
+                    if (!window.location.pathname.includes('/login')) {
+                        window.location.href = '/login';
                     }
                 }
 
@@ -172,6 +194,7 @@ export class InterceptorManager {
         }
     }
 
+    // ✅ FIXED: Include Authorization header for refresh token requests
     private static async performTokenRefresh(axiosInstance: AxiosInstance): Promise<boolean> {
         try {
             const currentToken = tokenManager.getAccessToken();
@@ -179,15 +202,15 @@ export class InterceptorManager {
 
             const response = await axiosInstance.post('/v1/auth/refresh-token', null, {
                 headers: {
-                    //'Authorization': `Bearer ${currentToken}`,
-                    'X-Skip-Auth': 'true' // Skip auth interceptor for this request
+                    'Authorization': `Bearer ${currentToken}`, // ✅ FIXED: Uncommented this
+                    'X-Skip-Auth': 'true' // This prevents the request interceptor from adding another auth header
                 },
                 // ✅ ENSURE: Cookies are sent with request
                 withCredentials: true
             });
 
-            if (response.data.success && response.data.accessToken) {
-                tokenManager.setAccessToken(response.data.accessToken);
+            if (response.data.success && response.data.data?.accessToken) {
+                tokenManager.setAccessToken(response.data.data.accessToken);
                 return true;
             }
 

@@ -1,6 +1,5 @@
 ﻿using Domain.DTOs.Flow;
 using Infrastructure.Hubs;
-using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Engine;
@@ -147,7 +146,7 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                 return new FlowDetailDto
                 {
                     FlowId = flow.State.FlowId,
-                    FlowType = flow.State.FlowType,
+                    FlowType = Type.GetType(flow.State.FlowType).Name,
                     Status = flow.State.Status.ToString(),
                     UserId = flow.State.UserId,
                     CorrelationId = flow.State.CorrelationId,

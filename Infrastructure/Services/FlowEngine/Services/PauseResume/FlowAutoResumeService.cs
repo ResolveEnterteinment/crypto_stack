@@ -33,7 +33,7 @@ namespace Infrastructure.Services.FlowEngine.Services.PauseResume
             _logger.LogDebug("Checking paused flows for auto-resume conditions");
             try
             {
-                var pausedFlows = _flowEngineService.GetPausedFlowsAsync();
+                var pausedFlows = _flowEngineService.GetPausedFlows();
 
                 _logger.LogDebug("Checking {FlowCount} paused flows for auto-resume conditions", pausedFlows.Count);
 

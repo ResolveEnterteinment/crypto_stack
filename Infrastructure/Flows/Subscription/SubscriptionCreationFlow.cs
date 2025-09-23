@@ -218,7 +218,7 @@ namespace Infrastructure.Flows.Subscription
                     return PauseCondition.Pause(
                         PauseReason.WaitingForPayment,
                         "Waiting for payment completion",
-                        context.GetData<SessionDto>("CheckoutSession")
+                        session
                         );
                 })
                 .ResumeOn(resume =>
@@ -226,18 +226,18 @@ namespace Infrastructure.Flows.Subscription
                     // Resume when checkout session is completed
                     resume.OnEvent("CheckoutSessionCompleted", (context, eventData) =>
                     {
-                        if (eventData == null || eventData is not SessionDto sessionData)
+                        if (eventData == null || eventData is not Stripe.Checkout.Session session)
                             return false;
 
                         var subscriptionId = context.GetData<Guid>("SubscriptionId");
 
                         // Check if this event is for our subscription
-                        var canResume = sessionData?.Metadata?.ContainsKey("subscriptionId") == true &&
-                               sessionData.Metadata["subscriptionId"] == subscriptionId.ToString();
+                        var canResume = session?.Metadata?.ContainsKey("subscriptionId") == true &&
+                               session.Metadata["subscriptionId"] == subscriptionId.ToString();
 
                         if (canResume)
                         {
-                            context.SetData("CheckoutSessionResult", sessionData);
+                            context.SetData("CheckoutSessionResult", session);
                             return true;
                         }
 
@@ -282,7 +282,7 @@ namespace Infrastructure.Flows.Subscription
                         Message = "Your subscription has been activated."
                     });
 
-                    return StepResult.Failure("Unable to verify subscription status after payment");
+                    return StepResult.Success($"Updated and activated subscription {subscriptionId} with session data. Notification sent to user ID {context.State.UserId}");
                 })
                 .Build();
 
@@ -319,9 +319,11 @@ namespace Infrastructure.Flows.Subscription
                 .Execute(async context =>
                 {
                     // Check if we already have a response from idempotent handling
-                    if (context.HasData("SubscriptionResponse"))
+
+                    var existingResponse = context.GetData<SubscriptionCreateResponse>("SubscriptionResponse");
+                    if (existingResponse == null)
                     {
-                        return StepResult.Success("Idempotent request - returning existing result", context.GetData<SubscriptionCreateResponse>("SubscriptionResponse"));
+                        return StepResult.Success("Idempotent request - returning existing result", existingResponse);
                     }
 
                     var subscriptionId = context.GetData<Guid>("SubscriptionId");
@@ -338,10 +340,9 @@ namespace Infrastructure.Flows.Subscription
                             : SubscriptionStatus.Pending
                     };
 
-                    return StepResult.Success("Response prepared", new Dictionary<string, object>
-                    {
-                        ["SubscriptionResponse"] = response
-                    });
+                    context.SetData("SubscriptionResponse", response);
+
+                    return StepResult.Success("Response prepared", response);
                 })
                 .Build();
         }

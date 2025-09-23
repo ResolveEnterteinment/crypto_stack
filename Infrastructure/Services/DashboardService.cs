@@ -3,14 +3,19 @@ using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
+using Application.Interfaces.Withdrawal;
+using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Dashboard;
 using Domain.DTOs.Logging;
+using Domain.DTOs.Subscription;
 using Domain.Events;
 using Domain.Events.Entity;
 using Domain.Exceptions;
 using Domain.Models.Balance;
 using Domain.Models.Dashboard;
+using Domain.Models.Exchange;
+using Domain.Models.Withdrawal;
 using Infrastructure.Hubs;
 using Infrastructure.Services.Base;
 using Microsoft.AspNetCore.SignalR;
@@ -24,8 +29,9 @@ namespace Infrastructure.Services
         IDashboardService
     {
         private readonly IExchangeService _exchangeService;
-        private readonly ISubscriptionService _subscriptionService;
         private readonly IBalanceService _balanceService;
+        private readonly ITransactionService _transactionService;
+        private readonly IWithdrawalService _withdrawalService;
         private readonly IHubContext<DashboardHub> _hubContext;
 
         // Cache keys and durations
@@ -41,10 +47,11 @@ namespace Infrastructure.Services
         public DashboardService(
             IServiceProvider serviceProvider,
             IExchangeService exchangeService,
-            ISubscriptionService subscriptionService,
             IPaymentService paymentService,
             IAssetService assetService,
             IBalanceService balanceService,
+            ITransactionService transactionService,
+            IWithdrawalService withdrawalService,
             IHubContext<DashboardHub> hubContext
         ) : base(
             serviceProvider,
@@ -57,8 +64,9 @@ namespace Infrastructure.Services
         )
         {
             _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
-            _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
+            _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
+            _withdrawalService = withdrawalService ?? throw new ArgumentNullException(nameof(withdrawalService));
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
         }
 
@@ -513,7 +521,7 @@ namespace Infrastructure.Services
         private async Task<ResultWrapper<decimal>> FetchTotalInvestmentsCachedAsync(Guid userId)
         {
             return await _resilienceService.CreateBuilder(
-                new Domain.DTOs.Logging.Scope
+                new Scope
                 {
                     NameSpace = "Infrastructure.Services",
                     FileName = "DashboardService",
@@ -545,13 +553,194 @@ namespace Infrastructure.Services
 
         private async Task<decimal> FetchTotalInvestmentsFromSourceAsync(Guid userId)
         {
-            var subs = await _subscriptionService.GetAllByUserIdAsync(userId);
-            if (!subs.IsSuccess)
+            var totalInvestments = 0m;
+
+            // Calculate total investments for each EXCHANGE asset in user balances
+            var balancesResult = await _balanceService.FetchBalancesWithAssetsAsync(userId, "Exchange");
+
+            if (balancesResult == null || !balancesResult.IsSuccess)
             {
-                throw new SubscriptionFetchException(subs.ErrorMessage);
+                throw new BalanceFetchException($"Failed to fetch user {userId} balances.");
             }
 
-            return subs.Data.Sum(s => s.TotalInvestments);
+            var balances = balancesResult.Data;
+
+            if (balances == null || balances.Count == 0)
+            {
+                return 0;
+            }
+
+            // Process each balance to calculate its investment value
+            foreach (var balance in balances)
+            {
+                try
+                {
+                    // Fetch all exchange orders for this balance
+                    var ordersResult = await _exchangeService.GetOrdersAsync(
+                        userId: userId,
+                        statuses: [OrderStatus.Filled, OrderStatus.PartiallyFilled],
+                        assetId: balance.AssetId);
+
+                    if (ordersResult == null || !ordersResult.IsSuccess)
+                    {
+                        _loggingService.LogError("Failed to fetch exchange orders for user {UserId} and asset {AssetId}: {Error}",
+                            userId, balance.AssetId, ordersResult?.ErrorMessage ?? "Unknown error");
+                        continue;
+                    }
+
+                    var orders = ordersResult.Data.Items;
+
+                    if (orders == null || !orders.Any())
+                    {
+                        continue;
+                    }
+
+                    var buyOrders = orders
+                        .Where(o => o.Side.Equals(OrderSide.Buy, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    var sellOrders = orders
+                        .Where(o => o.Side.Equals(OrderSide.Sell, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    // Fetch withdrawal history for this specific asset
+                    var withdrawalsResult = await _withdrawalService.GetUserWithdrawalHistoryAsync(userId, balance.Asset?.Ticker ?? balance.Ticker);
+
+                    List<WithdrawalData> withdrawals = new();
+                    if (withdrawalsResult != null && withdrawalsResult.IsSuccess && withdrawalsResult.Data != null)
+                    {
+                        // Only include completed withdrawals in FIFO calculation
+                        withdrawals = withdrawalsResult.Data
+                            .Where(w => w.Status.Equals("COMPLETED", StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+                    }
+
+                    if (buyOrders.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    // Calculate total invested amount and total quantity purchased from BUYs
+                    var totalBuyInvestment = buyOrders.Sum(t => t.QuoteQuantity);
+                    var totalBuyQuantity = buyOrders.Sum(t => t.Quantity);
+
+                    if (totalBuyQuantity <= 0)
+                    {
+                        continue;
+                    }
+
+                    // Calculate net quantity after sales and withdrawals
+                    var totalSellQuantity = sellOrders.Sum(t => t.Quantity);
+                    var totalWithdrawalQuantity = withdrawals.Sum(w => w.Amount);
+                    var totalOutflowQuantity = totalSellQuantity + totalWithdrawalQuantity;
+
+                    var netQuantity = totalBuyQuantity - totalOutflowQuantity;
+
+                    // If net quantity is zero or negative, no investment remains
+                    if (netQuantity <= 0)
+                    {
+                        _loggingService.LogInformation(
+                            "Net quantity for asset {AssetTicker} is {NetQuantity} after withdrawals, skipping investment calculation",
+                            balance.Asset?.Ticker ?? balance.Ticker,
+                            netQuantity);
+                        continue;
+                    }
+
+                    // Calculate weighted average rate using enhanced FIFO that includes withdrawals
+                    var remainingCostBasis = CalculateRemainingCostBasisWithWithdrawals(
+                        buyOrders, sellOrders, withdrawals);
+                    var weightedAverageRate = remainingCostBasis / netQuantity;
+
+                    // Calculate asset value based on current balance and weighted average investment rate
+                    var assetValue = balance.Total * weightedAverageRate;
+                    totalInvestments += assetValue ?? 0;
+
+                    _loggingService.LogInformation(
+                        "Calculated investment for asset {AssetTicker}: Balance={Balance}, WeightedAvgRate={WeightedAvgRate}, " +
+                        "Value={Value}, TotalBuy={TotalBuy}, TotalSell={TotalSell}, TotalWithdrawals={TotalWithdrawals}, NetQty={NetQty}",
+                        balance.Asset?.Ticker ?? balance.Ticker,
+                        balance.Total,
+                        weightedAverageRate,
+                        assetValue,
+                        totalBuyQuantity,
+                        totalSellQuantity,
+                        totalWithdrawalQuantity,
+                        netQuantity);
+                }
+                catch (Exception ex)
+                {
+                    _loggingService.LogError("Error calculating investment for asset {AssetId}: {Error}",
+                        balance.AssetId, ex.Message);
+                    // Continue with other assets rather than failing the entire calculation
+                    continue;
+                }
+            }
+
+            return totalInvestments;
+        }
+
+        /// <summary>
+        /// Calculates the remaining cost basis using FIFO accounting method including withdrawals
+        /// </summary>
+        /// <param name="buyOrders">List of buy transactions ordered by date</param>
+        /// <param name="sellOrders">List of sell transactions ordered by date</param>
+        /// <param name="withdrawals">List of completed withdrawals ordered by date</param>
+        /// <returns>The cost basis of the remaining holdings</returns>
+        private decimal CalculateRemainingCostBasisWithWithdrawals(
+            List<ExchangeOrderData> buyOrders,
+            List<ExchangeOrderData> sellOrders,
+            List<WithdrawalData> withdrawals)
+        {
+            // Sort all transactions by date for FIFO calculation
+            var sortedBuys = buyOrders.OrderBy(t => t.CreatedAt).ToList();
+            var sortedSells = sellOrders.OrderBy(t => t.CreatedAt).ToList();
+            var sortedWithdrawals = withdrawals.OrderBy(w => w.CreatedAt).ToList();
+
+            // Create a combined list of all outflow events (sells and withdrawals) sorted by date
+            var outflowEvents = new List<(DateTime Date, decimal Quantity, string Type)>();
+
+            foreach (var sell in sortedSells)
+            {
+                outflowEvents.Add((sell.CreatedAt, sell.Quantity ?? 0, "SELL"));
+            }
+
+            foreach (var withdrawal in sortedWithdrawals)
+            {
+                outflowEvents.Add((withdrawal.CreatedAt, withdrawal.Amount, "WITHDRAWAL"));
+            }
+
+            // Sort all outflow events by date
+            var sortedOutflows = outflowEvents.OrderBy(e => e.Date).ToList();
+            var totalOutflowQuantity = sortedOutflows.Sum(e => e.Quantity);
+
+            decimal remainingCostBasis = 0m;
+            decimal processedOutflowQuantity = 0m;
+
+            foreach (var buyTransaction in sortedBuys)
+            {
+                var buyQuantity = buyTransaction.Quantity;
+                var buyUnitPrice = buyTransaction.QuoteQuantity / buyQuantity;
+
+                if (processedOutflowQuantity >= totalOutflowQuantity)
+                {
+                    // All outflows have been accounted for, remaining buys contribute fully to cost basis
+                    remainingCostBasis += buyTransaction.QuoteQuantity;
+                }
+                else if (processedOutflowQuantity + buyQuantity <= totalOutflowQuantity)
+                {
+                    // This entire buy transaction was consumed by outflows
+                    processedOutflowQuantity += buyQuantity ?? 0;
+                }
+                else
+                {
+                    // This buy transaction was partially consumed by outflows
+                    var remainingFromThisBuy = buyQuantity - (totalOutflowQuantity - processedOutflowQuantity);
+                    remainingCostBasis += remainingFromThisBuy * buyUnitPrice ?? 0;
+                    processedOutflowQuantity = totalOutflowQuantity;
+                }
+            }
+
+            return remainingCostBasis;
         }
         #endregion
     }

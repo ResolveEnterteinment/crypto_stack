@@ -19,8 +19,6 @@ using Domain.Events;
 using Domain.Exceptions;
 using Domain.Exceptions.KYC;
 using Domain.Exceptions.Withdrawal;
-using Domain.Models.Balance;
-using Domain.Models.Transaction;
 using Domain.Models.Withdrawal;
 using Infrastructure.Services.Base;
 using Microsoft.Extensions.Options;
@@ -36,9 +34,6 @@ namespace Infrastructure.Services.Withdrawal
         private readonly IExchangeService _exchangeService;
         private readonly INetworkService _networkService;
         private readonly IAssetService _assetService;
-        private readonly IBalanceService _balanceService;
-        private readonly ITransactionService _transactionService;
-
         public WithdrawalService(
             IServiceProvider serviceProvider,
             IOptions<WithdrawalServiceSettings> settings,
@@ -46,10 +41,7 @@ namespace Infrastructure.Services.Withdrawal
             IUserService userService,
             IExchangeService exchangeService,
             INetworkService networkService,
-            IAssetService assetService,
-            IBalanceService balanceService,
-            ITransactionService transactionService,
-            INotificationService notificationService
+            IAssetService assetService
         ) : base(
             serviceProvider,
             new()
@@ -73,8 +65,6 @@ namespace Infrastructure.Services.Withdrawal
             _exchangeService = exchangeService ?? throw new ArgumentException(nameof(exchangeService));
             _networkService = networkService ?? throw new ArgumentNullException(nameof(networkService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
-            _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
-            _transactionService = transactionService ?? throw new ArgumentNullException(nameof(balanceService));
         }
 
         public async Task<ResultWrapper<WithdrawalLimitDto>> GetUserWithdrawalLimitsAsync(Guid userId)
@@ -344,14 +334,14 @@ namespace Infrastructure.Services.Withdrawal
                 .ExecuteAsync();
         }
 
-        public async Task<ResultWrapper<List<WithdrawalData>>> GetUserWithdrawalHistoryAsync(Guid userId)
+        public async Task<ResultWrapper<List<WithdrawalData>>> GetUserWithdrawalHistoryAsync(Guid userId, string? filterAssetTicker = null)
         {
             return await _resilienceService.CreateBuilder(
                 new Scope
                 {
                     NameSpace = "Infrastructure.Services.Withdrawal",
                     FileName = "WithdrawalService",
-                    OperationName = "GetUserWithdrawalHistoryAsync(Guid userId))",
+                    OperationName = "GetUserWithdrawalHistoryAsync(Guid userId, string? filterAssetTicker = null)",
                     State = {
                         ["UserId"] = userId,
                     },
@@ -359,7 +349,26 @@ namespace Infrastructure.Services.Withdrawal
                 },
                 async () =>
                 {
-                    var filter = Builders<WithdrawalData>.Filter.Eq(w => w.UserId, userId);
+                    var filters = new List<FilterDefinition<WithdrawalData>>
+                    {
+                        Builders<WithdrawalData>.Filter.Eq(w => w.UserId, userId)
+                    };
+
+                    var supportedTickersResult = await _assetService.GetSupportedTickersAsync();
+                    if (supportedTickersResult == null || !supportedTickersResult.IsSuccess)
+                    {
+                        throw new DatabaseException("Failed to fetch supported asset tickers");
+                    }
+
+                    var supportedTickers = supportedTickersResult.Data ?? [];
+
+                if (!string.IsNullOrWhiteSpace(filterAssetTicker) && supportedTickers.Contains(filterAssetTicker))
+                    {
+                        filters.Add(Builders<WithdrawalData>.Filter.Eq(w => w.Currency, filterAssetTicker));
+                    }
+
+                    var filter = Builders<WithdrawalData>.Filter.And(filters);
+
                     var sort = Builders<WithdrawalData>.Sort.Descending(w => w.CreatedAt);
 
                     var result = await GetManyAsync(filter);
@@ -798,7 +807,7 @@ namespace Infrastructure.Services.Withdrawal
         }
         private async Task HandleWithdrawalApproved(WithdrawalData withdrawal)
         {
-            await _eventService!.PublishAsync(new WithdrawalApprovedEvent(withdrawal));
+            await _eventService.PublishAsync(new WithdrawalApprovedEvent(withdrawal, _loggingService.Context));
         }
     }
 }

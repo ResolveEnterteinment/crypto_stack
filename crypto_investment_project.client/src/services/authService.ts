@@ -207,28 +207,56 @@ class AuthService {
      */
     async logout(): Promise<void> {
         try {
-            // Call logout endpoint to invalidate server-side session
-            // Use fire-and-forget approach - don't wait for response
-            apiClient.post(
-                this.AUTH_ENDPOINTS.LOGOUT,
-                undefined,
-                {
-                    priority: 'high',
-                    retryCount: 0,
-                    debounceMs: 0 // Execute immediately
-                }
-            ).catch(err => {
-                // Log but don't throw - local cleanup should still happen
-                console.warn("Backend logout failed:", err);
-            });
+            // ✅ FIXED: Only call logout endpoint if we have a valid token
+            const hasToken = this.getStoredToken();
+
+            if (hasToken) {
+                // Call logout endpoint to invalidate server-side session
+                // Use fire-and-forget approach - don't wait for response
+                apiClient.post(
+                    this.AUTH_ENDPOINTS.LOGOUT,
+                    undefined,
+                    {
+                        priority: 'high',
+                        retryCount: 0,
+                        debounceMs: 0, // Execute immediately
+                        skipAuth: false // ✅ FIXED: Allow auth header for logout
+                    }
+                ).catch(err => {
+                    // Log but don't throw - local cleanup should still happen
+                    console.warn("Backend logout failed:", err);
+                });
+            }
 
             console.log("Logout initiated");
         } catch (error) {
             console.error('Logout error:', error);
         } finally {
-            // Always clear local authentication
-            this.clearAuthentication();
+            // ✅ FIXED: Always clear local authentication without recursion
+            this.clearAuthenticationWithoutLogout();
         }
+    }
+
+    /**
+ * Clear authentication data without calling logout endpoint
+ */
+    private clearAuthenticationWithoutLogout(): void {
+        console.log("Clearing authentication data");
+
+        // Reset refresh attempts
+        this.refreshAttempts = 0;
+        this.refreshInProgress = false;
+
+        // Clear localStorage (only access token and user data)
+        localStorage.removeItem(this.STORAGE_KEYS.ACCESS_TOKEN);
+        localStorage.removeItem(this.STORAGE_KEYS.USER);
+
+        // Clear sessionStorage
+        sessionStorage.removeItem(this.STORAGE_KEYS.ACCESS_TOKEN);
+        sessionStorage.removeItem(this.STORAGE_KEYS.USER);
+
+        // Clear API client tokens
+        apiClient.clearTokens();
     }
 
     /**
@@ -284,7 +312,7 @@ class AuthService {
     }
 
     /**
-     * Refresh the authentication token with exponential backoff
+     * Refresh the authentication token with exponential backoff - FIXED
      */
     async refreshToken(): Promise<boolean> {
         try {
@@ -304,7 +332,7 @@ class AuthService {
             // Check if we've exceeded max attempts
             if (this.refreshAttempts >= this.MAX_REFRESH_ATTEMPTS) {
                 console.log("Max refresh attempts exceeded, clearing authentication");
-                this.clearAuthentication();
+                this.clearAuthenticationWithoutLogout(); // ✅ FIXED: Don't call logout()
                 return false;
             }
 
@@ -326,10 +354,10 @@ class AuthService {
                     dedupeKey: 'token-refresh',
                     priority: 'high',
                     retryCount: 0, // No API-level retry, we handle it here
-                    // ✅ NEW: Include current access token in Authorization header
                     headers: {
                         'Authorization': `Bearer ${currentToken}`
-                    }
+                    },
+                    skipAuth: false // ✅ FIXED: Don't skip auth for refresh token requests
                 }
             );
 
@@ -354,7 +382,7 @@ class AuthService {
             if (apiError.isAuthError) {
                 console.log("Auth error during refresh, clearing authentication");
                 this.refreshAttempts = 0;
-                this.clearAuthentication();
+                this.clearAuthenticationWithoutLogout(); // ✅ FIXED: Don't call logout()
                 return false;
             }
 
@@ -365,6 +393,7 @@ class AuthService {
             this.refreshInProgress = false;
         }
     }
+
     /**
      * Request password reset
      */
@@ -533,8 +562,8 @@ class AuthService {
     }
 
     /**
- * Clear all authentication data
- */
+     * Clear all authentication data - FIXED to prevent recursion
+     */
     private clearAuthentication(): void {
         console.log("Clearing authentication data");
 
@@ -546,9 +575,6 @@ class AuthService {
         localStorage.removeItem(this.STORAGE_KEYS.ACCESS_TOKEN);
         localStorage.removeItem(this.STORAGE_KEYS.USER);
 
-        // ❌ REMOVE: Don't clear refresh token from localStorage
-        // localStorage.removeItem(this.STORAGE_KEYS.REFRESH_TOKEN);
-
         // Clear sessionStorage
         sessionStorage.removeItem(this.STORAGE_KEYS.ACCESS_TOKEN);
         sessionStorage.removeItem(this.STORAGE_KEYS.USER);
@@ -556,8 +582,8 @@ class AuthService {
         // Clear API client tokens
         apiClient.clearTokens();
 
-        // ✅ NEW: Call logout endpoint to clear HTTP-only cookie
-        this.logout();
+        // ✅ FIXED: DON'T call logout() here to prevent recursion
+        // The logout() method should be called explicitly by user action
     }
 
     /**

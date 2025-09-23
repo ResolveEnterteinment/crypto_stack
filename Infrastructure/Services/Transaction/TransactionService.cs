@@ -33,6 +33,7 @@ namespace Infrastructure.Services.Transaction
             serviceProvider,
             new()
             {
+                PublishCRUDEvents = true,
                 IndexModels = [
                     new CreateIndexModel<TransactionData>(
                         Builders<TransactionData>.IndexKeys.Ascending(t => t.UserId),
@@ -112,11 +113,10 @@ namespace Infrastructure.Services.Transaction
                             continue;
                         }
 
-                        var balanceWr = await _balanceService.GetUserBalanceByTickerAsync(txn.UserId, assetWr.Data.Ticker);
                         var paymentWr = await _paymentService.GetByProviderIdAsync(txn.PaymentProviderId);
-                        if (!balanceWr.IsSuccess || balanceWr.Data == null || !paymentWr.IsSuccess || paymentWr.Data == null)
+                        if (!paymentWr.IsSuccess || paymentWr.Data == null)
                         {
-                            _loggingService.LogError("Skipping transaction {TxnId} due to missing balance or payment data", txn.Id);
+                            _loggingService.LogError("Skipping transaction {TxnId} due to missing payment data", txn.Id);
                             continue;
                         }
                         
@@ -140,6 +140,67 @@ namespace Infrastructure.Services.Transaction
             }
 
             return result;
+        }
+
+        public async Task<ResultWrapper<List<TransactionDto>>> GetByUserAsset(Guid userId, Guid assetId)
+        {
+            return await _resilienceService.SafeExecute(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Transaction",
+                    FileName = "TransactionService",
+                    OperationName = "GetByUserBalance(string userId, string assetId)",
+                    State = {
+                        ["UserId"] = userId,
+                        ["AssetId"] = assetId,
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    var filter = Builders<TransactionData>.Filter.And(
+                        [Builders<TransactionData>.Filter.Eq(t => t.UserId, userId),
+                        Builders<TransactionData>.Filter.Eq(t => t.AssetId, assetId)]
+                    );
+
+                    var dataResult = await GetManyAsync(filter);
+
+                    if (dataResult == null || !dataResult.IsSuccess)
+                        throw new DatabaseException($"Failed to fetch user transactions");
+
+                    var transactionsDto = new List<TransactionDto>();
+
+                    foreach (var txn in dataResult.Data)
+                    {
+                        var assetWr = await _assetService.GetByIdAsync(txn.AssetId);
+                        if (assetWr == null || !assetWr.IsSuccess || assetWr.Data == null)
+                        {
+                            _loggingService.LogError("Skipping transaction {TxnId} due to missing asset data", txn.Id);
+                            continue;
+                        }
+                        
+                        var paymentWr = await _paymentService.GetByProviderIdAsync(txn.PaymentProviderId);
+                        
+                        if (!paymentWr.IsSuccess || paymentWr.Data == null)
+                        {
+                            _loggingService.LogError("Skipping transaction {TxnId} due to missing balance or payment data", txn.Id);
+                            continue;
+                        }
+
+                        transactionsDto.Add(new TransactionDto
+                        {
+                            Action = txn.Action,
+                            AssetName = assetWr.Data.Name,
+                            AssetTicker = assetWr.Data.Ticker,
+                            Quantity = txn.Quantity,
+                            CreatedAt = txn.CreatedAt,
+                            QuoteQuantity = paymentWr.Data.NetAmount,
+                            QuoteCurrency = paymentWr.Data.Currency
+                        });
+                    }
+                    return transactionsDto;
+                }
+            );
         }
 
         public async Task Handle(PaymentReceivedEvent notification, CancellationToken cancellationToken)

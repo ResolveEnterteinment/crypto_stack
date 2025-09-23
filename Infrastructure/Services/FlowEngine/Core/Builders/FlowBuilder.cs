@@ -1,3 +1,4 @@
+using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Engine;
 using Microsoft.Extensions.DependencyInjection;
@@ -68,6 +69,11 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
             flow.State.UserEmail = _userEmail;
             flow.State.CorrelationId = string.IsNullOrEmpty(_correlationId) ? Guid.NewGuid().ToString() : _correlationId;
             flow.State.TriggeredBy = _triggeredBy;
+
+            // Add this line to match the non-generic Build method:
+            var flowEngineService = flow.GetService<IFlowEngineService>();
+            flowEngineService.AddFlowToRuntimeStore(flow);
+
             return flow;
         }
 
@@ -80,6 +86,10 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
             flow.State.UserEmail = _userEmail;
             flow.State.CorrelationId = string.IsNullOrEmpty(_correlationId) ? Guid.NewGuid().ToString() : _correlationId;
             flow.State.TriggeredBy = _triggeredBy;
+
+            var flowEngineService = flow.GetService<IFlowEngineService>();
+            flowEngineService.AddFlowToRuntimeStore(flow);
+
             return flow;
         }
     }

@@ -274,7 +274,7 @@ const DashboardPageContent: React.FC = () => {
         const { totalInvestments, portfolioValue } = dashboardData;
         if (!totalInvestments || totalInvestments === 0) return 0;
 
-        return ((portfolioValue - totalInvestments) / totalInvestments) * 100;
+        return ((portfolioValue - totalInvestments) / totalInvestments);
     }, [dashboardData]);
 
     const profitPercentage = calculateProfitPercentage();

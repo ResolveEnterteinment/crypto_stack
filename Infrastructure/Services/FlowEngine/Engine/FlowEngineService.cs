@@ -1,4 +1,5 @@
 ﻿using Domain.Events.Payment;
+using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Exceptions;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
@@ -184,18 +185,13 @@ namespace Infrastructure.Services.FlowEngine.Engine
         public async Task<FlowExecutionResult> StartAsync<TFlow>(
             Dictionary<string, object>? initialData = null,
             string? userId = null,
+            string? userEmail = null,
             string? correlationId = null,
             CancellationToken cancellationToken = default)
             where TFlow : FlowDefinition
         {
-            /*
-            var flow = Flow.Create<TFlow>(_serviceProvider, initialData);
-            flow.State.UserId = userId ?? "system";
-            flow.State.CorrelationId = correlationId ?? Guid.NewGuid().ToString();
-            */
-
             var flow = Flow.Builder(_serviceProvider)
-                .ForUser(userId)
+                .ForUser(userId, userEmail)
                 .WithCorrelation(correlationId)
                 .WithData(initialData)
                 .Build<TFlow>();
@@ -221,8 +217,19 @@ namespace Infrastructure.Services.FlowEngine.Engine
             }
         }
 
+        public FlowBuilder Builder(CancellationToken? cancellationToken = null)
+        {
+            return new FlowBuilder(_serviceProvider, cancellationToken);
+        }
+
+        public void AddFlowToRuntimeStore(Flow flow)
+        {
+            _runtimeStore.Flows.Add(flow.Id, flow);
+        }
+
         public async Task<FlowExecutionResult> ResumeRuntimeAsync(
             Guid flowId,
+            string reason,
             CancellationToken cancellationToken = default)
         {
             if (!_runtimeStore.Flows.TryGetValue(flowId, out var flow))
@@ -233,7 +240,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             _logger.LogInformation("Resuming flow {FlowId} from step {CurrentStep}",
                 flowId, flow.State.CurrentStepName);
 
-            return await _executor.ExecuteAsync(flow, cancellationToken);
+            return await _executor.ResumePausedFlowAsync(flow, reason, cancellationToken);
         }
 
         public Task FireAsync<TFlow>(
@@ -288,7 +295,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
         public async Task<bool> ResumeManuallyAsync(Guid flowId, string userId, string reason = null)
         {
             _logger.LogInformation("Manual resume requested for flow {FlowId} by user {UserId}", flowId, userId);
-            var resumeResult = await ResumeRuntimeAsync(flowId);
+            var resumeResult = await ResumeRuntimeAsync(flowId, $"Manual resume requested for flow {flowId} by user {userId}");
             return resumeResult.Status == FlowStatus.Running;
         }
 
@@ -298,7 +305,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             throw new NotImplementedException("Event-based resume not implemented yet");
         }
 
-        public List<Flow> GetPausedFlowsAsync()
+        public List<Flow> GetPausedFlows()
         {
             var pausedFlows = _runtimeStore.Flows.Values.Where(f => f.Status == FlowStatus.Paused).ToList();
             return pausedFlows;
