@@ -2,13 +2,11 @@
 using Application.Interfaces.Asset;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Payment;
-using Application.Interfaces.Subscription;
 using Application.Interfaces.Withdrawal;
 using Domain.Constants;
 using Domain.DTOs;
 using Domain.DTOs.Dashboard;
 using Domain.DTOs.Logging;
-using Domain.DTOs.Subscription;
 using Domain.Events;
 using Domain.Events.Entity;
 using Domain.Exceptions;
@@ -397,6 +395,18 @@ namespace Infrastructure.Services
         }
 
         public Task Handle(EntityCreatedEvent<BalanceData> notification, CancellationToken ct)
+        {
+            InvalidateDashboardCacheAsync(notification.Entity.UserId);
+            return InvalidateCacheAndPush(notification.Entity.UserId);
+        }
+
+        public Task Handle(EntityCreatedEvent<ExchangeOrderData> notification, CancellationToken ct)
+        {
+            InvalidateDashboardCacheAsync(notification.Entity.UserId);
+            return InvalidateCacheAndPush(notification.Entity.UserId);
+        }
+
+        public Task Handle(EntityCreatedEvent<WithdrawalData> notification, CancellationToken ct)
         {
             InvalidateDashboardCacheAsync(notification.Entity.UserId);
             return InvalidateCacheAndPush(notification.Entity.UserId);

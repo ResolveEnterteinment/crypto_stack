@@ -29,7 +29,7 @@ public static class AuthenticationExtensions
                 ValidateAudience = true,
                 ValidateLifetime = true,
                 ValidateIssuerSigningKey = true,
-                ClockSkew = TimeSpan.Zero, // Reduce the default 5 minute skew for tighter security
+                ClockSkew = TimeSpan.FromMinutes(1), // Reduce the default 5 minute skew for tighter security
                 ValidIssuer = jwtSettings.Issuer,
                 ValidAudience = jwtSettings.Audience,
                 IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key))

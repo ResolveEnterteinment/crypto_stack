@@ -1,8 +1,8 @@
 ﻿// src/services/authService.ts
 import apiClient, { ApiErrorHandler } from './api';
+import { tokenManager } from './api/tokenManager';
 
-// Type definitions
-
+// Type definitions (keep all existing interfaces unchanged)
 interface CsrfResponse {
     token: string;
 }
@@ -87,8 +87,6 @@ class AuthService {
     } as const;
 
     private readonly STORAGE_KEYS = {
-        ACCESS_TOKEN: 'access_token',
-        REFRESH_TOKEN: 'refresh_token',
         USER: 'user'
     } as const;
 
@@ -97,73 +95,119 @@ class AuthService {
     private refreshInProgress = false;
 
     /**
-     * Initialize authentication service
-     * Checks for existing authentication and validates token
-     */
+ * ✅ ENHANCED: Initialize authentication service with debugging and better error handling
+ */
     async initialize(): Promise<UserResponse | null> {
         try {
-            // Check if user is already authenticated
-            const token = this.getStoredToken();
+            console.log('🔄 Initializing AuthService...');
 
+            // Clear any invalid auth state first
+            await this.cleanupInvalidTokens();
+
+            // Check for valid authentication
+            if (!tokenManager.isAuthenticated()) {
+                console.log("❌ No valid authentication found");
+                return null;
+            }
+
+            console.log("✅ Found existing auth token, validating...");
+
+            // Ensure token is set in API client
+            const token = tokenManager.getAccessToken();
             if (token) {
-                console.log("Found existing auth token, validating...");
-
-                // Set token in API client
                 apiClient.setAuthToken(token);
+                console.log("🔐 Token set in API client");
+            }
 
-                // Validate token by fetching user data
-                const user = await this.checkAuthStatus();
+            // Validate token by fetching user data with retry logic
+            let retryCount = 0;
+            const maxRetries = 3;
 
-                if (user) {
-                    console.log("Authentication initialized successfully");
-                    return user;
+            while (retryCount < maxRetries) {
+                try {
+                    const user = await this.checkAuthStatus();
+                    if (user) {
+                        console.log("✅ Authentication initialized successfully");
+                        return user;
+                    }
+                    break; // Exit retry loop if user check returns null (not an error)
+                } catch (error) {
+                    retryCount++;
+                    console.warn(`Auth check attempt ${retryCount} failed:`, error);
+
+                    if (retryCount < maxRetries) {
+                        // Wait before retry with exponential backoff
+                        const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 5000);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        console.error("All auth check attempts failed");
+                        break;
+                    }
                 }
             }
 
-            console.log("No valid authentication found");
+            console.log("❌ Token validation failed");
+            this.clearAuthentication();
             return null;
         } catch (error) {
-            console.error('Failed to initialize auth service:', error);
-
-            // Clear invalid tokens
+            console.error('❌ Failed to initialize auth service:', error);
             this.clearAuthentication();
             return null;
         }
     }
 
     /**
-     * Login with email and password
+     * ✅ NEW: Clean up invalid tokens
+     */
+    private async cleanupInvalidTokens(): Promise<void> {
+        const tokenInfo = tokenManager.getTokenInfo();
+        if (tokenInfo && tokenManager.isTokenExpired(tokenInfo)) {
+            console.log("🧹 Cleaning up expired token");
+            tokenManager.clearAll();
+            apiClient.clearTokens();
+        }
+    }
+
+    /**
+     * ✅ ENHANCED: Login with better debugging
      */
     async login(email: string, password: string): Promise<LoginResponse> {
         try {
+            console.log('🔐 Starting login process...');
+
             // Clear any existing auth before login
             this.clearAuthentication();
 
-            // Perform login with high priority and no retry for security
+            // Perform login
             const response = await apiClient.post<LoginResponse>(
                 this.AUTH_ENDPOINTS.LOGIN,
                 { email, password } as LoginRequest,
                 {
-                    skipAuth: true, // Don't send auth header for login
+                    skipAuth: true,
                     priority: 'high',
-                    retryCount: 0, // No retry for login attempts
-                    idempotencyKey: `login-${Date.now()}` // Unique key for each login
+                    retryCount: 0,
+                    idempotencyKey: `login-${Date.now()}`
                 }
             );
+
+            console.log('📤 Login response received:', {
+                success: response.success,
+                hasToken: !!response.data?.accessToken,
+                tokenLength: response.data?.accessToken?.length
+            });
 
             if (response.success && response.data.accessToken) {
                 // Store authentication data
                 this.storeAuthentication(response.data);
 
-                console.log("Login successful");
+                console.log("✅ Login successful, auth data stored");
                 return response.data;
             } else {
                 throw new Error(response.message || 'Login failed');
             }
         } catch (error) {
-            console.error("Login error:", error);
+            console.error("❌ Login error:", error);
 
-            // Format error for user display
             const apiError = ApiErrorHandler.extractError(error);
             const userMessage = ApiErrorHandler.formatUserMessage(apiError);
 
@@ -171,9 +215,260 @@ class AuthService {
         }
     }
 
+    // Keep all other methods unchanged but add better debugging to storeAuthentication
     /**
-     * Register a new user
+     * ✅ ENHANCED: Store authentication data with debugging
      */
+    private storeAuthentication(data: LoginResponse): void {
+        console.log("📦 Storing authentication data...");
+        console.log("🎫 Token length:", data.accessToken?.length);
+
+        // Store token using tokenManager
+        tokenManager.setAccessToken(data.accessToken);
+
+        // Store user data
+        const userData = {
+            id: data.userId,
+            username: data.username,
+            email: data.username,
+            roles: data.roles,
+            emailConfirmed: data.emailConfirmed
+        };
+
+        this.storeUserData(userData);
+
+        // Update API client with the token
+        apiClient.setAuthToken(data.accessToken);
+
+        // Verify storage worked
+        const storedToken = tokenManager.getAccessToken();
+        const isClientAuth = apiClient.isAuthenticated();
+
+        console.log("✅ Authentication data stored:");
+        console.log("  - Token stored:", !!storedToken);
+        console.log("  - Token matches:", storedToken === data.accessToken);
+        console.log("  - API client authenticated:", isClientAuth);
+        console.log("  - TokenManager authenticated:", tokenManager.isAuthenticated());
+    }
+
+    /**
+     * ✅ ENHANCED: Auth status check with better debugging
+     */
+    async checkAuthStatus(): Promise<UserResponse | null> {
+        console.log("🔍 Checking auth status...");
+
+        // First check if we have a valid token
+        const tokenInfo = tokenManager.getTokenInfo();
+        if (!tokenInfo) {
+            console.log("❌ No authentication token found");
+            return null;
+        }
+
+        console.log("🎫 Token info:", {
+            hasToken: !!tokenInfo.token,
+            expiresAt: new Date(tokenInfo.expiresAt).toLocaleString(),
+            isExpired: tokenManager.isTokenExpired(tokenInfo)
+        });
+
+        // If token is expired, try refresh first
+        if (tokenManager.isTokenExpired(tokenInfo)) {
+            console.log("⏰ Token expired, attempting refresh...");
+            const refreshed = await this.refreshToken();
+            if (!refreshed) {
+                this.clearAuthentication();
+                return null;
+            }
+        }
+
+        try {
+            // Ensure token is set in API client
+            const currentToken = tokenManager.getAccessToken();
+
+            if (currentToken) {
+                apiClient.setAuthToken(currentToken);
+            } else {
+                console.log("❌ No current token available for auth status check");
+                return null;
+            }
+
+            console.log("📤 Making auth status request...");
+
+            const response = await apiClient.get<UserResponse>(
+                this.AUTH_ENDPOINTS.USER,
+                {
+                    dedupe: true,
+                    dedupeKey: 'auth-status-check',
+                    priority: 'high'
+                }
+            );
+
+            console.log("📥 Auth status response:", {
+                success: response.success,
+                hasData: !!response.data
+            });
+
+            if (response.success && response.data) {
+                console.log("✅ Auth check successful");
+                this.storeUserData(response.data);
+                return response.data;
+            } else {
+                console.log("❌ Auth check failed: Invalid response");
+                this.clearAuthentication();
+                return null;
+            }
+        } catch (error) {
+            console.error("❌ Auth check error:", error);
+
+            const apiError = ApiErrorHandler.extractError(error);
+
+            if (apiError.isAuthError) {
+                console.log("🔒 Auth check failed: Token invalid");
+                this.clearAuthentication();
+            }
+
+            return null;
+        }
+    }
+
+    // Keep all other methods unchanged...
+    // (logout, register, refreshToken, clearAuthenticationWithoutLogout, etc.)
+
+    async logout(): Promise<void> {
+        try {
+            const hasToken = tokenManager.isAuthenticated();
+
+            if (hasToken) {
+                apiClient.post(
+                    this.AUTH_ENDPOINTS.LOGOUT,
+                    undefined,
+                    {
+                        priority: 'high',
+                        retryCount: 0,
+                        debounceMs: 0,
+                        skipAuth: false
+                    }
+                ).catch(err => {
+                    console.warn("Backend logout failed:", err);
+                });
+            }
+
+            console.log("Logout initiated");
+        } catch (error) {
+            console.error('Logout error:', error);
+        } finally {
+            this.clearAuthenticationWithoutLogout();
+        }
+    }
+
+    private clearAuthenticationWithoutLogout(): void {
+        console.log("Clearing authentication data");
+
+        this.refreshAttempts = 0;
+        this.refreshInProgress = false;
+
+        tokenManager.clearAll();
+        localStorage.removeItem(this.STORAGE_KEYS.USER);
+        sessionStorage.removeItem(this.STORAGE_KEYS.USER);
+        apiClient.clearTokens();
+    }
+
+    async refreshToken(): Promise<boolean> {
+        try {
+            if (this.refreshInProgress) {
+                return false;
+            }
+
+            this.refreshInProgress = true;
+
+            const tokenInfo = tokenManager.getTokenInfo();
+            if (!tokenInfo) {
+                this.refreshAttempts = 0;
+                return false;
+            }
+
+            if (tokenManager.isTokenExpired(tokenInfo)) {
+                console.log('Token is expired, attempting refresh');
+            }
+
+            if (this.refreshAttempts >= this.MAX_REFRESH_ATTEMPTS) {
+                console.log("Max refresh attempts exceeded, clearing authentication");
+                this.clearAuthenticationWithoutLogout();
+                return false;
+            }
+
+            const backoffDelay = Math.min(1000 * Math.pow(2, this.refreshAttempts), 30000);
+            if (this.refreshAttempts > 0) {
+                console.log(`Waiting ${backoffDelay}ms before refresh attempt ${this.refreshAttempts + 1}`);
+                await new Promise(resolve => setTimeout(resolve, backoffDelay));
+            }
+
+            this.refreshAttempts++;
+
+            const { InterceptorManager } = await import('./api/interceptors');
+            const { default: axios } = await import('axios');
+
+            const success = await InterceptorManager.performTokenRefresh(axios);
+
+            if (success) {
+                this.refreshAttempts = 0;
+                console.log("✅ Token refresh successful via AuthService");
+                return true;
+            }
+
+            return false;
+        } catch (error) {
+            console.error("❌ Token refresh failed via AuthService:", error);
+            return false;
+        } finally {
+            this.refreshInProgress = false;
+        }
+    }
+
+    private storeUserData(user: any): void {
+        localStorage.setItem(this.STORAGE_KEYS.USER, JSON.stringify(user));
+        sessionStorage.setItem(this.STORAGE_KEYS.USER, JSON.stringify(user));
+    }
+
+    private clearAuthentication(): void {
+        this.clearAuthenticationWithoutLogout();
+    }
+
+    isAuthenticated(): boolean {
+        return tokenManager.isAuthenticated();
+    }
+
+    getCurrentUser(): any {
+        const userStr = localStorage.getItem(this.STORAGE_KEYS.USER) ||
+            sessionStorage.getItem(this.STORAGE_KEYS.USER);
+
+        if (userStr) {
+            try {
+                return JSON.parse(userStr);
+            } catch {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    getAuthState(): {
+        isAuthenticated: boolean;
+        hasToken: boolean;
+        tokenExpired: boolean;
+        user: any;
+        tokenStatus: any;
+    } {
+        return {
+            isAuthenticated: this.isAuthenticated(),
+            hasToken: !!tokenManager.getAccessToken(),
+            tokenExpired: tokenManager.isTokenExpired(),
+            user: this.getCurrentUser(),
+            tokenStatus: tokenManager.getTokenStatus()
+        };
+    }
+
+    // Keep all remaining methods unchanged (password reset, email verification, etc.)
     async register(data: RegisterRequest): Promise<RegisterResponse> {
         try {
             const response = await apiClient.post<RegisterResponse>(
@@ -182,7 +477,7 @@ class AuthService {
                 {
                     skipAuth: true,
                     priority: 'high',
-                    retryCount: 0 // No retry for registration
+                    retryCount: 0
                 }
             );
 
@@ -202,201 +497,6 @@ class AuthService {
         }
     }
 
-    /**
-     * Logout user
-     */
-    async logout(): Promise<void> {
-        try {
-            // ✅ FIXED: Only call logout endpoint if we have a valid token
-            const hasToken = this.getStoredToken();
-
-            if (hasToken) {
-                // Call logout endpoint to invalidate server-side session
-                // Use fire-and-forget approach - don't wait for response
-                apiClient.post(
-                    this.AUTH_ENDPOINTS.LOGOUT,
-                    undefined,
-                    {
-                        priority: 'high',
-                        retryCount: 0,
-                        debounceMs: 0, // Execute immediately
-                        skipAuth: false // ✅ FIXED: Allow auth header for logout
-                    }
-                ).catch(err => {
-                    // Log but don't throw - local cleanup should still happen
-                    console.warn("Backend logout failed:", err);
-                });
-            }
-
-            console.log("Logout initiated");
-        } catch (error) {
-            console.error('Logout error:', error);
-        } finally {
-            // ✅ FIXED: Always clear local authentication without recursion
-            this.clearAuthenticationWithoutLogout();
-        }
-    }
-
-    /**
- * Clear authentication data without calling logout endpoint
- */
-    private clearAuthenticationWithoutLogout(): void {
-        console.log("Clearing authentication data");
-
-        // Reset refresh attempts
-        this.refreshAttempts = 0;
-        this.refreshInProgress = false;
-
-        // Clear localStorage (only access token and user data)
-        localStorage.removeItem(this.STORAGE_KEYS.ACCESS_TOKEN);
-        localStorage.removeItem(this.STORAGE_KEYS.USER);
-
-        // Clear sessionStorage
-        sessionStorage.removeItem(this.STORAGE_KEYS.ACCESS_TOKEN);
-        sessionStorage.removeItem(this.STORAGE_KEYS.USER);
-
-        // Clear API client tokens
-        apiClient.clearTokens();
-    }
-
-    /**
-     * Check if user is authenticated and get user data
-     */
-    async checkAuthStatus(): Promise<UserResponse | null> {
-        const token = this.getStoredToken();
-
-        if (!token) {
-            console.log("No authentication token found");
-            return null;
-        }
-
-        try {
-            // Ensure token is set in API client
-            apiClient.setAuthToken(token);
-
-            // Fetch user data with deduplication to prevent multiple simultaneous checks
-            const response = await apiClient.get<UserResponse>(
-                this.AUTH_ENDPOINTS.USER,
-                {
-                    dedupe: true,
-                    dedupeKey: 'auth-status-check',
-                    priority: 'high'
-                }
-            );
-
-            if (response.success && response.data) {
-                console.log("Auth check successful");
-
-                // Update stored user data
-                this.storeUserData(response.data);
-
-                return response.data;
-            } else {
-                console.log("Auth check failed: Invalid response");
-                this.clearAuthentication();
-                return null;
-            }
-        } catch (error) {
-            const apiError = ApiErrorHandler.extractError(error);
-
-            // Clear auth on 401 errors
-            if (apiError.isAuthError) {
-                console.log("Auth check failed: Token invalid");
-                this.clearAuthentication();
-            } else {
-                console.error("Auth check error:", error);
-            }
-
-            return null;
-        }
-    }
-
-    /**
-     * Refresh the authentication token with exponential backoff - FIXED
-     */
-    async refreshToken(): Promise<boolean> {
-        try {
-            // Prevent concurrent refresh attempts
-            if (this.refreshInProgress) {
-                return false;
-            }
-
-            this.refreshInProgress = true;
-
-            const currentToken = this.getStoredToken();
-            if (!currentToken) {
-                this.refreshAttempts = 0;
-                return false;
-            }
-
-            // Check if we've exceeded max attempts
-            if (this.refreshAttempts >= this.MAX_REFRESH_ATTEMPTS) {
-                console.log("Max refresh attempts exceeded, clearing authentication");
-                this.clearAuthenticationWithoutLogout(); // ✅ FIXED: Don't call logout()
-                return false;
-            }
-
-            // Calculate exponential backoff delay
-            const backoffDelay = Math.min(1000 * Math.pow(2, this.refreshAttempts), 30000);
-            if (this.refreshAttempts > 0) {
-                console.log(`Waiting ${backoffDelay}ms before refresh attempt ${this.refreshAttempts + 1}`);
-                await new Promise(resolve => setTimeout(resolve, backoffDelay));
-            }
-
-            this.refreshAttempts++;
-
-            // Use deduplication to prevent concurrent refresh attempts
-            const response = await apiClient.post<LoginResponse>(
-                this.AUTH_ENDPOINTS.REFRESH_TOKEN,
-                undefined,
-                {
-                    dedupe: true,
-                    dedupeKey: 'token-refresh',
-                    priority: 'high',
-                    retryCount: 0, // No API-level retry, we handle it here
-                    headers: {
-                        'Authorization': `Bearer ${currentToken}`
-                    },
-                    skipAuth: false // ✅ FIXED: Don't skip auth for refresh token requests
-                }
-            );
-
-            if (response.success && response.data.accessToken) {
-                // Reset attempts on success
-                this.refreshAttempts = 0;
-
-                // Update stored authentication (only access token)
-                this.storeAuthentication(response.data);
-
-                console.log("Token refresh successful");
-                return true;
-            }
-
-            return false;
-        } catch (error) {
-            console.error("Token refresh failed:", error);
-
-            const apiError = ApiErrorHandler.extractError(error);
-
-            // Clear auth immediately on auth errors (401, 403)
-            if (apiError.isAuthError) {
-                console.log("Auth error during refresh, clearing authentication");
-                this.refreshAttempts = 0;
-                this.clearAuthenticationWithoutLogout(); // ✅ FIXED: Don't call logout()
-                return false;
-            }
-
-            // For other errors, don't clear auth immediately - let backoff handle it
-            return false;
-
-        } finally {
-            this.refreshInProgress = false;
-        }
-    }
-
-    /**
-     * Request password reset
-     */
     async requestPasswordReset(email: string): Promise<void> {
         try {
             const response = await apiClient.post(
@@ -417,9 +517,6 @@ class AuthService {
         }
     }
 
-    /**
-     * Confirm password reset with token
-     */
     async confirmPasswordReset(data: PasswordResetConfirmRequest): Promise<void> {
         try {
             const response = await apiClient.post(
@@ -440,9 +537,6 @@ class AuthService {
         }
     }
 
-    /**
-     * Change password for authenticated user
-     */
     async changePassword(data: ChangePasswordRequest): Promise<void> {
         try {
             const response = await apiClient.post(
@@ -463,9 +557,6 @@ class AuthService {
         }
     }
 
-    /**
-     * Verify email with token
-     */
     async verifyEmail(token: string, userId: string): Promise<void> {
         try {
             const response = await apiClient.post(
@@ -486,9 +577,6 @@ class AuthService {
         }
     }
 
-    /**
-     * Resend email verification
-     */
     async resendVerificationEmail(email: string): Promise<void> {
         try {
             const response = await apiClient.post(
@@ -497,7 +585,7 @@ class AuthService {
                 {
                     skipAuth: true,
                     retryCount: 0,
-                    throttleMs: 60000 // Throttle to once per minute
+                    throttleMs: 60000
                 }
             );
 
@@ -508,107 +596,6 @@ class AuthService {
             const apiError = ApiErrorHandler.extractError(error);
             throw new Error(ApiErrorHandler.formatUserMessage(apiError));
         }
-    }
-
-    // ==================== Helper Methods ====================
-
-    /**
- * Store authentication data
- */
-    private storeAuthentication(data: LoginResponse): void {
-        console.log("Storing authentication data");
-
-        // Store access token in localStorage
-        localStorage.setItem(this.STORAGE_KEYS.ACCESS_TOKEN, data.accessToken);
-        sessionStorage.setItem(this.STORAGE_KEYS.ACCESS_TOKEN, data.accessToken); // Backup
-
-        // ❌ REMOVE: Don't store refresh token in localStorage
-        // if (data.refreshToken) {
-        //     localStorage.setItem(this.STORAGE_KEYS.REFRESH_TOKEN, data.refreshToken);
-        // }
-
-        // ✅ NEW: Refresh token is now handled by HTTP-only cookies on backend
-        // No need to store refresh token on frontend
-
-        // Store user data
-        const userData = {
-            id: data.userId,
-            username: data.username,
-            email: data.username, // Assuming username is email
-            roles: data.roles,
-            emailConfirmed: data.emailConfirmed
-        };
-
-        this.storeUserData(userData);
-
-        // Update API client
-        apiClient.setAuthToken(data.accessToken);
-    }
-
-    /**
-     * Store user data
-     */
-    private storeUserData(user: any): void {
-        localStorage.setItem(this.STORAGE_KEYS.USER, JSON.stringify(user));
-        sessionStorage.setItem(this.STORAGE_KEYS.USER, JSON.stringify(user)); // Backup
-    }
-
-    /**
-     * Get stored authentication token
-     */
-    private getStoredToken(): string | null {
-        return localStorage.getItem(this.STORAGE_KEYS.ACCESS_TOKEN) ||
-            sessionStorage.getItem(this.STORAGE_KEYS.ACCESS_TOKEN);
-    }
-
-    /**
-     * Clear all authentication data - FIXED to prevent recursion
-     */
-    private clearAuthentication(): void {
-        console.log("Clearing authentication data");
-
-        // Reset refresh attempts
-        this.refreshAttempts = 0;
-        this.refreshInProgress = false;
-
-        // Clear localStorage (only access token and user data)
-        localStorage.removeItem(this.STORAGE_KEYS.ACCESS_TOKEN);
-        localStorage.removeItem(this.STORAGE_KEYS.USER);
-
-        // Clear sessionStorage
-        sessionStorage.removeItem(this.STORAGE_KEYS.ACCESS_TOKEN);
-        sessionStorage.removeItem(this.STORAGE_KEYS.USER);
-
-        // Clear API client tokens
-        apiClient.clearTokens();
-
-        // ✅ FIXED: DON'T call logout() here to prevent recursion
-        // The logout() method should be called explicitly by user action
-    }
-
-    /**
-     * Check if user is currently authenticated
-     */
-    isAuthenticated(): boolean {
-        return apiClient.isAuthenticated();
-    }
-
-    /**
-     * Get current user from storage
-     */
-    getCurrentUser(): any {
-        const userStr = localStorage.getItem(this.STORAGE_KEYS.USER) ||
-            sessionStorage.getItem(this.STORAGE_KEYS.USER);
-
-        if (userStr) {
-            try {
-                return JSON.parse(userStr);
-            } catch {
-                return null;
-            }
-        }
-
-        return null;
     }
 }
 

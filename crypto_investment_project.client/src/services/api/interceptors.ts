@@ -1,30 +1,47 @@
-﻿// src/services/api/interceptors.ts
+﻿// Fixed interceptors.ts with proper TypeScript type handling
+// src/services/api/interceptors.ts
+
 import { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import { API_CONFIG } from './config';
 import { metricsTracker } from './metricsTracker';
 import { tokenManager } from './tokenManager';
 
+// Define extended request config interface
+interface ExtendedRequestConfig extends InternalAxiosRequestConfig {
+    _retry?: boolean;
+    _retryCount?: number;
+    _startTime?: number;
+    _requestId?: string;
+}
+
 export class InterceptorManager {
     private static requestIdCounter = 0;
+    private static isRefreshing = false;
+    private static refreshSubscribers: Array<(token: string) => void> = [];
 
     static setupInterceptors(axiosInstance: AxiosInstance): void {
         this.setupRequestInterceptor(axiosInstance);
         this.setupResponseInterceptor(axiosInstance);
     }
 
+    // ✅ FIXED: Request interceptor with proper typing
     private static setupRequestInterceptor(axiosInstance: AxiosInstance): void {
         axiosInstance.interceptors.request.use(
-            (config: InternalAxiosRequestConfig) => {
-                // Track request
+            async (config: InternalAxiosRequestConfig) => {
                 metricsTracker.recordRequest();
 
                 // Generate request ID
                 const requestId = this.generateRequestId();
                 config.headers.set(API_CONFIG.HEADERS.REQUEST_ID, requestId);
 
-                // Add auth token if available and not skipped
+                // ✅ Use type assertion for custom properties
+                const extendedConfig = config as ExtendedRequestConfig;
+                extendedConfig._startTime = Date.now();
+                extendedConfig._requestId = requestId;
+
+                // ✅ ENHANCED: Proactive token management
                 if (!config.headers.get('X-Skip-Auth')) {
-                    const token = tokenManager.getAccessToken();
+                    const token = await this.getValidToken(axiosInstance);
                     if (token) {
                         config.headers.set(API_CONFIG.AUTH.HEADER, `${API_CONFIG.AUTH.SCHEME} ${token}`);
                     }
@@ -48,14 +65,9 @@ export class InterceptorManager {
                 // Add idempotency key if provided or generate for mutations
                 const idempotencyKey = config.headers.get(API_CONFIG.HEADERS.IDEMPOTENCY_KEY);
                 if (!idempotencyKey && isMutation && config.data) {
-                    // Auto-generate idempotency key for mutations with data
                     const autoKey = this.generateIdempotencyKey(config);
                     config.headers.set(API_CONFIG.HEADERS.IDEMPOTENCY_KEY, autoKey);
                 }
-
-                // Add performance tracking
-                (config as any)._startTime = Date.now();
-                (config as any)._requestId = requestId;
 
                 return config;
             },
@@ -63,13 +75,14 @@ export class InterceptorManager {
         );
     }
 
-    // ✅ FIXED: Add proper refresh token endpoint exclusion
+    // ✅ FIXED: Response interceptor with proper typing
     private static setupResponseInterceptor(axiosInstance: AxiosInstance): void {
         axiosInstance.interceptors.response.use(
             (response) => {
                 // Log slow requests in development
                 if (import.meta.env.DEV) {
-                    const duration = Date.now() - ((response.config as any)._startTime || 0);
+                    const extendedConfig = response.config as ExtendedRequestConfig;
+                    const duration = Date.now() - (extendedConfig._startTime || 0);
                     if (duration > API_CONFIG.PERFORMANCE.SLOW_REQUEST_THRESHOLD) {
                         console.warn(`⚠️ Slow request: ${response.config.url} took ${duration}ms`);
                     }
@@ -78,10 +91,12 @@ export class InterceptorManager {
                 return response;
             },
             async (error: AxiosError) => {
-                const originalRequest = error.config as InternalAxiosRequestConfig & {
-                    _retry?: boolean;
-                    _retryCount?: number;
-                };
+                // ✅ FIXED: Cast to extended config type
+                const originalRequest = error.config as ExtendedRequestConfig;
+                
+                if (!originalRequest) {
+                    return Promise.reject(error);
+                }
 
                 // Handle cancellation
                 if (error.code === 'ERR_CANCELED' || error.message === 'canceled') {
@@ -89,13 +104,13 @@ export class InterceptorManager {
                     return Promise.reject(error);
                 }
 
-                // ✅ FIXED: Properly exclude refresh token endpoint and add more exclusions
+                // Exclude auth endpoints from token refresh
                 const isRefreshTokenRequest = originalRequest.url?.includes('/auth/refresh-token');
                 const isAuthRequest = originalRequest.url?.includes('/auth/login') ||
                     originalRequest.url?.includes('/auth/register') ||
                     originalRequest.url?.includes('/auth/logout');
 
-                // Handle 401 errors with token refresh - but NOT for auth endpoints
+                // ✅ FIXED: Handle 401 errors with proper typing
                 if (error.response?.status === 401 &&
                     !originalRequest._retry &&
                     !isRefreshTokenRequest &&
@@ -105,31 +120,23 @@ export class InterceptorManager {
                     originalRequest._retry = true;
 
                     try {
-                        const refreshed = await this.refreshAuthToken(axiosInstance);
-                        if (refreshed) {
-                            // Retry original request with new token
-                            const newToken = tokenManager.getAccessToken();
-                            if (newToken) {
-                                originalRequest.headers.set(API_CONFIG.AUTH.HEADER, `${API_CONFIG.AUTH.SCHEME} ${newToken}`);
-                            }
+                        // Use queue-based refresh to handle concurrent requests
+                        const newToken = await this.refreshTokenWithQueue(axiosInstance);
+
+                        if (newToken) {
+                            // Update original request with new token
+                            originalRequest.headers.set(API_CONFIG.AUTH.HEADER, `${API_CONFIG.AUTH.SCHEME} ${newToken}`);
                             return axiosInstance(originalRequest);
                         }
                     } catch (refreshError) {
-                        // Refresh failed, redirect to login
-                        tokenManager.clearAll();
-
-                        // ✅ FIXED: Prevent redirect loops
-                        if (!window.location.pathname.includes('/login')) {
-                            window.location.href = '/login';
-                        }
+                        // Refresh failed, clear tokens and redirect
+                        console.error('Token refresh failed:', refreshError);
+                        this.handleAuthFailure();
                         return Promise.reject(refreshError);
                     }
 
-                    // ✅ FIXED: If refresh failed, clear tokens and redirect
-                    tokenManager.clearAll();
-                    if (!window.location.pathname.includes('/login')) {
-                        window.location.href = '/login';
-                    }
+                    // If we get here, refresh failed
+                    this.handleAuthFailure();
                 }
 
                 // Handle CSRF token errors
@@ -174,53 +181,116 @@ export class InterceptorManager {
         );
     }
 
-    private static async refreshAuthToken(axiosInstance: AxiosInstance): Promise<boolean> {
-        // Check if refresh is already in progress
-        let refreshPromise = tokenManager.getRefreshPromise();
+    // ✅ NEW: Get valid token with proactive refresh
+    private static async getValidToken(axiosInstance: AxiosInstance): Promise<string | null> {
+        const tokenInfo = tokenManager.getTokenInfo();
+        if (!tokenInfo) return null;
 
-        if (refreshPromise) {
-            return refreshPromise;
+        // If token is expired, try to refresh
+        if (tokenManager.isTokenExpired(tokenInfo)) {
+            console.log('🔄 Token expired, attempting refresh before request');
+            const refreshed = await this.performTokenRefresh(axiosInstance);
+            return refreshed ? tokenManager.getAccessToken() : null;
         }
 
-        // Create new refresh promise
-        refreshPromise = this.performTokenRefresh(axiosInstance);
-        tokenManager.setRefreshPromise(refreshPromise);
-
-        try {
-            const result = await refreshPromise;
-            return result;
-        } finally {
-            tokenManager.setRefreshPromise(null);
+        // If token needs refresh soon, refresh proactively
+        if (tokenManager.shouldRefreshToken(tokenInfo)) {
+            console.log('🔄 Token expiring soon, refreshing proactively');
+            this.performTokenRefresh(axiosInstance).catch(err => {
+                console.warn('Proactive refresh failed, will retry on 401:', err);
+            });
         }
+
+        return tokenInfo.token;
     }
 
-    // ✅ FIXED: Include Authorization header for refresh token requests
-    private static async performTokenRefresh(axiosInstance: AxiosInstance): Promise<boolean> {
+    // ✅ NEW: Queue-based token refresh to handle concurrent requests
+    private static async refreshTokenWithQueue(axiosInstance: AxiosInstance): Promise<string | null> {
+        if (this.isRefreshing) {
+            // If refresh is in progress, wait for it
+            return new Promise((resolve) => {
+                this.refreshSubscribers.push((token: string) => {
+                    resolve(token || null);
+                });
+            });
+        }
+
+        const success = await this.performTokenRefresh(axiosInstance);
+        return success ? tokenManager.getAccessToken() : null;
+    }
+
+    // ✅ ENHANCED: Improved token refresh with subscriber notification
+    static async performTokenRefresh(axiosInstance: AxiosInstance): Promise<boolean> {
+        if (this.isRefreshing) return false;
+
+        this.isRefreshing = true;
+
         try {
             const currentToken = tokenManager.getAccessToken();
-            if (!currentToken) return false;
+            if (!currentToken) {
+                this.isRefreshing = false;
+                return false;
+            }
 
             const response = await axiosInstance.post('/v1/auth/refresh-token', null, {
                 headers: {
-                    'Authorization': `Bearer ${currentToken}`, // ✅ FIXED: Uncommented this
-                    'X-Skip-Auth': 'true' // This prevents the request interceptor from adding another auth header
+                    'Authorization': `Bearer ${currentToken}`,
+                    'X-Skip-Auth': 'true'
                 },
-                // ✅ ENSURE: Cookies are sent with request
                 withCredentials: true
             });
 
             if (response.data.success && response.data.data?.accessToken) {
-                tokenManager.setAccessToken(response.data.data.accessToken);
+                const newToken = response.data.data.accessToken;
+                tokenManager.setAccessToken(newToken);
+
+                // Notify all waiting subscribers
+                this.refreshSubscribers.forEach(callback => callback(newToken));
+                this.refreshSubscribers = [];
+
+                console.log('✅ Token refreshed successfully');
                 return true;
             }
 
             return false;
         } catch (error) {
-            console.error('Token refresh failed:', error);
+            console.error('❌ Token refresh failed:', error);
+
+            // Notify subscribers of failure
+            this.refreshSubscribers.forEach(callback => callback(''));
+            this.refreshSubscribers = [];
+
             return false;
+        } finally {
+            this.isRefreshing = false;
         }
     }
 
+    // ✅ NEW: Public method for proactive refresh (fixes the missing method error)
+    static async performProactiveRefresh(axiosInstance: AxiosInstance): Promise<boolean> {
+        console.log('🔄 Performing proactive token refresh');
+        return this.performTokenRefresh(axiosInstance);
+    }
+
+    // ✅ NEW: Centralized auth failure handling
+    private static handleAuthFailure(): void {
+        tokenManager.clearAll();
+
+        // Prevent redirect loops
+        if (!window.location.pathname.includes('/login')) {
+            // Dispatch event for components to handle
+            window.dispatchEvent(new CustomEvent('auth-failure'));
+
+            // Fallback redirect
+            setTimeout(() => {
+                if (!window.location.pathname.includes('/login')) {
+                    window.location.href = '/login';
+                }
+            }, 100);
+        }
+    }
+
+    // Unchanged helper methods...
     private static async refreshCsrfToken(axiosInstance: AxiosInstance): Promise<void> {
         try {
             const response = await axiosInstance.get(API_CONFIG.CSRF.REFRESH_URL, {
@@ -249,7 +319,6 @@ export class InterceptorManager {
         const data = config.data ? JSON.stringify(config.data) : '';
         const timestamp = Date.now();
 
-        // Create a deterministic key based on request content
         const baseKey = `${method}-${url}-${data}`;
         const hash = this.simpleHash(baseKey);
 
