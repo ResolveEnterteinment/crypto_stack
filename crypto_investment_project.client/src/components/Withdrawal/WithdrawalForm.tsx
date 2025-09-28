@@ -3,7 +3,7 @@ import {
     Card, Form, Select, InputNumber, Input, Button,
     Typography, Divider, Row, Col, Statistic, Spin,
     Alert, Space, message, Slider,
-    Skeleton, Tag, Modal
+    Skeleton, Tag, Modal, Result
 } from 'antd';
 import {
     WalletOutlined, BankOutlined, DollarOutlined,

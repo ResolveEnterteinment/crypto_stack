@@ -134,7 +134,7 @@ namespace Infrastructure.Services.KYC
                     }
 
                     var captureId = Guid.NewGuid();
-                    var userDirectory = Path.Combine(_liveCaptureBasePath, userId.ToString());
+                    var userDirectory = Path.Combine(_liveCaptureBasePath, request.SessionId);
                     Directory.CreateDirectory(userDirectory);
 
                     // Process front side
@@ -297,7 +297,7 @@ namespace Infrastructure.Services.KYC
                     }
 
                     var captureId = Guid.NewGuid();
-                    var userDirectory = Path.Combine(_liveCaptureBasePath, userId.ToString());
+                    var userDirectory = Path.Combine(_liveCaptureBasePath, request.SessionId);
                     Directory.CreateDirectory(userDirectory);
 
                     // Process selfie image

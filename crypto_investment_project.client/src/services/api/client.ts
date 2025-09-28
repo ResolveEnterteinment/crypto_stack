@@ -1,5 +1,5 @@
-// src/services/api/client.ts
-import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
+﻿// src/services/api/client.ts
+import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { API_CONFIG } from './config';
 import { ApiResponse, PaginatedResult, RequestConfig } from './types';
 import { InterceptorManager } from './interceptors';
@@ -77,6 +77,7 @@ class ApiClient {
         return this.executeRequest<T>(method, url, data, config);
     }
 
+    // ✅ Updated to include headers in response
     private async executeRequest<T>(
         method: string,
         url: string,
@@ -105,21 +106,50 @@ class ApiClient {
                 signal: config?.signal || abortController.signal,
             };
 
-            const response = await this.axiosInstance.request<ApiResponse<T>>({
+            const response: AxiosResponse<T> = await this.axiosInstance.request({
                 method,
                 url,
                 data,
                 ...axiosConfig
             });
 
+            console.log("client.ts::executeRequest => response: ", response);
+
+            // ✅ Convert headers to plain object for easier access
+            const headers: Record<string, string> = {};
+            if (config?.includeHeaders !== false) {
+                // Convert AxiosHeaders to plain object
+                if (response.headers) {
+                    Object.entries(response.headers).forEach(([key, value]) => {
+                        headers[key.toLowerCase()] = typeof value === 'string' ? value : String(value);
+                    });
+                }
+            }
+
             // Extract total count from headers if available
             const totalCount = response.headers[API_CONFIG.HEADERS.TOTAL_COUNT];
 
-            return {
-                ...response.data,
-                success: true,
-                totalCount: totalCount ? parseInt(totalCount, 10) : undefined
-            };
+            // ✅ Handle blob responses differently from JSON responses
+            if (config?.responseType === 'blob') {
+                return {
+                    data: response.data,
+                    success: true,
+                    statusCode: response.status,
+                    totalCount: totalCount ? parseInt(totalCount, 10) : undefined,
+                    headers: config?.includeHeaders !== false ? headers : undefined
+                } as ApiResponse<T>;
+            } else {
+                // For JSON responses, spread the response data
+                const responseData = response.data as any;
+                return {
+                    ...responseData,
+                    success: true,
+                    statusCode: response.status,
+                    totalCount: totalCount ? parseInt(totalCount, 10) : undefined,
+                    headers: config?.includeHeaders !== false ? headers : undefined
+                };
+            }
+
         } catch (error) {
             const apiError = ApiErrorHandler.extractError(error);
 
@@ -214,6 +244,17 @@ class ApiClient {
         return this.request<T>('delete', url, data, config);
     }
 
+    // ✅ Enhanced blob method for binary data with headers
+    async getBlob(url: string, config?: RequestConfig): Promise<ApiResponse<Blob>> {
+        const blobConfig: RequestConfig = {
+            ...config,
+            responseType: 'blob',
+            includeHeaders: true // Always include headers for blob responses
+        };
+
+        return this.request<Blob>('get', url, undefined, blobConfig);
+    }
+
     // File upload method with progress tracking
     async uploadFile<T>(
         url: string,
@@ -239,6 +280,7 @@ class ApiClient {
                 [API_CONFIG.HEADERS.IDEMPOTENCY_KEY]: uploadId
             },
             skipQueue: true, // Don't queue file uploads
+            includeHeaders: true, // Include headers for upload responses
             onUploadProgress: onProgress ? (progressEvent: any) => {
                 const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
                 onProgress(percentCompleted);
@@ -325,6 +367,7 @@ export default {
     put: apiClient.put.bind(apiClient),
     patch: apiClient.patch.bind(apiClient),
     delete: apiClient.delete.bind(apiClient),
+    getBlob: apiClient.getBlob.bind(apiClient), // ✅ Add blob method
     uploadFile: apiClient.uploadFile.bind(apiClient),
     batch: apiClient.batch.bind(apiClient),
     getPaginated: apiClient.getPaginated.bind(apiClient),

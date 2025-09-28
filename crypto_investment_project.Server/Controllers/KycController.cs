@@ -631,7 +631,7 @@ namespace crypto_investment_project.Server.Controllers
                     {
                         var entry = archive.CreateEntry(fileNames[i], System.IO.Compression.CompressionLevel.Fastest);
                         using var entryStream = entry.Open();
-                        await entryStream.WriteAsync(fileDatas[i], 0, fileDatas[i].Length);
+                        await entryStream.WriteAsync(fileDatas[i].AsMemory(0, fileDatas[i].Length));
                     }
                 }
 

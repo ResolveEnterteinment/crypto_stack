@@ -106,7 +106,7 @@ const StandardVerification: React.FC<StandardVerificationProps> = ({
                 throw new Error('Live capture submission failed');
             }
 
-            const result = response.data;
+            const result = response;
 
             // Create document record
             const newDoc: DocumentUpload = {
@@ -293,11 +293,7 @@ const StandardVerification: React.FC<StandardVerificationProps> = ({
             // Submit live capture to backend
             const response = await kycService.submitLiveSelfieCapture(liveCaptureRequest);
 
-            if (!response.success) {
-                throw new Error('Live capture submission failed');
-            }
-
-            const result = response.data;
+            const result = response;
             message.success('Selfie captured successfully!');
         } catch (error) {
             console.error('Biometric capture error:', error);
@@ -413,7 +409,8 @@ const StandardVerification: React.FC<StandardVerificationProps> = ({
                     selfieHash: selfieImage ? await computeImageHash(selfieImage) : null,
             };
 
-            await onSubmit(submissionData);
+            onSubmit(submissionData);
+
         } catch (error) {
             console.error('Submission error:', error);
             message.error('Submission failed. Please try again.');

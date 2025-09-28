@@ -19,6 +19,7 @@ import {
 } from '@ant-design/icons';
 import Navbar from '../components/Navbar';
 import Layout, { Content } from 'antd/es/layout/layout';
+import ProtectedRoute from '../components/ProtectedRoute';
 
 const { Title, Text } = Typography;
 
@@ -97,11 +98,13 @@ const WithdrawalPageContent: React.FC = () => {
                 </Space>
             ),
             children: (
-                <WithdrawalForm
-                    userId={user.id}
-                    onSuccess={handleWithdrawalSuccess}
-                    onError={handleWithdrawalError}
-                />
+                <ProtectedRoute requiredKycLevel = "BASIC">
+                    <WithdrawalForm
+                        userId={user.id}
+                        onSuccess={handleWithdrawalSuccess}
+                        onError={handleWithdrawalError}
+                        />
+                </ProtectedRoute>
             )
         },
         {

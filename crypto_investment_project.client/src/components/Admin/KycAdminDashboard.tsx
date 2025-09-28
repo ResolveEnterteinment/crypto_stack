@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import {
     Card, Table, Button, Tag, Modal, Form, Input, Select, DatePicker,
     Space, Tooltip, Avatar, Badge, Statistic, Row, Col,
@@ -202,8 +202,10 @@ const KycAdminDashboard: React.FC = () => {
 
     const loadStats = async () => {
         try {
-            const response = await api.get('/api/admin/kyc/stats');
+            const response = await api.get<DashboardStats>('/api/admin/kyc/stats');
 
+            if (!response.success || response.data == null)
+                throw new Error("");
             if (response.data && response.success) {
                 const statsData = response.data || {};
                 setStats({
@@ -230,7 +232,7 @@ const KycAdminDashboard: React.FC = () => {
                 comments: values.comments
             });
 
-            if (!response.data.success) {
+            if (!response.success) {
                 throw new Error('Failed to update status');
             }
 
@@ -248,24 +250,25 @@ const KycAdminDashboard: React.FC = () => {
             // Show loading message
             const loadingMessage = message.loading('Loading document...', 0);
 
-            // Request the document as a blob instead of JSON
-            const response = await api.get(`/v1/kyc/admin/document/${id}`, {
-                responseType: 'blob'
+            // ✅ Use the API client with headers
+            const response = await api.getBlob(`/v1/kyc/admin/document/${id}`, {
+                includeHeaders: true
             });
 
-            if (!response.data) {
+            if (!response.success || !response.data) {
                 throw new Error('Failed to retrieve document');
             }
 
+            // ✅ Access headers from the response
+            const headers = response.headers || {};
+            const contentType = headers['content-type'] || 'application/octet-stream';
+
             // Create a blob URL from the response data
-            const blob = new Blob([response.data], {
-                type: response.headers['content-type']
-            });
-            const fileUrl = URL.createObjectURL(blob);
+            const fileUrl = URL.createObjectURL(response.data);
 
             // Extract filename from content-disposition header if available
             let fileName = `document-${id}`;
-            const contentDisposition = response.headers['content-disposition'];
+            const contentDisposition = headers['content-disposition'];
             if (contentDisposition) {
                 const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
                 if (filenameMatch && filenameMatch[1]) {
@@ -276,10 +279,7 @@ const KycAdminDashboard: React.FC = () => {
             // Close loading message
             loadingMessage();
 
-            // Open document in a new tab - browser will handle displaying PDFs and images
-            //window.open(fileUrl, '_blank');
-
-            // Create a fallback download link in case popup is blocked
+            // Create a fallback download link
             const link = document.createElement('a');
             link.href = fileUrl;
             link.download = fileName;
@@ -287,7 +287,7 @@ const KycAdminDashboard: React.FC = () => {
             link.click();
             document.body.removeChild(link);
 
-            // Clean up blob URL after a delay to ensure it's loaded
+            // Clean up blob URL after a delay
             setTimeout(() => URL.revokeObjectURL(fileUrl), 5000);
 
             message.success('Document opened successfully');
@@ -296,17 +296,21 @@ const KycAdminDashboard: React.FC = () => {
             message.error('Failed to view KYC document');
         }
     };
+
     const handleViewLiveCapture = async (id: string) => {
         try {
             // Show loading message
             const loadingMessage = message.loading('Loading live capture images...', 0);
 
-            // Request the live capture as a blob
-            const response = await api.get(`/v1/kyc/admin/live-capture/${id}`, {
-                responseType: 'blob'
+            // ✅ Use the API client with headers
+            const response = await api.getBlob(`/v1/kyc/admin/live-capture/${id}`, {
+                includeHeaders: true
             });
 
-            if (!response.data) {
+            console.log("KycAdminDashboard::handleViewLiveCapture => response: ", response);
+            console.log("KycAdminDashboard::handleViewLiveCapture => response.data: ", response.data);
+
+            if (!response.success) {
                 throw new Error('Failed to retrieve live capture');
             }
 
@@ -324,12 +328,24 @@ const KycAdminDashboard: React.FC = () => {
             // Clear existing content
             containerElement.innerHTML = '';
 
+            // ✅ Access headers from the response
+            const headers = response.headers || {};
+
+            console.log("KycAdminDashboard::handleViewLiveCapture => headers: ", headers);
+
+            const contentType = headers['content-type'] || '';
+
+            console.log("KycAdminDashboard::handleViewLiveCapture => contentType: ", contentType);
+
             // Check if the response is a ZIP file (multiple images)
-            if (response.headers['content-type'] === 'application/zip') {
-                // For ZIP files, extract and display all images in container
+            if (contentType === 'application/zip' || contentType === 'application/x-zip-compressed') {
+                // Handle ZIP file processing...
                 const JSZip = (await import('jszip')).default;
                 const zip = new JSZip();
-                const zipContent = await zip.loadAsync(response.data);
+
+                // ✅ Convert Blob to ArrayBuffer before loading into JSZip
+                const arrayBuffer = await response.data.arrayBuffer();
+                const zipContent = await zip.loadAsync(arrayBuffer);
 
                 console.log("KycAdminDashboard::handleViewLiveCapture => zipContent: ", Object.entries(zipContent.files));
 
@@ -425,7 +441,7 @@ const KycAdminDashboard: React.FC = () => {
             } else {
                 // For single image, display in container
                 const blob = new Blob([response.data], {
-                    type: response.headers['content-type'] || 'image/jpeg'
+                    type: headers['content-type'] || 'image/jpeg'
                 });
                 const imageUrl = URL.createObjectURL(blob);
 

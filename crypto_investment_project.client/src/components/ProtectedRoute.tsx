@@ -4,9 +4,10 @@ import React, { useState, useEffect, ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Spin, Result, Button } from 'antd';
+import api from '../services/api';
 
 // Define the KYC level type for TypeScript
-type KycLevel = 'NONE' | 'BASIC' | 'STANDARD' | 'ADVANCED';
+type KycLevel = 'NONE' | 'BASIC' | 'STANDARD' | 'ADVANCED' | 'ENHANCED';
 
 // Define the props for the component
 interface ProtectedRouteProps {
@@ -29,7 +30,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     // Use the auth context without type assertion
     const auth = useAuth();
 
-    const [kycVerified, setKycVerified] = useState<boolean | null>(null);
+    const [kycVerified, setKycVerified] = useState<boolean>(false);
     const [kycLoading, setKycLoading] = useState<boolean>(false);
     const location = useLocation();
 
@@ -40,7 +41,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 
     useEffect(() => {
         // Skip KYC check if not required
-        if (!requiredKycLevel || !isAuthenticated) {
+        if (!requiredKycLevel) {
             setKycVerified(true);
             return;
         }
@@ -49,22 +50,18 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
         const checkKycStatus = async (): Promise<void> => {
             setKycLoading(true);
             try {
-                const response = await fetch('/api/kyc/status', {
-                    headers: {
-                        'Authorization': `Bearer ${localStorage.getItem('token')}`,
-                    },
-                });
+                const response = await api.get<KycStatusResponse>('/v1/kyc/status');
 
-                if (!response.ok) {
-                    throw new Error('Failed to fetch KYC status');
+                if (!response.success) {
+                    throw new Error(`Failed to fetch KYC status: ${response.message}`);
                 }
 
-                const data: KycStatusResponse = await response.json();
+                const data: KycStatusResponse = response.data;
 
                 // Determine if verified based on status and level
                 const isVerified =
                     data.status === 'APPROVED' &&
-                    getKycLevelValue(data.verificationLevel) >= getKycLevelValue(requiredKycLevel);
+                    getKycLevelValue(data.verificationLevel) >= getKycLevelValue(requiredKycLevel ?? 'NONE');
 
                 setKycVerified(isVerified);
             } catch (err) {
@@ -85,6 +82,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
             case 'BASIC': return 1;
             case 'STANDARD': return 2;
             case 'ADVANCED': return 3;
+            case 'ENHANCED': return 4;
             default: return 0;
         }
     };
@@ -112,7 +110,19 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     }
 
     if (!isAuthenticated) {
-        return <Navigate to="/login" state={{ from: location }} replace />;
+        //return <Navigate to="/login" state={{ from: location }} replace />;
+
+        console.log("ProtectedRoute => isAuthenticated: ", isAuthenticated);
+        return <Result
+            status="403"
+            title="Unauthorized"
+            subTitle="Please log-in to access this page."
+            extra={
+                <Button type="primary" onClick={() => window.location.href = '/login'}>
+                    Login
+                </Button>
+            }
+        />
     }
 
     // Check for required roles

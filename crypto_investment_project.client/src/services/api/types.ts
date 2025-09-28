@@ -1,4 +1,4 @@
-// src/services/api/types.ts
+﻿// src/services/api/types.ts
 export interface ApiResponse<T = unknown> {
     data: T;
     success: boolean;
@@ -6,6 +6,7 @@ export interface ApiResponse<T = unknown> {
     statusCode?: number;
     errors?: Record<string, string[]>;
     totalCount?: number;
+    headers?: Record<string, string>; // ✅ Add headers property
 }
 
 export interface ApiError {
@@ -33,6 +34,7 @@ export interface RequestConfig {
     priority?: 'low' | 'normal' | 'high';
     skipQueue?: boolean;
     responseType?: 'json' | 'blob' | 'text' | 'arraybuffer' | 'document' | 'stream';
+    includeHeaders?: boolean; // ✅ Add option to include headers
 }
 
 export interface PendingRequest {

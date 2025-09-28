@@ -28,8 +28,8 @@ const Navbar: React.FC = () => {
     // Navigation handlers
     const showProfile = () => navigate('/profile');
     const showSettings = () => navigate('/settings');
-    const handleLogout = () => {
-        logout();
+    const handleLogout = async () => {
+        await logout();
         navigate('/auth');
     };
 
