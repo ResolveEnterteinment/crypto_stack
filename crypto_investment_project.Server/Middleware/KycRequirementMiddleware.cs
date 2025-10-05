@@ -158,13 +158,6 @@ namespace crypto_investment_project.Server.Middleware
                     ErrorMessage = verificationResult.IsSuccess ? null : verificationResult.ErrorMessage
                 };
 
-                // Additional checks for advanced verification
-                if (requirement.Level == KycLevel.Advanced)
-                {
-                    var tradingEligible = await kycService.IsUserEligibleForTrading(userId);
-                    result.IsVerified = result.IsVerified && tradingEligible.IsSuccess && tradingEligible.Data;
-                }
-
                 // Cache the result for a short time
                 _cache.Set(cacheKey, result, TimeSpan.FromMinutes(5));
 

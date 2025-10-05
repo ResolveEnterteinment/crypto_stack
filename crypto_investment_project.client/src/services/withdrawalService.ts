@@ -16,6 +16,8 @@ const ENDPOINTS = {
     GET_HISTORY: () => '/withdrawal/history/user/current',
     CANCEL: (id: string) => `/withdrawal/cancel/${id}`,
     UPDATE_STATUS: (id: string) => `/withdrawal/admin/update-status/${id}`,
+    APPROVE: (id: string) => `/withdrawal/admin/approve/${id}`,
+    REJECT: (id: string) => `/withdrawal/admin/reject/${id}`,
     GET_PENDING: () => `/withdrawal/admin/pending`,
     HEALTH_CHECK: '/health'
 } as const;
@@ -53,14 +55,34 @@ const withdrawalService = {
         return response.data;
     },
     canUserWithdraw: async (amount: number, ticker: string): Promise<{ data: boolean, message: string | undefined }> => {
-        const response = await api.post<boolean>(ENDPOINTS.CAN_USER_WITHDRAW(),
-            {
-                amount: amount,
-                ticker: ticker
-            });
-        if (response == null || response.data == null || !response.success)
-            throw "Failed to check user withdrawal eligibility";
-        return { data: response.data, message: response.message };
+        try {
+            const response = await api.post<boolean>(ENDPOINTS.CAN_USER_WITHDRAW(),
+                {
+                    amount: amount,
+                    ticker: ticker
+                });
+
+            // If it's a successful response but with data=false, that's a valid business rule failure
+            if (response == null) {
+                throw new Error("Failed to check user withdrawal eligibility");
+            }
+
+            if (!response.success) {
+                // This is a known validation error, return with message
+                return {
+                    data: false,
+                    message: response.message || "Unable to process withdrawal at this time"
+                };
+            }
+
+            return {
+                data: response.data ?? false,
+                message: response.message
+            };
+        } catch (error) {
+            console.error("Error in canUserWithdraw:", error);
+            throw error;
+        }
     },
     requestCryproWithdrawal: async (data: CryptoWithdrawalRequest): Promise<WithdrawalResponse> => {
         const response = await api.post<WithdrawalResponse>(ENDPOINTS.REQUEST_CRYPTO_WITHDRAWAL(), data);
@@ -109,18 +131,39 @@ const withdrawalService = {
             throw error; // Re-throw to allow proper error handling
         }
     },
-    updateStatus: async (withdrawalId: string, payload: object): Promise<boolean> => {
+    updateStatus: async (withdrawalId: string, payload: object): Promise<void> => {
         try {
             const response = await api.put<boolean>(ENDPOINTS.UPDATE_STATUS(withdrawalId),
             payload);
             if (response == null || response.success !== true)
                 throw new Error("Failed to update withdrawal status");
-            return true;
         } catch (error) {
             console.error("Error updates withdrawal status:", error);
             throw error; // Re-throw to allow proper error handling
         }
-    }
+    },
+    approve: async (withdrawalId: string, payload: object): Promise<void> => {
+        try {
+            const response = await api.put(ENDPOINTS.APPROVE(withdrawalId),
+            payload);
+            if (response == null || response.success !== true)
+                throw new Error("Failed to approve withdrawal");
+        } catch (error) {
+            console.error("Error approving withdrawal:", error);
+            throw error; // Re-throw to allow proper error handling
+        }
+    },
+    reject: async (withdrawalId: string, payload: object): Promise<void> => {
+        try {
+            const response = await api.put(ENDPOINTS.REJECT(withdrawalId),
+                payload);
+            if (response == null || response.success !== true)
+                throw new Error("Failed to reject withdrawal");
+        } catch (error) {
+            console.error("Error rejecting withdrawal:", error);
+            throw error; // Re-throw to allow proper error handling
+        }
+    },
 };
 
 export default withdrawalService;

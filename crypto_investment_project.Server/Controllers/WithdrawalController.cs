@@ -432,8 +432,9 @@ namespace crypto_investment_project.Server.Controllers
 
                 if (!result.IsSuccess)
                 {
+                    _logger.LogError("Withdrawal eligibility error: {ErrorMessage}", result.ErrorMessage);
                     return ResultWrapper.Failure(result.Reason,
-                        $"Failed to check withdrawal eligibility for user ID {userId}",
+                        result.ErrorMessage,
                         result.ErrorCode)
                         .ToActionResult(this);
                 }
@@ -912,6 +913,166 @@ namespace crypto_investment_project.Server.Controllers
             }
         }
 
+        [HttpPut("admin/approve/{withdrawalId}")]
+        [Authorize(Roles = "ADMIN")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> ApproveWithdrawal(
+            string withdrawalId,
+            [FromBody] ApproveWithdrawalRequest request)
+        {
+            using var scope = _logger.BeginScope(new
+            {
+                WithdrawalId = withdrawalId
+            });
+
+            try
+            {
+                var validationErrors = new Dictionary<string, string[]>();
+
+                // Validate input
+                if (string.IsNullOrEmpty(withdrawalId) ||
+                    !Guid.TryParse(withdrawalId, out var parsedWithdrawalId) ||
+                    parsedWithdrawalId == Guid.Empty)
+                {
+                    validationErrors.Add("withdrawalId", new[] { "A valid withdrawal ID is required." });
+                }
+
+                if (request == null)
+                {
+                    validationErrors.Add("request", ["Request body is required."]);
+                }
+
+                if (validationErrors.Count != 0)
+                {
+                    return ResultWrapper.ValidationError(validationErrors)
+                        .ToActionResult(this);
+                }
+
+                var withdrawalGuid = Guid.Parse(withdrawalId);
+
+                // Authorization check - get admin user ID
+                var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(currentUserId) || !Guid.TryParse(currentUserId, out Guid adminUserId) || adminUserId == Guid.Empty)
+                {
+                    _logger.LogWarning("Invalid admin user ID format: {UserId}", currentUserId);
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
+                }
+
+                var result = await _withdrawalService.UpdateWithdrawalStatusAsync(
+                    withdrawalGuid,
+                    WithdrawalStatus.Approved,
+                    adminUserId,
+                    request.Comment,
+                    request.TransactionHash);
+
+                if (!result.IsSuccess)
+                {
+                    return ResultWrapper.Failure(result.Reason,
+                        "Failed to approve withdrawal status",
+                        result.ErrorCode)
+                        .ToActionResult(this);
+                }
+
+                _logger.LogInformation("Successfully approved withdrawal {WithdrawalId} status to {Status}",
+                    withdrawalGuid, WithdrawalStatus.Approved);
+
+                return ResultWrapper.Success("Withdrawal approved successfully")
+                    .ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error approving withdrawal status for ID {WithdrawalId}: {ErrorMessage}", withdrawalId, ex.Message);
+                return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+            }
+        }
+
+        [HttpPut("admin/reject/{withdrawalId}")]
+        [Authorize(Roles = "ADMIN")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> RejectWithdrawal(
+            string withdrawalId,
+            [FromBody] RejectWithdrawalRequest request)
+        {
+            using var scope = _logger.BeginScope(new
+            {
+                WithdrawalId = withdrawalId
+            });
+
+            try
+            {
+                var validationErrors = new Dictionary<string, string[]>();
+
+                // Validate input
+                if (string.IsNullOrEmpty(withdrawalId) ||
+                    !Guid.TryParse(withdrawalId, out var parsedWithdrawalId) ||
+                    parsedWithdrawalId == Guid.Empty)
+                {
+                    validationErrors.Add("withdrawalId", ["A valid withdrawal ID is required."]);
+                }
+
+                if (request == null)
+                {
+                    validationErrors.Add("request", ["Request body is required."]);
+                }else if (string.IsNullOrEmpty(request.Comment))
+                {
+                    validationErrors.Add("comment", ["Rejection comment is required."]);
+                }
+
+                if (validationErrors.Count != 0)
+                {
+                    return ResultWrapper.ValidationError(validationErrors)
+                        .ToActionResult(this);
+                }
+
+                var withdrawalGuid = Guid.Parse(withdrawalId);
+
+                // Authorization check - get admin user ID
+                var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(currentUserId) || !Guid.TryParse(currentUserId, out Guid adminUserId) || adminUserId == Guid.Empty)
+                {
+                    _logger.LogWarning("Invalid admin user ID format: {UserId}", currentUserId);
+                    return ResultWrapper.Unauthorized()
+                        .ToActionResult(this);
+                }
+
+                var result = await _withdrawalService.UpdateWithdrawalStatusAsync(
+                    withdrawalGuid,
+                    WithdrawalStatus.Rejected,
+                    adminUserId,
+                    request.Comment);
+
+                if (!result.IsSuccess)
+                {
+                    return ResultWrapper.Failure(result.Reason,
+                        "Failed to reject withdrawal",
+                        result.ErrorCode)
+                        .ToActionResult(this);
+                }
+
+                _logger.LogInformation("Successfully rejected withdrawal {WithdrawalId}",
+                    withdrawalGuid);
+
+                return ResultWrapper.Success("Withdrawal rejected successfully")
+                    .ToActionResult(this);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error approving withdrawal status for ID {WithdrawalId}: {ErrorMessage}", withdrawalId, ex.Message);
+                return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+            }
+        }
+
         /// <summary>
         /// Updates the status of a withdrawal (Admin only)
         /// </summary>
@@ -949,16 +1110,16 @@ namespace crypto_investment_project.Server.Controllers
                     !Guid.TryParse(withdrawalId, out var parsedWithdrawalId) || 
                     parsedWithdrawalId == Guid.Empty)
                 {
-                    validationErrors.Add("withdrawalId", new[] { "A valid withdrawal ID is required." });
+                    validationErrors.Add("withdrawalId", ["A valid withdrawal ID is required."]);
                 }
 
                 if (request == null)
                 {
-                    validationErrors.Add("request", new[] { "Request body is required." });
+                    validationErrors.Add("request", ["Request body is required."]);
                 }
                 else if (string.IsNullOrEmpty(request.Status))
                 {
-                    validationErrors.Add("status", new[] { "Status is required." });
+                    validationErrors.Add("status", ["Status is required."]);
                 }
 
                 if (validationErrors.Any())

@@ -29,8 +29,9 @@ const Navbar: React.FC = () => {
     const showProfile = () => navigate('/profile');
     const showSettings = () => navigate('/settings');
     const handleLogout = async () => {
-        await logout();
-        navigate('/auth');
+        await logout()
+            .then(() => navigate('/auth'))
+            .catch(err => console.log("Failed to log-out: ", err));
     };
 
     // Handle scroll effect for navbar

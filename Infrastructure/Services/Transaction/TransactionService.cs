@@ -356,7 +356,13 @@ namespace Infrastructure.Services.Transaction
                     var withdrawal = notification.Withdrawal;
 
                     // Fetch asset by currency ticker
-                    var assetResult = await _assetService.GetByTickerAsync(withdrawal.Currency);
+                    var assetResultTask = _assetService.GetByTickerAsync(withdrawal.Currency);
+                    var balanceResultTask = _balanceService.GetUserBalanceByTickerAsync(withdrawal.UserId, withdrawal.Currency);
+
+                    await Task.WhenAll(assetResultTask, balanceResultTask);
+
+                    var assetResult = assetResultTask.Result;
+                    var balanceResult = balanceResultTask.Result;
 
                     if (assetResult == null || !assetResult.IsSuccess)
                     {

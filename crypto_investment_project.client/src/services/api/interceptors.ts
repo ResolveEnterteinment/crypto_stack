@@ -195,10 +195,13 @@ export class InterceptorManager {
 
         // If token needs refresh soon, refresh proactively
         if (tokenManager.shouldRefreshToken(tokenInfo)) {
-            console.log('🔄 Token expiring soon, refreshing proactively');
-            this.performTokenRefresh(axiosInstance).catch(err => {
+            console.log('Token expiring soon, refreshing proactively');
+            try {
+                await this.performTokenRefresh(axiosInstance);  // ✅ Wait for completion
+            } catch (err) {
                 console.warn('Proactive refresh failed, will retry on 401:', err);
-            });
+                // Continue with current token
+            }
         }
 
         return tokenInfo.token;

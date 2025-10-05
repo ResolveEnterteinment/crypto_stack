@@ -3,7 +3,7 @@ using System.Xml.Linq;
 
 namespace Domain.DTOs.KYC
 {
-    public class KycStatusDto
+    public class KycDto
     {
         public Guid? Id { get; set; } = null;
         public string Status { get; set; } = string.Empty;
@@ -13,9 +13,9 @@ namespace Domain.DTOs.KYC
         public DateTime? VerifiedAt { get; set; }
         public DateTime? ExpiresAt { get; set; }
 
-        public static KycStatusDto FromKycData (KycData kycData)
+        public static KycDto FromKycData (KycData kycData)
         {
-            return new KycStatusDto
+            return new KycDto
             {
                 Id = kycData.Id,
                 Status = kycData.Status,

@@ -19,7 +19,7 @@ export interface VerificationData {
 
 export interface KycStatus {
     status: 'NOT_STARTED' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'NEEDS_REVIEW' | 'BLOCKED';
-    verificationLevel: 'NONE' | 'BASIC' | 'STANDARD' | 'ADVANCED';
+    verificationLevel: 'NONE' | 'BASIC' | 'STANDARD' | 'ADVANCED' | 'ENHANCED';
     submittedAt?: string;
     updatedAt?: string;
     verifiedAt?: string;

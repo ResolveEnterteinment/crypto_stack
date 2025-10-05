@@ -1,7 +1,8 @@
-﻿// Enhanced AuthContext.tsx - Fixes infinite loops and improves error handling
+﻿// Updated AuthContext.tsx - Uses Centralized AuthService
 import { jwtDecode } from "jwt-decode";
 import React, { createContext, useCallback, useContext, useEffect, useState, useRef } from "react";
-import { apiClient, ApiErrorHandler } from "../services/api";
+import { apiClient } from "../services/api";
+import authService, { LoginResponse } from "../services/authService";
 
 interface User {
     id: string;
@@ -17,13 +18,13 @@ interface AuthContextType {
     token: string | null;
     isAuthenticated: boolean;
     isLoading: boolean;
-    isInitialized: boolean; // NEW: Track initialization state
+    isInitialized: boolean;
     error: string | null;
-    login: (tokenData: any) => Promise<void>;
+    login: (tokenData: LoginResponse) => Promise<void>;
     logout: () => Promise<void>;
     refreshToken: () => Promise<boolean>;
     hasRole: (role: string) => boolean;
-    clearError: () => void; // NEW: Allow manual error clearing
+    clearError: () => void;
 }
 
 interface JwtPayload {
@@ -38,29 +39,16 @@ interface JwtPayload {
     [key: string]: any;
 }
 
-interface LoginResponse {
-    accessToken: string;
-    refreshToken?: string;
-    userId: string;
-    username: string;
-    emailConfirmed: boolean;
-    tokenExpiration?: string;
-    roles?: string[];
-    isFirstLogin?: boolean;
-}
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Configuration constants
 const AUTH_CONFIG = {
     STORAGE_KEYS: {
         ACCESS_TOKEN: "access_token",
-        REFRESH_TOKEN: "refresh_token",
         TOKEN_EXPIRY: "token_expiry",
         USER: "user"
     },
-    TOKEN_REFRESH_THRESHOLD_MS: 5 * 60 * 1000,
-    TOKEN_CHECK_INTERVAL_MS: 60 * 1000,
+    TOKEN_REFRESH_THRESHOLD_MS: 5 * 60 * 1000, // 5 minutes
+    TOKEN_CHECK_INTERVAL_MS: 60 * 1000, // 1 minute
     SESSION_STORAGE_PREFIX: "crypt_inv_",
     MAX_REFRESH_ATTEMPTS: 3,
     REFRESH_BACKOFF_MS: 2000
@@ -73,7 +61,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [isInitialized, setIsInitialized] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Use refs to prevent excessive refresh attempts
     const refreshInProgress = useRef(false);
     const refreshAttempts = useRef(0);
     const initializationStarted = useRef(false);
@@ -144,9 +131,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, []);
 
+    // ✅ FIXED: Only store in localStorage - no duplication to sessionStorage
     const secureStore = useCallback((key: string, value: string) => {
         localStorage.setItem(key, value);
-        sessionStorage.setItem(`${AUTH_CONFIG.SESSION_STORAGE_PREFIX}${key}`, value);
     }, []);
 
     const login = useCallback(async (tokenData: LoginResponse): Promise<void> => {
@@ -157,8 +144,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!tokenData.accessToken) {
                 throw new Error("Invalid authentication response");
             }
-
-            console.log('Processing login with token data...');
 
             const userInfoFromToken = extractUserInfoFromToken(tokenData.accessToken);
             if (!userInfoFromToken) {
@@ -178,10 +163,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 roles: finalRoles
             };
 
+            // Store only access token
             secureStore(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN, tokenData.accessToken);
-            if (tokenData.refreshToken) {
-                secureStore(AUTH_CONFIG.STORAGE_KEYS.REFRESH_TOKEN, tokenData.refreshToken);
-            }
             secureStore(AUTH_CONFIG.STORAGE_KEYS.USER, JSON.stringify(userInfo));
             storeTokenExpiry(tokenData.accessToken);
 
@@ -196,9 +179,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         } catch (error: any) {
             console.error("Login error:", error);
-            const apiError = ApiErrorHandler.extractError(error);
-            const userMessage = ApiErrorHandler.formatUserMessage(apiError);
-            setError(userMessage);
+            setError(error.message || 'Login failed');
             await logout();
         } finally {
             setIsLoading(false);
@@ -209,13 +190,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(true);
 
         try {
-            // Only attempt server logout if we have valid authentication
+            // Call backend logout via AuthService
             if (user && token && isInitialized) {
                 try {
-                    await apiClient.post("/v1/auth/logout", undefined, {
-                        skipCsrf: false,
-                        timeout: 5000
-                    });
+                    await authService.logout();
                 } catch (err) {
                     console.warn("Backend logout failed:", err);
                 }
@@ -223,12 +201,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (error) {
             console.error("Error during logout:", error);
         } finally {
-            // Always clear local state
+            // Clear local state
             localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.USER);
             localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN);
-            localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.REFRESH_TOKEN);
             localStorage.removeItem(AUTH_CONFIG.STORAGE_KEYS.TOKEN_EXPIRY);
 
+            // ✅ FIXED: Clean up session storage properly
             Object.keys(sessionStorage).forEach(key => {
                 if (key.startsWith(AUTH_CONFIG.SESSION_STORAGE_PREFIX)) {
                     sessionStorage.removeItem(key);
@@ -249,7 +227,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, [user, token, isInitialized]);
 
     const refreshToken = useCallback(async (): Promise<boolean> => {
-        // Prevent concurrent refresh attempts
         if (refreshInProgress.current) {
             console.log('Refresh already in progress');
             return false;
@@ -287,17 +264,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
 
-            const response = await apiClient.post<LoginResponse>("/v1/auth/refresh-token", undefined, {
-                skipAuth: false,
-                retryCount: 0,
-                priority: 'high',
-                timeout: 10000
-            });
+            const response = await authService.refreshToken();
 
-            if (response.success && response.data.accessToken) {
+            if (response.accessToken) {
                 console.log('Token refresh successful');
 
-                const updatedUserInfo = extractUserInfoFromToken(response.data.accessToken);
+                const updatedUserInfo = extractUserInfoFromToken(response.accessToken);
 
                 if (updatedUserInfo) {
                     const updatedRoles = updatedUserInfo.roles || [];
@@ -310,32 +282,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                         roles: finalRoles
                     };
 
-                    secureStore(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN, response.data.accessToken);
+                    secureStore(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN, response.accessToken);
                     secureStore(AUTH_CONFIG.STORAGE_KEYS.USER, JSON.stringify(mergedUserInfo));
-                    setToken(response.data.accessToken);
-                    setUser(mergedUserInfo);
-                    storeTokenExpiry(response.data.accessToken);
 
-                    apiClient.setAuthToken(response.data.accessToken);
+                    setToken(response.accessToken);
+                    setUser(mergedUserInfo);
+                    storeTokenExpiry(response.accessToken);
+
+                    apiClient.setAuthToken(response.accessToken);
                     refreshAttempts.current = 0;
                 } else {
-                    console.warn('Failed to extract user info from refreshed token');
-                    secureStore(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN, response.data.accessToken);
-                    setToken(response.data.accessToken);
-                    storeTokenExpiry(response.data.accessToken);
-                    apiClient.setAuthToken(response.data.accessToken);
+                    secureStore(AUTH_CONFIG.STORAGE_KEYS.ACCESS_TOKEN, response.accessToken);
+                    setToken(response.accessToken);
+                    storeTokenExpiry(response.accessToken);
+                    apiClient.setAuthToken(response.accessToken);
                 }
 
                 return true;
-            } else {
-                throw new Error("Token refresh failed");
             }
-        } catch (error) {
+
+            throw new Error("Token refresh failed");
+        } catch (error: any) {
             console.error(`Token refresh attempt ${refreshAttempts.current} failed:`, error);
 
-            const apiError = ApiErrorHandler.extractError(error);
-
-            if (apiError.isAuthError || refreshAttempts.current >= AUTH_CONFIG.MAX_REFRESH_ATTEMPTS) {
+            if (refreshAttempts.current >= AUTH_CONFIG.MAX_REFRESH_ATTEMPTS) {
                 console.log('Token refresh failed permanently, logging out');
                 await logout();
             }
@@ -346,12 +316,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [user, token, isTokenExpired, extractUserInfoFromToken, secureStore, storeTokenExpiry, logout]);
 
-    // SAFE initialization that prevents infinite loops
+    // SAFE initialization
     useEffect(() => {
         const initAuth = async () => {
-            if (initializationStarted.current) {
-                return;
-            }
+            if (initializationStarted.current) return;
             initializationStarted.current = true;
 
             console.log('Initializing authentication...');
@@ -380,7 +348,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                         setUser(parsedUser);
                         setToken(storedToken);
 
-                        // Check if token needs refresh (non-blocking)
                         if (isTokenExpired(storedToken)) {
                             console.log('Token expired, will refresh in background');
                             refreshToken().catch(err => {
@@ -406,7 +373,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         initAuth();
     }, []);
 
-    // Token refresh interval - only if authenticated and initialized
+    // Token refresh interval
     useEffect(() => {
         if (!user || !isInitialized) return;
 
@@ -425,7 +392,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return () => clearInterval(tokenCheckInterval);
     }, [user, isInitialized, isTokenExpired, refreshToken]);
 
-    // Update API authorization header when token changes
+    // Update API authorization header
     useEffect(() => {
         if (token) {
             apiClient.setAuthToken(token);

@@ -1,9 +1,10 @@
-using Domain.Constants;
+﻿using Domain.Constants;
 using Domain.DTOs.Error;
 using Domain.Exceptions;
 using Microsoft.AspNetCore.Antiforgery;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace crypto_investment_project.Server.Middleware
 {
@@ -40,6 +41,15 @@ namespace crypto_investment_project.Server.Middleware
 
         private async Task HandleExceptionAsync(HttpContext context, Exception exception)
         {
+            // ✅ CRITICAL FIX: Check if response has already started
+            if (context.Response.HasStarted)
+            {
+                _logger.LogWarning(
+                    "Cannot write error response. Response has already started. Exception: {Exception}",
+                    exception.Message);
+                return;
+            }
+
             // Get request details for logging
             var request = context.Request;
             var correlationId = Activity.Current?.Id ?? context.TraceIdentifier;
@@ -48,6 +58,9 @@ namespace crypto_investment_project.Server.Middleware
             _logger.LogError(exception,
                 "Unhandled exception occurred. Method: {Method}, Path: {Path}, QueryString: {QueryString}, CorrelationId: {CorrelationId}",
                 request.Method, request.Path, request.QueryString, correlationId);
+
+            // ✅ Clear any existing response state
+            //context.Response.Clear();
 
             // Create error response object
             var errorResponse = new ErrorResponse
@@ -118,7 +131,8 @@ namespace crypto_investment_project.Server.Middleware
             var jsonOptions = new JsonSerializerOptions
             {
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = true
+                WriteIndented = _environment.IsDevelopment(), // ✅ Only indent in dev for smaller response
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
             };
 
             var jsonResponse = JsonSerializer.Serialize(errorResponse, jsonOptions);

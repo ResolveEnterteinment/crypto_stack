@@ -32,6 +32,10 @@ namespace Domain.Models.KYC
         [BsonElement("reason")]
         public string? Reason { get; set; }
 
+        [BsonElement("comments")]
+        [BsonIgnoreIfNull]
+        public string? Comments { get; set; }
+
         [BsonElement("details")]
         public Dictionary<string, object>? Details { get; set; }
 

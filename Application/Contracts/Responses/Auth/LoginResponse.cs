@@ -13,7 +13,7 @@
         /// <summary>
         /// Refresh token for obtaining a new access token when the current one expires
         /// </summary>
-        public string RefreshToken { get; set; } = string.Empty;
+        public string? RefreshToken { get; set; } = null;
 
         /// <summary>
         /// The unique identifier of the authenticated user

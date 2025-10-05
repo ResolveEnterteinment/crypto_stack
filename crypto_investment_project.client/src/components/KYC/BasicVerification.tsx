@@ -19,6 +19,7 @@ import {
 import dayjs from 'dayjs';
 import { BasicVerificationData } from '../../types/kyc';
 import { Country, State } from 'country-state-city';
+import DataSanitizer from '../../utils/DataSanitizer';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -202,8 +203,13 @@ const BasicVerification: React.FC<BasicVerificationProps> = ({
                                 >
                                     <Input
                                         placeholder="Enter your full name"
-                                        maxLength={50}
-                                        onChange={(e) => setPersonalInfo((prev: BasicVerificationData) => ({ ...prev, fullName: e.target.value }))}
+                                        maxLength={100}
+                                        onChange={(e) => {
+                                            const sanitized = DataSanitizer.sanitizeName(e.target.value);
+                                            setPersonalInfo((prev: BasicVerificationData) =>
+                                                ({ ...prev, fullName: sanitized })
+                                            );
+                                        }}
                                     />
                                 </Form.Item>
                             </Col>
@@ -220,7 +226,10 @@ const BasicVerification: React.FC<BasicVerificationProps> = ({
                                         size="large"
                                         type="date"
                                         max={new Date(Date.now() - 18 * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
-                                        onChange={(e) => setPersonalInfo((prev: BasicVerificationData) => ({ ...prev, dateOfBirth: e.target.value }))}
+                                        onChange={(e) => {
+                                            const sanitized = DataSanitizer.sanitizeDate(e.target.value);
+                                            setPersonalInfo((prev: BasicVerificationData) => ({ ...prev, dateOfBirth: sanitized }));
+                                        }}
                                     />
                                 </Form.Item>
                             </Col>
@@ -245,7 +254,10 @@ const BasicVerification: React.FC<BasicVerificationProps> = ({
                             <Input
                                 placeholder="Enter your street address"
                                 maxLength={100}
-                                onChange={(e) => setPersonalInfo((prev: BasicVerificationData) => ({ ...prev, address: { ...prev.personalInfo.address, street: e.target.value } }))}
+                                onChange={(e) => {
+                                    const sanitized = DataSanitizer.sanitizeAddress(e.target.value);
+                                    setPersonalInfo((prev: BasicVerificationData) => ({ ...prev, address: { ...prev.personalInfo.address, street: sanitized } }));
+                                }}
                             />
                         </Form.Item>
 
@@ -262,7 +274,10 @@ const BasicVerification: React.FC<BasicVerificationProps> = ({
                                     <Input
                                         placeholder="Enter your city"
                                         maxLength={50}
-                                        onChange={(e) => setPersonalInfo((prev: BasicVerificationData) => ({ ...prev, address: { ...prev.personalInfo.address, city: e.target.value } }))}
+                                        onChange={(e) => {
+                                            const sanitized = DataSanitizer.sanitizeLocation(e.target.value);
+                                            setPersonalInfo((prev: BasicVerificationData) => ({ ...prev, address: { ...prev.personalInfo.address, city: e.target.value } }));
+                                        }}
                                     />
                                 </Form.Item>
                             </Col>
@@ -291,12 +306,12 @@ const BasicVerification: React.FC<BasicVerificationProps> = ({
                                         </Select>
                                     ) : (
                                         <Input
-                                            placeholder="Enter your state or province"
-                                            maxLength={50}
-                                            onChange={(e) => setPersonalInfo((prev: BasicVerificationData) => ({
-                                                ...prev,
-                                                address: { ...prev.personalInfo.address, state: e.target.value }
-                                            }))}
+                                                placeholder="Enter your state or province"
+                                                maxLength={50}
+                                                onChange={(e) => {
+                                                    const sanitized = DataSanitizer.sanitizeLocation(e.target.value);
+                                                    setPersonalInfo((prev: BasicVerificationData) => ({ ...prev, address: { ...prev.personalInfo.address, state: sanitized } }));
+                                                }}
                                         />
                                     )}
                                 </Form.Item>
@@ -316,7 +331,10 @@ const BasicVerification: React.FC<BasicVerificationProps> = ({
                                     <Input
                                         placeholder="Enter your ZIP or postal code"
                                         maxLength={20}
-                                        onChange={(e) => setPersonalInfo((prev: BasicVerificationData) => ({ ...prev, address: { ...prev.personalInfo.address, zipCode: e.target.value } }))}
+                                        onChange={(e) => {
+                                            const sanitized = DataSanitizer.sanitizePostalCode(e.target.value);
+                                            setPersonalInfo((prev: BasicVerificationData) => ({ ...prev, address: { ...prev.personalInfo.address, zipCode: sanitized } }));
+                                        }}
                                     />
                                 </Form.Item>
                             </Col>

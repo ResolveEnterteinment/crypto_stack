@@ -3,7 +3,7 @@ import {
     Table, Tag, Button, Modal, Form, Input, Select, Card,
     Tooltip, Alert, Space, Typography, Statistic, Row, Col,
     Badge, Descriptions, Divider, Avatar, Spin, Empty,
-    Radio, message, Drawer,
+    message, Drawer,
 } from 'antd';
 import {
     ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined,
@@ -172,7 +172,6 @@ const WithdrawalManagement: React.FC = () => {
             setWithdrawalLimits(limits);
 
             form.setFieldsValue({
-                status: '',
                 comment: '',
                 transactionHash: withdrawal.transactionHash || ''
             });
@@ -191,7 +190,7 @@ const WithdrawalManagement: React.FC = () => {
         setDetailsDrawerVisible(true);
     };
 
-    const handleModalSubmit = async (): Promise<void> => {
+    const handleApprove = async (): Promise<void> => {
         try {
             setError(null);
             const values = await form.validateFields();
@@ -202,22 +201,61 @@ const WithdrawalManagement: React.FC = () => {
             }
 
             const payload = {
-                status: values.status,
                 comment: values.comment || '',
                 transactionHash: values.transactionHash || null
             };
 
-            const updateResponse = await withdrawalService.updateStatus(currentWithdrawal.id, payload);
+            await withdrawalService.approve(currentWithdrawal.id, payload);
 
-            message.success(`Withdrawal ${values.status.toLowerCase()} successfully`);
+            message.success('Withdrawal approved successfully');
+
             setModalVisible(false);
-            fetchWithdrawals();
-            fetchStats();
+            form.resetFields();
+
+            await fetchWithdrawals();
+            await fetchStats();
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
             setError(errorMessage);
-            console.error('Error updating withdrawal status:', err);
-            message.error('Failed to update withdrawal status');
+            console.error('Error approving withdrawal:', err);
+            message.error('Failed to approve withdrawal');
+        } finally {
+            setProcessing(false);
+        }
+    };
+
+    const handleReject = async (): Promise<void> => {
+        try {
+            setError(null);
+            const values = await form.validateFields(['comment']);
+            setProcessing(true);
+
+            if (!currentWithdrawal) {
+                throw new Error('No withdrawal selected');
+            }
+
+            if (!values.comment || values.comment.trim() === '') {
+                throw new Error('Comment is required for rejection');
+            }
+
+            const payload = {
+                comment: values.comment.trim()
+            };
+
+            await withdrawalService.reject(currentWithdrawal.id, payload);
+
+            message.success('Withdrawal rejected successfully');
+
+            setModalVisible(false);
+            form.resetFields();
+
+            await fetchWithdrawals();
+            await fetchStats();
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
+            setError(errorMessage);
+            console.error('Error rejecting withdrawal:', err);
+            message.error('Failed to reject withdrawal');
         } finally {
             setProcessing(false);
         }
@@ -309,7 +347,6 @@ const WithdrawalManagement: React.FC = () => {
             filters: [
                 { text: 'Pending', value: 'PENDING' },
                 { text: 'Approved', value: 'APPROVED' },
-                { text: 'Completed', value: 'COMPLETED' },
                 { text: 'Rejected', value: 'REJECTED' },
             ],
             render: (status: string) => getStatusTag(status),
@@ -427,7 +464,6 @@ const WithdrawalManagement: React.FC = () => {
                         >
                             <Option value="PENDING">Pending</Option>
                             <Option value="APPROVED">Approved</Option>
-                            <Option value="COMPLETED">Completed</Option>
                             <Option value="REJECTED">Rejected</Option>
                         </Select>
                     </Col>
@@ -510,7 +546,7 @@ const WithdrawalManagement: React.FC = () => {
                 />
             </Card>
 
-            {/* Process Modal */}
+            {/* Process Modal with Custom Action Buttons */}
             <Modal
                 title={
                     <Space>
@@ -519,9 +555,43 @@ const WithdrawalManagement: React.FC = () => {
                     </Space>
                 }
                 open={modalVisible}
-                onCancel={() => setModalVisible(false)}
-                onOk={handleModalSubmit}
-                okButtonProps={{ loading: processing }}
+                onCancel={() => {
+                    setModalVisible(false);
+                    form.resetFields();
+                }}
+                footer={[
+                    <Button
+                        key="cancel"
+                        onClick={() => {
+                            setModalVisible(false);
+                            form.resetFields();
+                        }}
+                        disabled={processing}
+                    >
+                        Cancel
+                    </Button>,
+                    <Button
+                        key="reject"
+                        type="default"
+                        danger
+                        icon={<CloseCircleOutlined />}
+                        loading={processing}
+                        onClick={handleReject}
+                        disabled={isModalLoading}
+                    >
+                        Reject
+                    </Button>,
+                    <Button
+                        key="approve"
+                        type="primary"
+                        icon={<CheckCircleOutlined />}
+                        loading={processing}
+                        onClick={handleApprove}
+                        disabled={isModalLoading}
+                    >
+                        Approve
+                    </Button>,
+                ]}
                 width={800}
                 destroyOnClose
             >
@@ -649,27 +719,16 @@ const WithdrawalManagement: React.FC = () => {
 
                             <Form form={form} layout="vertical">
                                 <Form.Item
-                                    name="status"
-                                    label="Update Status"
-                                    rules={[{ required: true, message: 'Please select a status' }]}
-                                >
-                                    <Radio.Group>
-                                        <Radio.Button value="APPROVED">
-                                            <CheckCircleOutlined /> Approve
-                                        </Radio.Button>
-                                        <Radio.Button value="COMPLETED">
-                                            <CheckCircleOutlined /> Mark Completed
-                                        </Radio.Button>
-                                        <Radio.Button value="REJECTED">
-                                            <CloseCircleOutlined /> Reject
-                                        </Radio.Button>
-                                    </Radio.Group>
-                                </Form.Item>
-
-                                <Form.Item
                                     name="comment"
                                     label="Comment"
-                                    rules={[{ required: false }]}
+                                    rules={[
+                                        {
+                                            validator: async (_, value) => {
+                                                // Only require comment for rejection, not approval
+                                                return Promise.resolve();
+                                            }
+                                        }
+                                    ]}
                                 >
                                     <TextArea
                                         rows={3}

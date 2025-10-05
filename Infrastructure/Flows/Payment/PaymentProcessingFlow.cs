@@ -165,6 +165,13 @@ namespace Infrastructure.Flows.Payment
             _builder.Step("HandleDust")
                 .Triggers<HandleDustFlow>()
                 .Build();
+
+            _builder.Step("Completed")
+                .Execute(async context =>
+                {
+                    return StepResult.Success("Payment processing flow completed.");
+                })
+                .Build();
         }
 
         private void AddValidationError(Dictionary<string, List<string>> errs, string key, string msg)

@@ -34,6 +34,7 @@ namespace Infrastructure.Services.Withdrawal
         private readonly IExchangeService _exchangeService;
         private readonly INetworkService _networkService;
         private readonly IAssetService _assetService;
+        private readonly IBalanceService _balanceService;
         public WithdrawalService(
             IServiceProvider serviceProvider,
             IOptions<WithdrawalServiceSettings> settings,
@@ -41,7 +42,8 @@ namespace Infrastructure.Services.Withdrawal
             IUserService userService,
             IExchangeService exchangeService,
             INetworkService networkService,
-            IAssetService assetService
+            IAssetService assetService,
+            IBalanceService balanceService
         ) : base(
             serviceProvider,
             new()
@@ -65,6 +67,7 @@ namespace Infrastructure.Services.Withdrawal
             _exchangeService = exchangeService ?? throw new ArgumentException(nameof(exchangeService));
             _networkService = networkService ?? throw new ArgumentNullException(nameof(networkService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
+            _balanceService = balanceService ?? throw new ArgumentNullException(nameof(balanceService));
         }
 
         public async Task<ResultWrapper<WithdrawalLimitDto>> GetUserWithdrawalLimitsAsync(Guid userId)
@@ -83,7 +86,7 @@ namespace Infrastructure.Services.Withdrawal
                 async () =>
                 {
                     // Get user's KYC status
-                    var kycResult = await _kycService.GetUserKycStatusAsync(userId);
+                    var kycResult = await _kycService.GetUserKycStatusWithHighestLevelAsync(userId);
                     if (!kycResult.IsSuccess)
                         if (kycResult == null || !kycResult.IsSuccess)
                         {
@@ -259,7 +262,7 @@ namespace Infrastructure.Services.Withdrawal
                    }
 
                    // Get user KYC level
-                   var kycResult = await _kycService.GetUserKycStatusAsync(request.UserId);
+                   var kycResult = await _kycService.GetUserKycStatusWithHighestLevelAsync(request.UserId);
 
                    if (kycResult == null || !kycResult.IsSuccess)
                    {
@@ -427,7 +430,7 @@ namespace Infrastructure.Services.Withdrawal
             var withdrawal = result.Data;
 
             // Don't allow updating already completed withdrawals
-            if (withdrawal.Status is WithdrawalStatus.Completed or
+            if (withdrawal.Status is WithdrawalStatus.Approved or
                 WithdrawalStatus.Cancelled)
             {
                 return ResultWrapper<CrudResult<WithdrawalData>>.Failure(
@@ -457,7 +460,6 @@ namespace Infrastructure.Services.Withdrawal
                     };
 
                     if (status is WithdrawalStatus.Approved or
-                        WithdrawalStatus.Completed or
                         WithdrawalStatus.Rejected)
                     {
                         updateFields["ProcessedAt"] = DateTime.UtcNow;
@@ -500,7 +502,6 @@ namespace Infrastructure.Services.Withdrawal
                     string message = status switch
                     {
                         WithdrawalStatus.Approved => $"Your withdrawal request for {withdrawal.Amount} {withdrawal.Currency} has been approved and is being processed.",
-                        WithdrawalStatus.Completed => $"Your withdrawal of {withdrawal.Amount} {withdrawal.Currency} has been completed.",
                         WithdrawalStatus.Rejected => $"Your withdrawal request for {withdrawal.Amount} {withdrawal.Currency} has been rejected. Reason: {comment ?? "Not specified"}",
                         WithdrawalStatus.Cancelled => $"Your withdrawal request for {withdrawal.Amount} {withdrawal.Currency} has been cancelled.",
                         _ => $"Your withdrawal request status has been updated to: {status}"
@@ -566,11 +567,10 @@ namespace Infrastructure.Services.Withdrawal
                     Builders<WithdrawalData>.Filter.Eq(w => w.UserId, userId),
                     Builders<WithdrawalData>.Filter.Gte(w => w.CreatedAt, startDate),
                     Builders<WithdrawalData>.Filter.Lt(w => w.CreatedAt, endDate),
-                    Builders<WithdrawalData>.Filter.In(w => w.Status, new[] {
+                    Builders<WithdrawalData>.Filter.In(w => w.Status, [
                         WithdrawalStatus.Pending,
                         WithdrawalStatus.Approved,
-                        WithdrawalStatus.Completed
-                    })
+                    ])
                 );
 
                     var result = await GetManyAsync(filter);
@@ -699,18 +699,41 @@ namespace Infrastructure.Services.Withdrawal
                         throw new WithdrawalLimitException($"Minimum withdrawal value is {_settings.Value.MinimumWithdrawalValue:N2} {_settings.Value.MinimumWithdrawalTicker} or {minimumAmount:F8} {ticker}");
                     }
 
+                    var pendingTotals = 0m;
+
+                    var pendingTotalsResult = await GetUserPendingTotalsAsync(userId, ticker);
+
+                    if (pendingTotalsResult.IsSuccess)
+                    {
+                        pendingTotals = pendingTotalsResult.Data;
+                    }
+
                     // Check if the amount exceeds any limits
 
-                    else if (withdrawalValue > limits.DailyRemaining)
+                    else if (withdrawalValue > limits.DailyRemaining - pendingTotals)
                     {
                         var maximumAmount = Math.Round(limits.DailyRemaining / rate, 8, MidpointRounding.ToZero);
                         throw new WithdrawalLimitException($"Daily withdrawal limit exceeded. Maximum withdrawal amount is {limits.DailyRemaining:N2} {_settings.Value.MinimumWithdrawalTicker} or {maximumAmount:F8} {ticker}");
                     }
 
-                    else if (withdrawalValue > limits.MonthlyRemaining)
+                    else if (withdrawalValue > limits.MonthlyRemaining - pendingTotals)
                     {
                         var maximumAmount = Math.Round(limits.MonthlyRemaining / rate, 8, MidpointRounding.ToZero);
                         throw new WithdrawalLimitException($"Monthly withdrawal limit exceeded. Maximum withdrawal amount is {limits.MonthlyRemaining:N2} {_settings.Value.MinimumWithdrawalTicker} or {maximumAmount:F8} {ticker}");
+                    }
+
+                    var balanceResult = await _balanceService.GetUserBalanceByTickerAsync(userId, ticker);
+
+                    if (balanceResult is null || !balanceResult.IsSuccess)
+                    {
+                        throw new BalanceFetchException(balanceResult?.ErrorMessage ?? "Balance fetch result returned null");
+                    }
+
+                    var balance = balanceResult.Data?.Available ?? 0m;
+
+                    if (amount > balance - pendingTotals)
+                    {
+                        throw new InsufficientBalanceException($"Insufficient balance.", ticker, balance, amount);
                     }
 
 

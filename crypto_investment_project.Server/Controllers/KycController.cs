@@ -69,6 +69,70 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="200">Returns the user's KYC status</response>
         /// <response code="401">If the user is not authenticated</response>
         /// <response code="500">If an internal error occurs</response>
+        [HttpGet("status/all")]
+        [ProducesResponseType(typeof(KycStatusResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> GetKycStatusesPerLevel()
+        {
+            using (_logger.BeginScope(new Dictionary<string, object>
+            {
+                ["Operation"] = "GetKycStatus",
+                ["CorrelationId"] = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            }))
+            {
+                try
+                {
+                    var userId = GetUserId();
+                    if (!userId.HasValue)
+                    {
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
+
+                    // Check cache first
+                    var cacheKey = $"kyc_status_{userId}";
+
+                    if (_cache.TryGetValue(cacheKey, out KycStatusResponse? cachedStatus) && cachedStatus != null)
+                    {
+                        _logger.LogInformation("KYC status retrieved from cache for user {UserId}", userId);
+                        return ResultWrapper.Success(cachedStatus, "KYC status retrieved from cache")
+                            .ToActionResult(this);
+                    }
+
+                    var result = await _kycService.GetUserKycStatusPerLevelAsync(userId.Value);
+
+                    if (!result.IsSuccess)
+                    {
+                        throw new Exception($"Failed to retrieve KYC status: {result.ErrorMessage}");
+                    }
+
+                    var statusResponse = MapToStatusListResponse(result.Data);
+
+                    // Cache for 5 minutes
+                    _cache.Set(cacheKey, statusResponse, TimeSpan.FromMinutes(5));
+
+                    _logger.LogInformation("KYC status retrieved successfully for user {UserId}", userId);
+
+                    return ResultWrapper.Success(statusResponse, "KYC status retrieved successfully")
+                        .ToActionResult(this);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error retrieving KYC status");
+                    return ResultWrapper.InternalServerError()
+                        .ToActionResult(this);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Get current KYC status for the authenticated user
+        /// </summary>
+        /// <returns>Current KYC status information</returns>
+        /// <response code="200">Returns the user's KYC status</response>
+        /// <response code="401">If the user is not authenticated</response>
+        /// <response code="500">If an internal error occurs</response>
         [HttpGet("status")]
         [ProducesResponseType(typeof(KycStatusResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -100,7 +164,7 @@ namespace crypto_investment_project.Server.Controllers
                             .ToActionResult(this);
                     }
 
-                    var result = await _kycService.GetUserKycStatusAsync(userId.Value);
+                    var result = await _kycService.GetUserKycStatusWithHighestLevelAsync(userId.Value);
 
                     if (!result.IsSuccess)
                     {
@@ -358,12 +422,12 @@ namespace crypto_investment_project.Server.Controllers
         /// <response code="200">Returns the verification result</response>
         /// <response code="400">If the submission is invalid</response>
         /// <response code="401">If the user is not authenticated</response>
-        [HttpPost("verify")]
+        [HttpPost("submit")]
         [RequestSizeLimit(52428800)] // 50MB limit
         [ProducesResponseType(typeof(KycVerificationResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-        public async Task<IActionResult> VerifyKyc([FromBody] KycVerificationSubmissionRequest submission)
+        public async Task<IActionResult> SubmitKyc([FromBody] KycSubmitRequest submission)
         {
             using (_logger.BeginScope(new Dictionary<string, object>
             {
@@ -395,6 +459,22 @@ namespace crypto_investment_project.Server.Controllers
                             .ToActionResult(this);
                     }
 
+                    // Checl if user is already verified at this level or higher
+                    var currentStatusResult = await _kycService.GetUserKycStatusWithHighestLevelAsync(userId.Value);
+                    if (currentStatusResult.IsSuccess)
+                    {
+                        var currentLevel = currentStatusResult.Data.VerificationLevel;
+                        var currentLevelValue = _kycService.GetKycLevelValue(currentLevel);
+                        var verificationLevelValue = _kycService.GetKycLevelValue(submission.VerificationLevel);
+                        if (currentLevelValue > verificationLevelValue)
+                        {
+                            return ResultWrapper.Failure(FailureReason.ValidationError,
+                                $"User already verified at level {submission.VerificationLevel} or higher",
+                                "ALREADY_VERIFIED")
+                                .ToActionResult(this);
+                        }
+                    }
+
                     // Enhanced security validation
                     var securityValidation = await ValidateSubmissionSecurity(submission, userId.Value);
 
@@ -417,7 +497,8 @@ namespace crypto_investment_project.Server.Controllers
                         TermsAccepted = submission.TermsAccepted
                     };
 
-                    var result = await _kycService.VerifyAsync(verificationRequest);
+                    var result = await _kycService.GetOrCreateAsync(verificationRequest);
+
                     if (!result.IsSuccess)
                     {
                         await LogSecurityEvent(userId.Value, "KYC_VERIFICATION_FAILED",
@@ -708,12 +789,10 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 var isVerified = await _kycService.IsUserVerifiedAsync(userId.Value, requiredLevel);
-                var isTradingEligible = await _kycService.IsUserEligibleForTrading(userId.Value);
 
                 var eligibilityResponse = new KycEligibilityResponse
                 {
                     IsVerified = isVerified.IsSuccess && isVerified.Data,
-                    IsTradingEligible = isTradingEligible.IsSuccess && isTradingEligible.Data,
                     RequiredLevel = requiredLevel,
                     CheckedAt = DateTime.UtcNow
                 };
@@ -843,16 +922,17 @@ namespace crypto_investment_project.Server.Controllers
                     }
 
                     // Check if user exists and get current status
-                    var currentKycResult = await _kycService.GetUserKycDataDecryptedAsync(userId);
+                    var currentKycResult = await _kycService.GetUserKycDataDecryptedAsync(userId, levelfilter: request.VerificationLevel);
                     if (!currentKycResult.IsSuccess)
                     {
-                        return ResultWrapper.NotFound("User KYC record", userId.ToString())
+                        return ResultWrapper.NotFound("User KYC record")
                             .ToActionResult(this);
                     }
 
                     // Update KYC status
                     var updateResult = await _kycService.UpdateKycStatusAsync(
                         userId,
+                        request.VerificationLevel,
                         request.Status,
                         adminUserId.Value.ToString(),
                         request.Reason);
@@ -872,20 +952,10 @@ namespace crypto_investment_project.Server.Controllers
                     await LogSecurityEvent(adminUserId.Value, "KYC_STATUS_UPDATED",
                         $"Admin updated KYC status for user {userId} from {currentKycResult.Data.Status} to {request.Status}. Reason: {request.Reason ?? "No reason provided"}");
 
-                    var responseData = new
-                    {
-                        userId = userId,
-                        previousStatus = currentKycResult.Data.Status,
-                        newStatus = request.Status,
-                        updatedBy = adminUserId.Value,
-                        updatedAt = DateTime.UtcNow,
-                        reason = request.Reason
-                    };
-
                     _logger.LogInformation("KYC status updated successfully for user {UserId} by admin {AdminId}",
                         userId, adminUserId);
 
-                    return ResultWrapper.Success(responseData, "KYC status updated successfully")
+                    return ResultWrapper.Success("KYC status updated successfully")
                         .ToActionResult(this);
                 }
                 catch (Exception ex)
@@ -1019,7 +1089,7 @@ namespace crypto_investment_project.Server.Controllers
             return Guid.TryParse(userIdClaim, out var userId) ? userId : null;
         }
 
-        private async Task<ValidationResult> ValidateSubmissionSecurity(KycVerificationSubmissionRequest submission, Guid userId)
+        private async Task<ValidationResult> ValidateSubmissionSecurity(KycSubmitRequest submission, Guid userId)
         {
             var errors = new List<string>();
 
@@ -1178,7 +1248,7 @@ namespace crypto_investment_project.Server.Controllers
             return Regex.IsMatch(phoneNumber, @"^\+?[\d\s\-()]+$") && phoneNumber.Length >= 10 && phoneNumber.Length <= 20;
         }
 
-        private KycStatusResponse MapToStatusResponse(KycStatusDto statusDto)
+        private KycStatusResponse MapToStatusResponse(KycDto statusDto)
         {
             return new KycStatusResponse
             {
@@ -1190,6 +1260,11 @@ namespace crypto_investment_project.Server.Controllers
                 ExpiresAt = statusDto.ExpiresAt,
                 NextSteps = GetNextSteps(statusDto.Status)
             };
+        }
+
+        private List<KycStatusResponse> MapToStatusListResponse(List<KycDto> statusDtoList)
+        {
+            return statusDtoList.Select(sdl => MapToStatusResponse(sdl)).ToList();
         }
 
         private KycAdminView MapToAdminView(KycData kycData)
@@ -1340,7 +1415,6 @@ namespace crypto_investment_project.Server.Controllers
     public class KycEligibilityResponse
     {
         public bool IsVerified { get; set; }
-        public bool IsTradingEligible { get; set; }
         public string RequiredLevel { get; set; } = string.Empty;
         public DateTime CheckedAt { get; set; }
     }

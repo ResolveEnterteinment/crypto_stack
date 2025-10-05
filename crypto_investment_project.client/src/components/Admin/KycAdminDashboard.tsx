@@ -12,6 +12,7 @@ import {
     CameraOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import JSZip from 'jszip'; // ✅ Add static import
 import type { ColumnsType } from 'antd/es/table';
 import type { Dayjs } from 'dayjs';
 import api from '../../services/api';
@@ -222,11 +223,35 @@ const KycAdminDashboard: React.FC = () => {
         }
     };
 
+    const handleQuickStatusUpdate = async (verificationId: string, status: string) => {
+        try {
+            const verification = verifications.find(v => v.id === verificationId);
+            if (!verification) return;
+
+            const response = await api.put(`/v1/kyc/admin/status/${verification.userId}`, {
+                verificationLevel: verification.verificationLevel,
+                status,
+                reason: `Quick ${status.toLowerCase()} by admin`
+            });
+
+            if (!response.success) {
+                throw new Error('Failed to update status');
+            }
+
+            message.success(`KYC ${status.toLowerCase()} successfully`);
+            loadVerifications();
+        } catch (error) {
+            console.error('Error updating status:', error);
+            message.error('Failed to update status');
+        }
+    };
+
     const handleStatusUpdate = async (values: any) => {
         if (!selectedVerification) return;
 
         try {
             const response = await api.put(`/v1/kyc/admin/status/${selectedVerification.userId}`, {
+                verificationLevel: selectedVerification.verificationLevel,
                 status: values.status,
                 reason: values.reason,
                 comments: values.comments
@@ -245,6 +270,7 @@ const KycAdminDashboard: React.FC = () => {
             message.error('Failed to update KYC status');
         }
     };
+
     const handleViewDocument = async (id: string) => {
         try {
             // Show loading message
@@ -339,8 +365,7 @@ const KycAdminDashboard: React.FC = () => {
 
             // Check if the response is a ZIP file (multiple images)
             if (contentType === 'application/zip' || contentType === 'application/x-zip-compressed') {
-                // Handle ZIP file processing...
-                const JSZip = (await import('jszip')).default;
+                // ✅ Use the statically imported JSZip
                 const zip = new JSZip();
 
                 // ✅ Convert Blob to ArrayBuffer before loading into JSZip
@@ -555,28 +580,6 @@ const KycAdminDashboard: React.FC = () => {
             }
         } catch (error) {
             return 'N/A';
-        }
-    };
-
-    const handleQuickStatusUpdate = async (verificationId: string, status: string) => {
-        try {
-            const verification = verifications.find(v => v.id === verificationId);
-            if (!verification) return;
-
-            const response = await api.put(`/v1/kyc/admin/status/${verification.userId}`, {
-                status,
-                reason: `Quick ${status.toLowerCase()} by admin`
-            });
-
-            if (!response.success) {
-                throw new Error('Failed to update status');
-            }
-
-            message.success(`KYC ${status.toLowerCase()} successfully`);
-            loadVerifications();
-        } catch (error) {
-            console.error('Error updating status:', error);
-            message.error('Failed to update status');
         }
     };
 

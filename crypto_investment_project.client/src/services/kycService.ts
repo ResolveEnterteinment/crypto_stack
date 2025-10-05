@@ -1,17 +1,19 @@
 import { KycVerificationResult } from '../components/KYC';
 import { CreateSessionRequest, KycStatus, LiveDocumentCaptureRequest, LiveCaptureResponse, LiveSelfieCaptureRequest, VerificationSubmission, DocumentUploadResponse } from '../types/kyc';
 import api from './api';
+import SecureSessionManager from '../utils/SecureSessionManager';
 
 // API endpoints
 const ENDPOINTS = {
     GET_STATUS: () => `/v1/kyc/status`,
+    GET_STATUS_PER_LEVEL: () => `/v1/kyc/status/all`,
     GET_SESSION: () => `/v1/kyc/session`,
     CREATE_SESSION: () => `/v1/kyc/session`,
     LIVE_DOCUMENT_CAPTURE: () => `/v1/kyc/document/live-capture`,
     LIVE_SELFIE_CAPTURE: () => `/v1/kyc/selfie/live-capture`,
     SESSION_VALIDATE: () => `/v1/kyc/session/validate`,
     SESSION_INVALIDATE: () => `/v1/kyc/session`,
-    VERIFY: () => `/v1/kyc/verify`,
+    SUBMIT: () => `/v1/kyc/submit`,
     UPLOAD_DOCUMENT: () => `/v1/kyc/document/upload`,
     GET_BY_USER_AND_ASSET: (userId: string, ticker: string) => `/kyc/admin/get/user/${userId}/asset/${ticker}`,
     HEALTH_CHECK: '/v1/kyc/health'
@@ -20,12 +22,24 @@ const ENDPOINTS = {
 class KycService {
     private currentSessionId: string | null = null;
        
-
     /**
-     * Get current KYC status for the authenticated user
+     * Get highest KYC status for the authenticated user
      */
     async getStatus(): Promise<KycStatus> {
         const response = await api.get<KycStatus>(ENDPOINTS.GET_STATUS());
+
+        if (response == null || response.data == null || !response.success) {
+            throw new Error(response.message || 'Failed to get KYC status');
+        }
+
+        return response.data;
+    }
+
+    /**
+     * Get KYC status per level for the authenticated user
+     */
+    async getStatusPerLevel(): Promise<KycStatus[]> {
+        const response = await api.get<KycStatus[]>(ENDPOINTS.GET_STATUS_PER_LEVEL());
 
         if (response == null || response.data == null || !response.success) {
             throw new Error(response.message || 'Failed to get KYC status');
@@ -108,11 +122,9 @@ class KycService {
     /**
      * Set the current session and configure headers
      */
-    private setSession(sessionId: string): void {
+    private async setSession(sessionId: string): Promise<void> {
         this.currentSessionId = sessionId;
-        localStorage.setItem('kyc_session_id', sessionId);
-
-        // Configure API service to include session header
+        await SecureSessionManager.setSession(sessionId);
         api.setKycSession(sessionId);
     }
 
@@ -121,21 +133,22 @@ class KycService {
      */
     private clearSession(): void {
         this.currentSessionId = null;
-        localStorage.removeItem('kyc_session_id');
+        SecureSessionManager.clearSession();
         api.clearKycSession();
     }
 
     /**
      * Restore session from localStorage
      */
-    restoreSession(): string | null {
-        const sessionId = localStorage.getItem('kyc_session_id');
+    async restoreSession(): Promise<string | null> {
+        const sessionId = await SecureSessionManager.getSession();
         if (sessionId) {
             this.currentSessionId = sessionId;
             api.setKycSession(sessionId);
         }
         return sessionId;
     }
+
 
     /**
      * Validate current session
@@ -146,13 +159,20 @@ class KycService {
         }
 
         try {
-            const response = await api.get<boolean>(ENDPOINTS.SESSION_VALIDATE());
-
-            if (response == null || response.data == null || !response.success) {
-                throw new Error(response.message || 'Failed to validate KYC session');
+            const isValid = await SecureSessionManager.isSessionValid();
+            if (!isValid) {
+                this.clearSession();
+                return false;
             }
 
-            return response.data;
+            // Also validate with backend
+            const response = await api.get<boolean>(ENDPOINTS.SESSION_VALIDATE());
+            if (!response.success || !response.data) {
+                this.clearSession();
+                return false;
+            }
+
+            return true;
         } catch (error) {
             this.clearSession();
             return false;
@@ -171,7 +191,7 @@ class KycService {
         submission.sessionId = this.currentSessionId;
 
         try {
-            const response = await api.post<KycVerificationResult>(ENDPOINTS.VERIFY(), submission);
+            const response = await api.post<KycVerificationResult>(ENDPOINTS.SUBMIT(), submission);
 
             if (response == null || response.data == null || !response.success) {
                 throw new Error(response.message || 'Failed to verify KYC submisson');

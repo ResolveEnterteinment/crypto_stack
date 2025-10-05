@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Application.Contracts.Requests.KYC
 {
-    public class KycVerificationSubmissionRequest
+    public class KycSubmitRequest
     {
         [Required]
         public Guid SessionId { get; set; }

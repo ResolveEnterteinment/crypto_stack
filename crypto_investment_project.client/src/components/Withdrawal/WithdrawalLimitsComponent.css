@@ -1,0 +1,398 @@
+/* WithdrawalLimitsComponent.css - Apple-inspired Design */
+
+/* Force Light Theme */
+.limits-wrapper,
+.limits-wrapper *,
+.limits-card,
+.limits-card * {
+    color-scheme: light !important;
+}
+
+/* Main Wrapper */
+.limits-wrapper {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0;
+}
+
+/* Card Styling */
+.limits-card,
+.limits-card.ant-card,
+div.limits-card {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    border-radius: 16px !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06) !important;
+    padding: 32px !important;
+    transition: box-shadow 0.3s ease !important;
+    border: none !important;
+}
+
+.limits-card .ant-card-body {
+    background: #ffffff !important;
+    padding: 0 !important;
+}
+
+/* Loading State */
+.limits-loading {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 400px;
+    background: #ffffff !important;
+}
+
+.limits-loading .ant-typography {
+    color: #8c8c8c !important;
+}
+
+/* Error State */
+.limits-error {
+    text-align: center;
+    padding: 64px 32px;
+    background: #ffffff !important;
+}
+
+.error-icon {
+    font-size: 48px;
+    color: #faad14 !important;
+    margin-bottom: 16px;
+}
+
+.limits-error .ant-typography {
+    color: #1f1f1f !important;
+    margin-bottom: 8px;
+}
+
+/* Header */
+.limits-header {
+    margin-bottom: 8px;
+}
+
+.header-content {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+}
+
+.header-icon {
+    font-size: 24px;
+    color: #1890ff !important;
+    padding: 12px;
+    background: linear-gradient(135deg, #e6f7ff 0%, #bae7ff 100%);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.header-text {
+    flex: 1;
+}
+
+.header-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.header-title-row .ant-typography {
+    margin: 0 !important;
+    color: #1f1f1f !important;
+}
+
+.refresh-button,
+.refresh-button.ant-btn-text {
+    color: #8c8c8c !important;
+    padding: 4px 8px !important;
+}
+
+.refresh-button:hover,
+.refresh-button.ant-btn-text:hover {
+    color: #1890ff !important;
+    background: #f0f9ff !important;
+}
+
+/* KYC Badge */
+.kyc-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    background: #fafafa !important;
+    border: 1px solid;
+    border-radius: 20px;
+}
+
+.badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+}
+
+.kyc-badge .ant-typography {
+    font-size: 12px !important;
+    font-weight: 500 !important;
+    color: #1f1f1f !important;
+    margin: 0 !important;
+}
+
+/* Divider */
+.limits-card .ant-divider {
+    border-color: #f0f0f0 !important;
+}
+
+/* Limit Cards */
+.limit-card {
+    background: linear-gradient(135deg, #f6f8fa 0%, #f0f4f8 100%) !important;
+    border-radius: 12px !important;
+    padding: 24px !important;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.daily-limit {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%) !important;
+}
+
+.monthly-limit {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%) !important;
+}
+
+/* Limit Header */
+.limit-header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.limit-title {
+    font-size: 16px !important;
+    color: #1f1f1f !important;
+    display: block;
+    margin-bottom: 4px !important;
+}
+
+.limit-subtitle {
+    font-size: 11px !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #8c8c8c !important;
+}
+
+/* Progress Container */
+.progress-container {
+    display: flex;
+    justify-content: center;
+    margin: 20px 0;
+}
+
+.progress-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.progress-percent {
+    font-size: 20px !important;
+    font-weight: 600 !important;
+    color: #1f1f1f !important;
+}
+
+.progress-label {
+    font-size: 11px !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #8c8c8c !important;
+    margin-top: -4px !important;
+}
+
+/* Progress Circle Override */
+.limits-card .ant-progress-circle-trail {
+    stroke: rgba(0, 0, 0, 0.06) !important;
+}
+
+.limits-card .ant-progress-text {
+    fill: #1f1f1f !important;
+}
+
+/* Limit Stats */
+.limit-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+}
+
+.stat-row.highlight {
+    padding-top: 12px;
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.stat-row .ant-typography {
+    margin: 0 !important;
+}
+
+.stat-row .ant-typography-secondary {
+    font-size: 12px !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #8c8c8c !important;
+}
+
+.stat-row .ant-typography:not(.ant-typography-secondary) {
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    color: #1f1f1f !important;
+}
+
+/* Usage Warning */
+.usage-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    background: #fffbf0 !important;
+    border: 1px solid #ffe7ba;
+    border-radius: 10px;
+    margin-top: 20px;
+}
+
+.warning-icon {
+    font-size: 18px;
+    color: #faad14 !important;
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+
+.warning-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+}
+
+.warning-content .ant-typography {
+    margin: 0 !important;
+}
+
+.warning-content .ant-typography:first-child {
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    color: #1f1f1f !important;
+}
+
+.warning-content .ant-typography-secondary {
+    font-size: 13px !important;
+    color: #8c8c8c !important;
+    line-height: 1.5;
+}
+
+/* Footer */
+.limits-footer {
+    text-align: center;
+}
+
+.limits-footer .ant-space {
+    justify-content: center;
+}
+
+.limits-footer .ant-typography {
+    font-size: 12px !important;
+    color: #8c8c8c !important;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .limits-card {
+        padding: 24px 20px !important;
+        border-radius: 12px !important;
+    }
+
+    .header-content {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+
+    .header-title-row {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .limit-card {
+        margin-bottom: 16px;
+    }
+
+    .progress-container .ant-progress-circle {
+        width: 80px !important;
+        height: 80px !important;
+    }
+
+    .progress-percent {
+        font-size: 18px !important;
+    }
+}
+
+/* Remove ALL dark mode support */
+@media (prefers-color-scheme: dark) {
+    .limits-wrapper,
+    .limits-card,
+    .limits-card *,
+    .limit-card,
+    .usage-warning,
+    .limits-loading,
+    .limits-error {
+        //background: #ffffff !important;
+        color: #1f1f1f !important;
+    }
+
+    .daily-limit {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%) !important;
+    }
+
+    .monthly-limit {
+        background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%) !important;
+    }
+}
+
+/* Spin/Loading Override */
+.limits-card .ant-spin-dot-item {
+    background-color: #1890ff !important;
+}
+
+/* Button Override */
+.limits-error button.ant-btn-primary {
+    border-radius: 8px;
+    height: 40px;
+    font-weight: 500;
+}
+
+/* Animation */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.limit-card {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+.usage-warning {
+    animation: fadeIn 0.3s ease-in-out;
+}

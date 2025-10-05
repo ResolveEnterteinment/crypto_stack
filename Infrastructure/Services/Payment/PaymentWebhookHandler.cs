@@ -255,14 +255,8 @@ namespace Infrastructure.Services.Payment
                         .WithData("InvoiceRequest", invoiceDto)
                         .WithData("Subscription", subscriptionResult.Data)
                         .WithCorrelation(parentCorrelationId ?? correlationId)
-                        .Build<PaymentProcessingFlow>();
-
-                    var result = await flow.ExecuteAsync();
-
-                    if (result == null || result.Error != null)
-                    {
-                        throw result?.Error ?? new Exception("Failed to execute payment processing flow.");
-                    }
+                        .Build<PaymentProcessingFlow>()
+                        .ExecuteAsync();
                 });
         }
 

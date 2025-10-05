@@ -1,8 +1,7 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import api from "../services/api";
-import { CsrfResponse, LoginResponse } from "../services/authService";
+import authService from "../services/authService";
 
 const AuthPage: React.FC = () => {
     const { user, login } = useAuth();
@@ -13,15 +12,12 @@ const AuthPage: React.FC = () => {
     const [error, setError] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
-    const [csrfToken, setCsrfToken] = useState("");
     const navigate = useNavigate();
 
     // Registration states
     const [registrationSuccess, setRegistrationSuccess] = useState(false);
     const [resendingEmail, setResendingEmail] = useState(false);
     const [resendStatus, setResendStatus] = useState<{ success?: boolean; message?: string } | null>(null);
-
-    // New state for unconfirmed email during login
     const [unconfirmedEmailLogin, setUnconfirmedEmailLogin] = useState(false);
 
     // Validation states
@@ -33,19 +29,6 @@ const AuthPage: React.FC = () => {
         if (user) {
             navigate("/dashboard");
         }
-
-        // Fetch CSRF token
-        const fetchCsrfToken = async () => {
-            try {
-                const response = await api.get <CsrfResponse>("/v1/csrf/refresh");
-                console.log("AuthPage::fetchCsrfToken => response: ", response);
-                setCsrfToken(response.data.token);
-            } catch (err) {
-                console.error("Failed to fetch CSRF token:", err);
-            }
-        };
-
-        fetchCsrfToken();
     }, [user, navigate]);
 
     const validateEmail = (email: string): boolean => {
@@ -67,12 +50,12 @@ const AuthPage: React.FC = () => {
         return isValid;
     };
 
+    // ✅ SIMPLIFIED: Use AuthService for login
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
-        setUnconfirmedEmailLogin(false); // Reset unconfirmed email state
+        setUnconfirmedEmailLogin(false);
 
-        // Validate form
         if (!validateEmail(email) || !validatePassword(password)) {
             return;
         }
@@ -80,53 +63,39 @@ const AuthPage: React.FC = () => {
         setIsLoading(true);
 
         try {
-            const response = await api.post<LoginResponse>("/v1/auth/login",
-                { email, password },
-                {
-                    headers: {
-                        'X-CSRF-TOKEN': csrfToken
-                    }
-                }
-            );
+            // ✅ Use AuthService instead of direct API call
+            const response = await authService.login({ email, password });
 
-            console.log("AuthPage::handleLogin => response: ", response);
+            // ✅ AuthContext.login handles state management
+            await login(response);
+            navigate("/dashboard");
 
-            if (response.success) {
-                login(response.data);
-                navigate("/dashboard");
-            } else {
-                // Check if the error is specifically about unconfirmed email
-                if (response.message === "Email is not confirmed") {
-                    setUnconfirmedEmailLogin(true);
-                } else {
-                    setError(response.message || "Login failed. Please try again.");
-                }
-            }
         } catch (err: any) {
-            console.log("AuthPage::handleLogin => err: ", err);
-            if (err.response?.data?.message) {
-                // Check for email confirmation error from server response
-                if (err.response.data.emailConfirmed === false &&
-                    err.response.data.message === "Email is not confirmed") {
-                    setUnconfirmedEmailLogin(true);
-                } else {
-                    setError(err.response.data.message);
-                }
-            } else if (err.response?.status === 401) {
+            console.error("Login error:", err);
+
+            // Check for email confirmation error
+            if (err.message?.includes("Email is not confirmed") ||
+                err.message?.includes("EMAIL_NOT_CONFIRMED")) {
+                setUnconfirmedEmailLogin(true);
+            } else if (err.message?.includes("Invalid credentials") ||
+                err.message?.includes("INVALID_CREDENTIALS")) {
                 setError("Invalid email or password. Please try again.");
+            } else if (err.message?.includes("Account is temporarily locked") ||
+                err.message?.includes("ACCOUNT_LOCKED")) {
+                setError("Your account is temporarily locked. Please try again later or reset your password.");
             } else {
-                setError("An error occurred during login. Please try again later.");
+                setError(err.message || "An error occurred during login. Please try again later.");
             }
         } finally {
             setIsLoading(false);
         }
     };
 
+    // ✅ SIMPLIFIED: Use AuthService for registration
     const handleRegister = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
 
-        // Validate form
         if (!validateEmail(email) || !validatePassword(password) || !validateFullName(fullName)) {
             return;
         }
@@ -134,78 +103,60 @@ const AuthPage: React.FC = () => {
         setIsLoading(true);
 
         try {
-            const response = await api.post("/v1/auth/register",
-                { fullName, email, password },
-                {
-                    headers: {
-                        'X-CSRF-TOKEN': csrfToken
-                    }
-                }
-            );
+            // ✅ Use AuthService instead of direct API call
+            await authService.register({
+                fullName,
+                email,
+                password
+            });
 
-            if (response.success) {
-                // Show success view instead of alert
-                setRegistrationSuccess(true);
-                setError("");
-                setPassword("");
-            } else {
-                setError(response.message || "Registration failed. Please try again.");
-            }
+            // Show success view
+            setRegistrationSuccess(true);
+            setError("");
+            setPassword("");
+
         } catch (err: any) {
+            console.error("Registration error:", err);
+
+            // Handle validation errors
             if (err.response?.data?.validationErrors) {
-                // Handle validation errors from the server
                 const validationErrors = err.response.data.validationErrors;
-                if (validationErrors.Email) {
-                    setEmailError(validationErrors.Email[0]);
-                }
-                if (validationErrors.Password) {
-                    setPasswordError(validationErrors.Password[0]);
-                }
-                if (validationErrors.FullName) {
-                    setFullNameError(validationErrors.FullName[0]);
-                }
+                if (validationErrors.Email) setEmailError(validationErrors.Email[0]);
+                if (validationErrors.Password) setPasswordError(validationErrors.Password[0]);
+                if (validationErrors.FullName) setFullNameError(validationErrors.FullName[0]);
                 setError("Please correct the errors below.");
-            } else if (err.response?.data?.message) {
-                setError(err.response.data.message);
+            } else if (err.message?.includes("Email already registered") ||
+                err.message?.includes("EMAIL_ALREADY_REGISTERED")) {
+                setEmailError("This email is already registered. Please login instead.");
+                setError("Email already registered.");
             } else {
-                setError("An error occurred during registration. Please try again later.");
+                setError(err.message || "An error occurred during registration. Please try again later.");
             }
         } finally {
             setIsLoading(false);
         }
     };
 
-    // Function to handle resending confirmation email
+    // ✅ SIMPLIFIED: Use AuthService for resend confirmation
     const handleResendConfirmation = async () => {
         setResendingEmail(true);
         setResendStatus(null);
 
         try {
-            // Make API call to resend confirmation email
-            const response = await api.post("/v1/auth/resend-confirmation",
-                { email },
-                {
-                    headers: {
-                        'X-CSRF-TOKEN': csrfToken
-                    }
-                }
-            );
+            // ✅ Use AuthService instead of direct API call
+            await authService.resendConfirmation({ email });
 
-            if (response.success) {
-                setResendStatus({
-                    success: true,
-                    message: "Confirmation email sent successfully! Please check your inbox."
-                });
-            } else {
-                setResendStatus({
-                    success: false,
-                    message: response.message || "Failed to resend confirmation email."
-                });
-            }
+            setResendStatus({
+                success: true,
+                message: "Confirmation email sent successfully! Please check your inbox."
+            });
+
         } catch (err: any) {
+            console.error("Resend confirmation error:", err);
+
             setResendStatus({
                 success: false,
-                message: err.response?.data?.message || "An error occurred. Please try again later."
+                message: err.message || "An error occurred. Please try again later."
             });
         } finally {
             setResendingEmail(false);

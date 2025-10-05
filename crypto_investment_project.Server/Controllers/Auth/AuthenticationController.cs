@@ -241,7 +241,6 @@ namespace crypto_investment_project.Server.Controllers.Auth
                 // Return success response with access token
                 return ResultWrapper.Success(new LoginResponse {
                     AccessToken = result.AccessToken,
-                    RefreshToken = result.RefreshToken,
                     UserId = DataMaskingUtility.MaskAlphanumeric(result.UserId.ToString()),
                     Username = DataMaskingUtility.MaskFullName(result.Username),
                     EmailConfirmed = result.EmailConfirmed

@@ -1,19 +1,22 @@
 ﻿// src/services/authService.ts
-import apiClient, { ApiErrorHandler } from './api';
-import { tokenManager } from './api/tokenManager';
+import api from "./api";
 
-// Type definitions (keep all existing interfaces unchanged)
-interface CsrfResponse {
-    token: string;
-}
-interface LoginRequest {
+// ==================== TYPES ====================
+
+export interface LoginRequest {
     email: string;
     password: string;
 }
 
-interface LoginResponse {
+export interface RegisterRequest {
+    email: string;
+    password: string;
+    fullName: string;
+}
+
+export interface LoginResponse {
     accessToken: string;
-    refreshToken?: string;
+    refreshToken?: string; // ✅ Ignored - in HTTP-only cookie
     userId: string;
     username: string;
     emailConfirmed: boolean;
@@ -22,590 +25,433 @@ interface LoginResponse {
     isFirstLogin?: boolean;
 }
 
-interface RegisterRequest {
-    email: string;
-    password: string;
-    confirmPassword: string;
-    firstName?: string;
-    lastName?: string;
-}
-
-interface RegisterResponse {
-    success: boolean;
-    message: string;
-    userId?: string;
-    requiresEmailConfirmation?: boolean;
-}
-
-interface UserResponse {
+export interface UserDataResponse {
     id: string;
     email: string;
     username: string;
-    firstName?: string;
-    lastName?: string;
-    roles?: string[];
     emailConfirmed: boolean;
-    phoneNumberConfirmed?: boolean;
-    twoFactorEnabled?: boolean;
-    createdAt?: string;
-    lastLoginAt?: string;
+    roles: string[];
+    isFirstLogin?: boolean;
 }
 
-interface PasswordResetRequest {
+export interface CsrfResponse {
+    token: string;
+}
+
+export interface ForgotPasswordRequest {
     email: string;
 }
 
-interface PasswordResetConfirmRequest {
+export interface ResetPasswordRequest {
     email: string;
     token: string;
     newPassword: string;
-    confirmPassword: string;
 }
 
-interface ChangePasswordRequest {
-    currentPassword: string;
-    newPassword: string;
-    confirmPassword: string;
+export interface ConfirmEmailRequest {
+    token: string;
 }
 
-class AuthService {
-    private readonly AUTH_ENDPOINTS = {
-        LOGIN: '/v1/auth/login',
-        LOGOUT: '/v1/auth/logout',
-        REGISTER: '/v1/auth/register',
-        REFRESH_TOKEN: '/v1/auth/refresh-token',
-        USER: '/v1/auth/user',
-        CONFIRM_EMAIL: '/v1/auth/confirm-email',
-        RESEND_CONFIRMATION: '/v1/auth/resend-confirmation',
-        PASSWORD_RESET: '/v1/auth/reset-password',
-        PASSWORD_RESET_CONFIRM: '/v1/auth/reset-password/confirm',
-        PASSWORD_FORGOT: '/v1/auth/forgot-password',
-        CHANGE_PASSWORD: '/v1/auth/change-password',
-        TWO_FACTOR_ENABLE: '/v1/auth/2fa/enable',
-        TWO_FACTOR_DISABLE: '/v1/auth/2fa/disable',
-        TWO_FACTOR_VERIFY: '/v1/auth/2fa/verify'
-    } as const;
+export interface ResendConfirmationRequest {
+    email: string;
+}
 
-    private readonly STORAGE_KEYS = {
-        USER: 'user'
-    } as const;
+export interface AddRoleRequest {
+    userId: string;
+    role: string;
+}
 
-    private refreshAttempts = 0;
-    private readonly MAX_REFRESH_ATTEMPTS = 3;
-    private refreshInProgress = false;
+export interface CreateRoleRequest {
+    role: string;
+}
 
-    /**
- * ✅ ENHANCED: Initialize authentication service with debugging and better error handling
+// ==================== ENDPOINTS ====================
+
+const ENDPOINTS = {
+    // Authentication
+    LOGIN: '/v1/auth/login',
+    REGISTER: '/v1/auth/register',
+    LOGOUT: '/v1/auth/logout',
+    REFRESH_TOKEN: '/v1/auth/refresh-token',
+
+    // User
+    CURRENT_USER: '/v1/auth/user',
+
+    // Email verification
+    CONFIRM_EMAIL: '/v1/auth/confirm-email',
+    RESEND_CONFIRMATION: '/v1/auth/resend-confirmation',
+
+    // Password reset
+    FORGOT_PASSWORD: '/v1/auth/forgot-password',
+    RESET_PASSWORD: '/v1/auth/reset-password',
+
+    // Roles (admin)
+    CREATE_ROLE: '/v1/auth/roles',
+    ADD_ROLE: '/v1/auth/add-role',
+    REMOVE_ROLE: '/v1/auth/remove-role',
+
+    // CSRF
+    CSRF_REFRESH: '/v1/csrf/refresh',
+} as const;
+
+// ==================== AUTH SERVICE ====================
+
+/**
+ * Centralized Authentication Service
+ * 
+ * SECURITY ARCHITECTURE:
+ * - Access tokens: Short-lived JWT in localStorage (15 min)
+ * - Refresh tokens: Long-lived token in HTTP-only cookie (14 days)
+ * - CSRF tokens: Session storage for mutation requests
+ * 
+ * All methods handle errors consistently and return typed responses.
  */
-    async initialize(): Promise<UserResponse | null> {
-        try {
-            console.log('🔄 Initializing AuthService...');
-
-            // Clear any invalid auth state first
-            await this.cleanupInvalidTokens();
-
-            // Check for valid authentication
-            if (!tokenManager.isAuthenticated()) {
-                console.log("❌ No valid authentication found");
-                return null;
-            }
-
-            console.log("✅ Found existing auth token, validating...");
-
-            // Ensure token is set in API client
-            const token = tokenManager.getAccessToken();
-            if (token) {
-                apiClient.setAuthToken(token);
-                console.log("🔐 Token set in API client");
-            }
-
-            // Validate token by fetching user data with retry logic
-            let retryCount = 0;
-            const maxRetries = 3;
-
-            while (retryCount < maxRetries) {
-                try {
-                    const user = await this.checkAuthStatus();
-                    if (user) {
-                        console.log("✅ Authentication initialized successfully");
-                        return user;
-                    }
-                    break; // Exit retry loop if user check returns null (not an error)
-                } catch (error) {
-                    retryCount++;
-                    console.warn(`Auth check attempt ${retryCount} failed:`, error);
-
-                    if (retryCount < maxRetries) {
-                        // Wait before retry with exponential backoff
-                        const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 5000);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                    } else {
-                        console.error("All auth check attempts failed");
-                        break;
-                    }
-                }
-            }
-
-            console.log("❌ Token validation failed");
-            this.clearAuthentication();
-            return null;
-        } catch (error) {
-            console.error('❌ Failed to initialize auth service:', error);
-            this.clearAuthentication();
-            return null;
-        }
-    }
+class AuthService {
+    // ==================== AUTHENTICATION ====================
 
     /**
-     * ✅ NEW: Clean up invalid tokens
+     * Authenticate user with email and password
+     * Sets refresh token in HTTP-only cookie automatically
      */
-    private async cleanupInvalidTokens(): Promise<void> {
-        const tokenInfo = tokenManager.getTokenInfo();
-        if (tokenInfo && tokenManager.isTokenExpired(tokenInfo)) {
-            console.log("🧹 Cleaning up expired token");
-            tokenManager.clearAll();
-            apiClient.clearTokens();
-        }
-    }
-
-    /**
-     * ✅ ENHANCED: Login with better debugging
-     */
-    async login(email: string, password: string): Promise<LoginResponse> {
+    async login(credentials: LoginRequest): Promise<LoginResponse> {
         try {
-            console.log('🔐 Starting login process...');
-
-            // Clear any existing auth before login
-            this.clearAuthentication();
-
-            // Perform login
-            const response = await apiClient.post<LoginResponse>(
-                this.AUTH_ENDPOINTS.LOGIN,
-                { email, password } as LoginRequest,
+            const response = await api.post<LoginResponse>(
+                ENDPOINTS.LOGIN,
+                credentials,
                 {
-                    skipAuth: true,
-                    priority: 'high',
-                    retryCount: 0,
-                    idempotencyKey: `login-${Date.now()}`
+                    skipAuth: true, // No auth needed for login
+                    includeHeaders: false
                 }
             );
 
-            console.log('📤 Login response received:', {
-                success: response.success,
-                hasToken: !!response.data?.accessToken,
-                tokenLength: response.data?.accessToken?.length
-            });
-
-            if (response.success && response.data.accessToken) {
-                // Store authentication data
-                this.storeAuthentication(response.data);
-
-                console.log("✅ Login successful, auth data stored");
-                return response.data;
-            } else {
+            if (!response.success || !response.data) {
                 throw new Error(response.message || 'Login failed');
             }
-        } catch (error) {
-            console.error("❌ Login error:", error);
 
-            const apiError = ApiErrorHandler.extractError(error);
-            const userMessage = ApiErrorHandler.formatUserMessage(apiError);
-
-            throw new Error(userMessage);
+            return response.data;
+        } catch (error: any) {
+            console.error('AuthService: Login failed', error);
+            throw this.handleError(error, 'Failed to login');
         }
-    }
-
-    // Keep all other methods unchanged but add better debugging to storeAuthentication
-    /**
-     * ✅ ENHANCED: Store authentication data with debugging
-     */
-    private storeAuthentication(data: LoginResponse): void {
-        console.log("📦 Storing authentication data...");
-        console.log("🎫 Token length:", data.accessToken?.length);
-
-        // Store token using tokenManager
-        tokenManager.setAccessToken(data.accessToken);
-
-        // Store user data
-        const userData = {
-            id: data.userId,
-            username: data.username,
-            email: data.username,
-            roles: data.roles,
-            emailConfirmed: data.emailConfirmed
-        };
-
-        this.storeUserData(userData);
-
-        // Update API client with the token
-        apiClient.setAuthToken(data.accessToken);
-
-        // Verify storage worked
-        const storedToken = tokenManager.getAccessToken();
-        const isClientAuth = apiClient.isAuthenticated();
-
-        console.log("✅ Authentication data stored:");
-        console.log("  - Token stored:", !!storedToken);
-        console.log("  - Token matches:", storedToken === data.accessToken);
-        console.log("  - API client authenticated:", isClientAuth);
-        console.log("  - TokenManager authenticated:", tokenManager.isAuthenticated());
     }
 
     /**
-     * ✅ ENHANCED: Auth status check with better debugging
+     * Register new user account
+     * Sends verification email automatically
      */
-    async checkAuthStatus(): Promise<UserResponse | null> {
-        console.log("🔍 Checking auth status...");
-
-        // First check if we have a valid token
-        const tokenInfo = tokenManager.getTokenInfo();
-        if (!tokenInfo) {
-            console.log("❌ No authentication token found");
-            return null;
-        }
-
-        console.log("🎫 Token info:", {
-            hasToken: !!tokenInfo.token,
-            expiresAt: new Date(tokenInfo.expiresAt).toLocaleString(),
-            isExpired: tokenManager.isTokenExpired(tokenInfo)
-        });
-
-        // If token is expired, try refresh first
-        if (tokenManager.isTokenExpired(tokenInfo)) {
-            console.log("⏰ Token expired, attempting refresh...");
-            const refreshed = await this.refreshToken();
-            if (!refreshed) {
-                this.clearAuthentication();
-                return null;
-            }
-        }
-
+    async register(registrationData: RegisterRequest): Promise<void> {
         try {
-            // Ensure token is set in API client
-            const currentToken = tokenManager.getAccessToken();
-
-            if (currentToken) {
-                apiClient.setAuthToken(currentToken);
-            } else {
-                console.log("❌ No current token available for auth status check");
-                return null;
-            }
-
-            console.log("📤 Making auth status request...");
-
-            const response = await apiClient.get<UserResponse>(
-                this.AUTH_ENDPOINTS.USER,
+            const response = await api.post(
+                ENDPOINTS.REGISTER,
+                registrationData,
                 {
-                    dedupe: true,
-                    dedupeKey: 'auth-status-check',
-                    priority: 'high'
-                }
-            );
-
-            console.log("📥 Auth status response:", {
-                success: response.success,
-                hasData: !!response.data
-            });
-
-            if (response.success && response.data) {
-                console.log("✅ Auth check successful");
-                this.storeUserData(response.data);
-                return response.data;
-            } else {
-                console.log("❌ Auth check failed: Invalid response");
-                this.clearAuthentication();
-                return null;
-            }
-        } catch (error) {
-            console.error("❌ Auth check error:", error);
-
-            const apiError = ApiErrorHandler.extractError(error);
-
-            if (apiError.isAuthError) {
-                console.log("🔒 Auth check failed: Token invalid");
-                this.clearAuthentication();
-            }
-
-            return null;
-        }
-    }
-
-    // Keep all other methods unchanged...
-    // (logout, register, refreshToken, clearAuthenticationWithoutLogout, etc.)
-
-    async logout(): Promise<void> {
-        try {
-            const hasToken = tokenManager.isAuthenticated();
-
-            if (hasToken) {
-                apiClient.post(
-                    this.AUTH_ENDPOINTS.LOGOUT,
-                    undefined,
-                    {
-                        priority: 'high',
-                        retryCount: 0,
-                        debounceMs: 0,
-                        skipAuth: false
-                    }
-                ).catch(err => {
-                    console.warn("Backend logout failed:", err);
-                });
-            }
-
-            console.log("Logout initiated");
-        } catch (error) {
-            console.error('Logout error:', error);
-        } finally {
-            this.clearAuthenticationWithoutLogout();
-        }
-    }
-
-    private clearAuthenticationWithoutLogout(): void {
-        console.log("Clearing authentication data");
-
-        this.refreshAttempts = 0;
-        this.refreshInProgress = false;
-
-        tokenManager.clearAll();
-        localStorage.removeItem(this.STORAGE_KEYS.USER);
-        sessionStorage.removeItem(this.STORAGE_KEYS.USER);
-        apiClient.clearTokens();
-    }
-
-    async refreshToken(): Promise<boolean> {
-        try {
-            if (this.refreshInProgress) {
-                return false;
-            }
-
-            this.refreshInProgress = true;
-
-            const tokenInfo = tokenManager.getTokenInfo();
-            if (!tokenInfo) {
-                this.refreshAttempts = 0;
-                return false;
-            }
-
-            if (tokenManager.isTokenExpired(tokenInfo)) {
-                console.log('Token is expired, attempting refresh');
-            }
-
-            if (this.refreshAttempts >= this.MAX_REFRESH_ATTEMPTS) {
-                console.log("Max refresh attempts exceeded, clearing authentication");
-                this.clearAuthenticationWithoutLogout();
-                return false;
-            }
-
-            const backoffDelay = Math.min(1000 * Math.pow(2, this.refreshAttempts), 30000);
-            if (this.refreshAttempts > 0) {
-                console.log(`Waiting ${backoffDelay}ms before refresh attempt ${this.refreshAttempts + 1}`);
-                await new Promise(resolve => setTimeout(resolve, backoffDelay));
-            }
-
-            this.refreshAttempts++;
-
-            const { InterceptorManager } = await import('./api/interceptors');
-            const { default: axios } = await import('axios');
-
-            const success = await InterceptorManager.performTokenRefresh(axios);
-
-            if (success) {
-                this.refreshAttempts = 0;
-                console.log("✅ Token refresh successful via AuthService");
-                return true;
-            }
-
-            return false;
-        } catch (error) {
-            console.error("❌ Token refresh failed via AuthService:", error);
-            return false;
-        } finally {
-            this.refreshInProgress = false;
-        }
-    }
-
-    private storeUserData(user: any): void {
-        localStorage.setItem(this.STORAGE_KEYS.USER, JSON.stringify(user));
-        sessionStorage.setItem(this.STORAGE_KEYS.USER, JSON.stringify(user));
-    }
-
-    private clearAuthentication(): void {
-        this.clearAuthenticationWithoutLogout();
-    }
-
-    isAuthenticated(): boolean {
-        return tokenManager.isAuthenticated();
-    }
-
-    getCurrentUser(): any {
-        const userStr = localStorage.getItem(this.STORAGE_KEYS.USER) ||
-            sessionStorage.getItem(this.STORAGE_KEYS.USER);
-
-        if (userStr) {
-            try {
-                return JSON.parse(userStr);
-            } catch {
-                return null;
-            }
-        }
-
-        return null;
-    }
-
-    getAuthState(): {
-        isAuthenticated: boolean;
-        hasToken: boolean;
-        tokenExpired: boolean;
-        user: any;
-        tokenStatus: any;
-    } {
-        return {
-            isAuthenticated: this.isAuthenticated(),
-            hasToken: !!tokenManager.getAccessToken(),
-            tokenExpired: tokenManager.isTokenExpired(),
-            user: this.getCurrentUser(),
-            tokenStatus: tokenManager.getTokenStatus()
-        };
-    }
-
-    // Keep all remaining methods unchanged (password reset, email verification, etc.)
-    async register(data: RegisterRequest): Promise<RegisterResponse> {
-        try {
-            const response = await apiClient.post<RegisterResponse>(
-                this.AUTH_ENDPOINTS.REGISTER,
-                data,
-                {
-                    skipAuth: true,
-                    priority: 'high',
-                    retryCount: 0
-                }
-            );
-
-            if (response.success) {
-                console.log("Registration successful");
-                return response.data;
-            } else {
-                throw new Error(response.message || 'Registration failed');
-            }
-        } catch (error) {
-            console.error("Registration error:", error);
-
-            const apiError = ApiErrorHandler.extractError(error);
-            const userMessage = ApiErrorHandler.formatUserMessage(apiError);
-
-            throw new Error(userMessage);
-        }
-    }
-
-    async requestPasswordReset(email: string): Promise<void> {
-        try {
-            const response = await apiClient.post(
-                this.AUTH_ENDPOINTS.PASSWORD_RESET,
-                { email } as PasswordResetRequest,
-                {
-                    skipAuth: true,
-                    retryCount: 0
+                    skipAuth: true, // No auth needed for registration
+                    includeHeaders: false
                 }
             );
 
             if (!response.success) {
-                throw new Error(response.message || 'Password reset request failed');
+                throw new Error(response.message || 'Registration failed');
             }
-        } catch (error) {
-            const apiError = ApiErrorHandler.extractError(error);
-            throw new Error(ApiErrorHandler.formatUserMessage(apiError));
+
+            // Registration successful - verification email sent
+        } catch (error: any) {
+            console.error('AuthService: Registration failed', error);
+            throw this.handleError(error, 'Failed to register');
         }
     }
 
-    async confirmPasswordReset(data: PasswordResetConfirmRequest): Promise<void> {
+    /**
+     * Logout user and clear refresh token cookie
+     */
+    async logout(): Promise<void> {
         try {
-            const response = await apiClient.post(
-                this.AUTH_ENDPOINTS.PASSWORD_RESET_CONFIRM,
-                data,
+            await api.post(
+                ENDPOINTS.LOGOUT,
+                undefined,
+                {
+                    //timeout: 5000,
+                    retryCount: 0 // Don't retry logout
+                }
+            );
+        } catch (error: any) {
+            console.warn('AuthService: Logout request failed', error);
+            // Don't throw - local logout should still work
+        }
+    }
+
+    /**
+     * Refresh access token using refresh token from HTTP-only cookie
+     * Backend automatically reads refresh token from cookie
+     */
+    async refreshToken(): Promise<LoginResponse> {
+        try {
+            const response = await api.post<LoginResponse>(
+                ENDPOINTS.REFRESH_TOKEN,
+                undefined,
+                {
+                    skipAuth: false, // Send current access token
+                    retryCount: 0,   // Don't retry refresh
+                    timeout: 10000,
+                    priority: 'high'
+                }
+            );
+
+            if (!response.success || !response.data) {
+                throw new Error(response.message || 'Token refresh failed');
+            }
+
+            return response.data;
+        } catch (error: any) {
+            console.error('AuthService: Token refresh failed', error);
+            throw this.handleError(error, 'Failed to refresh token');
+        }
+    }
+
+    // ==================== USER ====================
+
+    /**
+     * Get current authenticated user data
+     */
+    async getCurrentUser(): Promise<UserDataResponse> {
+        try {
+            const response = await api.get<UserDataResponse>(
+                ENDPOINTS.CURRENT_USER,
+                {
+                    includeHeaders: false
+                }
+            );
+
+            if (!response.success || !response.data) {
+                throw new Error(response.message || 'Failed to get user data');
+            }
+
+            return response.data;
+        } catch (error: any) {
+            console.error('AuthService: Get current user failed', error);
+            throw this.handleError(error, 'Failed to get user data');
+        }
+    }
+
+    // ==================== EMAIL VERIFICATION ====================
+
+    /**
+     * Confirm user email with verification token
+     */
+    async confirmEmail(request: ConfirmEmailRequest): Promise<void> {
+        try {
+            const response = await api.post(
+                ENDPOINTS.CONFIRM_EMAIL,
+                request,
+                {
+                    skipAuth: true, // Email confirmation before login
+                    includeHeaders: false
+                }
+            );
+
+            if (!response.success) {
+                throw new Error(response.message || 'Email confirmation failed');
+            }
+        } catch (error: any) {
+            console.error('AuthService: Email confirmation failed', error);
+            throw this.handleError(error, 'Failed to confirm email');
+        }
+    }
+
+    /**
+     * Resend verification email to user
+     */
+    async resendConfirmation(request: ResendConfirmationRequest): Promise<void> {
+        try {
+            const response = await api.post(
+                ENDPOINTS.RESEND_CONFIRMATION,
+                request,
                 {
                     skipAuth: true,
-                    retryCount: 0
+                    includeHeaders: false
+                }
+            );
+
+            if (!response.success) {
+                throw new Error(response.message || 'Failed to resend confirmation');
+            }
+        } catch (error: any) {
+            console.error('AuthService: Resend confirmation failed', error);
+            throw this.handleError(error, 'Failed to resend confirmation email');
+        }
+    }
+
+    // ==================== PASSWORD RESET ====================
+
+    /**
+     * Request password reset email
+     */
+    async forgotPassword(request: ForgotPasswordRequest): Promise<void> {
+        try {
+            const response = await api.post(
+                ENDPOINTS.FORGOT_PASSWORD,
+                request,
+                {
+                    skipAuth: true,
+                    includeHeaders: false
+                }
+            );
+
+            if (!response.success) {
+                throw new Error(response.message || 'Failed to request password reset');
+            }
+        } catch (error: any) {
+            console.error('AuthService: Forgot password failed', error);
+            throw this.handleError(error, 'Failed to request password reset');
+        }
+    }
+
+    /**
+     * Reset password with token from email
+     */
+    async resetPassword(request: ResetPasswordRequest): Promise<void> {
+        try {
+            const response = await api.post(
+                ENDPOINTS.RESET_PASSWORD,
+                request,
+                {
+                    skipAuth: true,
+                    includeHeaders: false
                 }
             );
 
             if (!response.success) {
                 throw new Error(response.message || 'Password reset failed');
             }
-        } catch (error) {
-            const apiError = ApiErrorHandler.extractError(error);
-            throw new Error(ApiErrorHandler.formatUserMessage(apiError));
+        } catch (error: any) {
+            console.error('AuthService: Reset password failed', error);
+            throw this.handleError(error, 'Failed to reset password');
         }
     }
 
-    async changePassword(data: ChangePasswordRequest): Promise<void> {
+    // ==================== ROLES (ADMIN) ====================
+
+    /**
+     * Create new role (admin only)
+     */
+    async createRole(request: CreateRoleRequest): Promise<void> {
         try {
-            const response = await apiClient.post(
-                this.AUTH_ENDPOINTS.CHANGE_PASSWORD,
-                data,
+            const response = await api.post(
+                ENDPOINTS.CREATE_ROLE,
+                request,
                 {
-                    priority: 'high',
-                    retryCount: 0
+                    includeHeaders: false
                 }
             );
 
             if (!response.success) {
-                throw new Error(response.message || 'Password change failed');
+                throw new Error(response.message || 'Failed to create role');
             }
-        } catch (error) {
-            const apiError = ApiErrorHandler.extractError(error);
-            throw new Error(ApiErrorHandler.formatUserMessage(apiError));
+        } catch (error: any) {
+            console.error('AuthService: Create role failed', error);
+            throw this.handleError(error, 'Failed to create role');
         }
     }
 
-    async verifyEmail(token: string, userId: string): Promise<void> {
+    /**
+     * Add role to user (admin only)
+     */
+    async addRoleToUser(request: AddRoleRequest): Promise<void> {
         try {
-            const response = await apiClient.post(
-                this.AUTH_ENDPOINTS.CONFIRM_EMAIL,
-                { token, userId },
+            const response = await api.post(
+                ENDPOINTS.ADD_ROLE,
+                request,
+                {
+                    includeHeaders: false
+                }
+            );
+
+            if (!response.success) {
+                throw new Error(response.message || 'Failed to add role');
+            }
+        } catch (error: any) {
+            console.error('AuthService: Add role failed', error);
+            throw this.handleError(error, 'Failed to add role to user');
+        }
+    }
+
+    /**
+     * Remove role from user (admin only)
+     */
+    async removeRoleFromUser(request: AddRoleRequest): Promise<void> {
+        try {
+            const response = await api.post(
+                ENDPOINTS.REMOVE_ROLE,
+                request,
+                {
+                    includeHeaders: false
+                }
+            );
+
+            if (!response.success) {
+                throw new Error(response.message || 'Failed to remove role');
+            }
+        } catch (error: any) {
+            console.error('AuthService: Remove role failed', error);
+            throw this.handleError(error, 'Failed to remove role from user');
+        }
+    }
+
+    // ==================== CSRF ====================
+
+    /**
+     * Get CSRF token for mutation requests
+     */
+    async getCsrfToken(): Promise<string> {
+        try {
+            const response = await api.get<CsrfResponse>(
+                ENDPOINTS.CSRF_REFRESH,
                 {
                     skipAuth: true,
-                    retryCount: 0
+                    skipCsrf: true,
+                    includeHeaders: false
                 }
             );
 
-            if (!response.success) {
-                throw new Error(response.message || 'Email verification failed');
+            if (!response.success || !response.data?.token) {
+                throw new Error('Failed to get CSRF token');
             }
-        } catch (error) {
-            const apiError = ApiErrorHandler.extractError(error);
-            throw new Error(ApiErrorHandler.formatUserMessage(apiError));
+
+            return response.data.token;
+        } catch (error: any) {
+            console.error('AuthService: Get CSRF token failed', error);
+            throw this.handleError(error, 'Failed to get CSRF token');
         }
     }
 
-    async resendVerificationEmail(email: string): Promise<void> {
-        try {
-            const response = await apiClient.post(
-                this.AUTH_ENDPOINTS.RESEND_CONFIRMATION,
-                { email },
-                {
-                    skipAuth: true,
-                    retryCount: 0,
-                    throttleMs: 60000
-                }
-            );
+    // ==================== ERROR HANDLING ====================
 
-            if (!response.success) {
-                throw new Error(response.message || 'Failed to resend verification email');
-            }
-        } catch (error) {
-            const apiError = ApiErrorHandler.extractError(error);
-            throw new Error(ApiErrorHandler.formatUserMessage(apiError));
+    /**
+     * Centralized error handling with consistent error messages
+     */
+    private handleError(error: any, defaultMessage: string): Error {
+        // Extract meaningful error message
+        if (error.response?.data?.message) {
+            return new Error(error.response.data.message);
         }
+
+        if (error.response?.data?.validationErrors) {
+            const validationErrors = error.response.data.validationErrors;
+            const firstError = Object.values(validationErrors)[0];
+            if (Array.isArray(firstError) && firstError.length > 0) {
+                return new Error(firstError[0]);
+            }
+        }
+
+        if (error.message) {
+            return new Error(error.message);
+        }
+
+        return new Error(defaultMessage);
     }
 }
 
-// Export singleton instance
-export const authService = new AuthService();
+// ==================== EXPORT SINGLETON ====================
 
-// Export type definitions
-export type {
-    ChangePasswordRequest, CsrfResponse, LoginRequest,
-    LoginResponse, PasswordResetConfirmRequest, PasswordResetRequest, RegisterRequest,
-    RegisterResponse,
-    UserResponse
-};
+export const authService = new AuthService();
+export default authService;

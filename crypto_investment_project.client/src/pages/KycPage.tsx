@@ -1,31 +1,49 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Spin, Alert, Button, Card, Typography,
-    Divider, Row, Col, Progress, Layout,
-    theme, message, Space, Tag, Badge,
-    Steps, Tooltip
-} from 'antd';
-import { useAuth } from '../context/AuthContext';
-import {
-    CheckCircleOutlined, ArrowLeftOutlined, SecurityScanOutlined, IdcardOutlined,
-    LockOutlined, SafetyOutlined, ReloadOutlined, ClockCircleOutlined,
-    UnlockOutlined, StarOutlined, CrownOutlined, RocketOutlined,
+    ArrowLeftOutlined,
+    CheckCircleOutlined,
+    ClockCircleOutlined,
+    CrownOutlined,
+    IdcardOutlined,
+    LockOutlined,
+    ReloadOutlined,
+    RocketOutlined,
+    SafetyOutlined,
+    SecurityScanOutlined,
+    StarOutlined,
+    UnlockOutlined,
 } from '@ant-design/icons';
+import {
+    Alert, Button, Card,
+    Col,
+    Divider,
+    Layout,
+    message,
+    Progress,
+    Row,
+    Space,
+    Spin,
+    Tag,
+    theme,
+    Tooltip,
+    Typography
+} from 'antd';
+import { motion } from 'framer-motion';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 // Import verification components based on level
-import BasicVerification from '../components/KYC/BasicVerification';
-import StandardVerification from '../components/KYC/StandardVerification';
+import { getKycLevelValue, getKycLevelName, KYC_LEVELS } from '../components/KYC';
 import AdvancedVerification from '../components/KYC/AdvancedVerification';
+import BasicVerification from '../components/KYC/BasicVerification';
 import EnhancedVerification from '../components/KYC/EnhancedVerification';
+import StandardVerification from '../components/KYC/StandardVerification';
 import Navbar from '../components/Navbar';
+import ErrorBoundry from '../components/ErrorBoundary';
 import kycService from '../services/kycService';
 import { AdvancedVerificationData, BasicVerificationData, KycStatus, StandardVerificationData } from '../types/kyc';
-import { KYC_LEVELS, getKycLevelColor, getKycLevelValue } from '../components/KYC';
 
 const { Title, Paragraph, Text } = Typography;
 const { Content } = Layout;
-const { Step } = Steps;
 
 // Define valid KYC levels type
 type ValidKycLevel = 'BASIC' | 'STANDARD' | 'ADVANCED' | 'ENHANCED';
@@ -110,19 +128,57 @@ const VERIFICATION_LEVEL_CONFIG: Record<ValidKycLevel, {
 };
 
 // Helper function to determine level status
-const getLevelStatus = (levelKey: string, currentLevel: KycLevelWithNone, currentStatus: string): string => {
-    const currentLevelValue = getKycLevelValue(currentLevel);
-    const targetLevelValue = getKycLevelValue(levelKey);
+const getLevelStatus = (levelKey: string, kycStatusList: KycStatus[] | null): string => {
+    if (!kycStatusList || kycStatusList.length === 0) {
+        return levelKey === 'BASIC' ? 'available' : 'locked';
+    }
 
-    if (targetLevelValue < currentLevelValue) {
-        return 'completed';
-    } else if (targetLevelValue === currentLevelValue) {
-        return currentStatus === 'APPROVED' ? 'completed' :
-            currentStatus === 'PENDING' ? 'pending' : 'current';
-    } else if (targetLevelValue === currentLevelValue + 1) {
-        return 'available';
+    // Find KYC status for the specific level
+    const levelStatus = kycStatusList.find(kyc => kyc.verificationLevel === levelKey);
+
+    if (levelStatus) {
+        // If there's a record for this level, return status based on its current state
+        switch (levelStatus.status) {
+            case 'APPROVED':
+                return 'completed';
+            case 'PENDING':
+            case 'NEEDS_REVIEW':
+                return 'pending';
+            case 'REJECTED':
+            case 'BLOCKED':
+                return 'available'; // Allow retry
+            default:
+                return 'available';
+        }
+    }
+
+    // If no record exists for this level, determine availability based on completed levels
+    const approvedLevels = kycStatusList
+        .filter(kyc => kyc.status === 'APPROVED')
+        .map(kyc => getKycLevelValue(kyc.verificationLevel))
+        .sort((a, b) => b - a); // Sort descending
+
+    const targetLevelValue = getKycLevelValue(levelKey);
+    const highestApprovedLevel = approvedLevels.length > 0 ? approvedLevels[0] : 0;
+
+    // Check if there are any pending verification for lower level
+    const hasPendingLowerLevel = kycStatusList.some(kyc =>
+        (kyc.status === 'PENDING' || kyc.status === 'NEEDS_REVIEW') &&
+        getKycLevelValue(kyc.verificationLevel) == targetLevelValue - 1
+    );
+
+    // Level is available if:
+    // 1. It's the next level after the highest approved level, OR
+    // 2. It's BASIC level and no approvals exist, OR  
+    // 3. There are no pending verifications for lower levels
+    if (targetLevelValue === 1 && highestApprovedLevel === 0) {
+        return 'available'; // BASIC is always available if no approvals
+    } else if (targetLevelValue === highestApprovedLevel + 1 || hasPendingLowerLevel) {
+        return 'available'; // Next sequential level
+    } else if (targetLevelValue <= highestApprovedLevel) {
+        return 'available'; // Allow re-verification of lower levels
     } else {
-        return 'locked';
+        return 'locked'; // Higher levels that skip intermediate steps
     }
 };
 
@@ -404,7 +460,7 @@ const KycPageContent: React.FC = () => {
     const [sessionId, setSessionId] = useState<string | null>(searchParams.get("sessionId"));
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [kycStatus, setKycStatus] = useState<KycStatus | null>(null);
+    const [kycStatusList, setKycStatusList] = useState<KycStatus[] | null>(null);
     const [sessionCreating, setSessionCreating] = useState(false);
     const [showLevelSelection, setShowLevelSelection] = useState(true);
     const navigate = useNavigate();
@@ -418,20 +474,37 @@ const KycPageContent: React.FC = () => {
     }, [selectedLevel]);
 
     // Determine user's current level and available levels
-    const userCurrentLevel: KycLevelWithNone = (kycStatus?.verificationLevel as KycLevelWithNone) || 'NONE';
-    const userCurrentStatus = kycStatus?.status || 'NOT_STARTED';
+    const userCurrentKyc: KycStatus | undefined = useMemo(() => {
+        // FIXED: Add Array.isArray check to prevent filter error
+        if (!kycStatusList || !Array.isArray(kycStatusList) || kycStatusList.length === 0) {
+            return {
+                status: 'NOT_STARTED',
+                verificationLevel: 'NONE',
+                nextSteps: []
+            };
+        }
 
-    // Calculate progress steps
-    const getProgressSteps = () => {
-        const levels = Object.keys(VERIFICATION_LEVEL_CONFIG) as ValidKycLevel[];
-        const currentLevelIndex = levels.indexOf(userCurrentLevel as ValidKycLevel);
+        // Filter for approved KYC statuses only
+        const approvedKycs = kycStatusList.filter(kyc => kyc.status === 'APPROVED');
 
-        return levels.map((level, index) => ({
-            title: VERIFICATION_LEVEL_CONFIG[level].title,
-            status: index <= currentLevelIndex ? 'finish' : 'wait',
-            icon: VERIFICATION_LEVEL_CONFIG[level].icon
-        }));
-    };
+        if (approvedKycs.length === 0) {
+            // If no approved KYCs, return the most recent one (could be pending, etc.)
+            return kycStatusList.sort((a, b) =>
+                new Date(b.updatedAt || b.submittedAt || '').getTime() -
+                new Date(a.updatedAt || a.submittedAt || '').getTime()
+            )[0];
+        }
+
+        // Find the highest level approved KYC using getKycLevelValue
+        return approvedKycs.reduce((highest, current) => {
+            const currentLevelValue = getKycLevelValue(current.verificationLevel);
+            const highestLevelValue = getKycLevelValue(highest.verificationLevel);
+            return currentLevelValue > highestLevelValue ? current : highest;
+        });
+    }, [kycStatusList]);
+
+    const userCurrentLevel: KycLevelWithNone = userCurrentKyc?.verificationLevel as KycLevelWithNone || 'NONE';
+    const userCurrentStatus = userCurrentKyc?.status || 'NOT_STARTED';
 
     // Dynamic component renderer based on verification level
     const renderVerificationComponent = () => {
@@ -492,7 +565,7 @@ const KycPageContent: React.FC = () => {
     }
 
     const handleLevelSelection = (level: ValidKycLevel) => {
-        const levelStatus = getLevelStatus(level, userCurrentLevel, userCurrentStatus);
+        const levelStatus = getLevelStatus(level, kycStatusList);
         if (levelStatus !== 'locked') {
             setSearchParams({ level });
         }
@@ -557,11 +630,23 @@ const KycPageContent: React.FC = () => {
 
     const loadKycStatus = async () => {
         try {
-            const kycStatus = await kycService.getStatus();
+            const kycStatus = await kycService.getStatusPerLevel();
             console.log('KycPage::loadStatus => kycStatus:', kycStatus);
-            setKycStatus(kycStatus);
+
+            // FIXED: Ensure we always set an array
+            if (Array.isArray(kycStatus)) {
+                setKycStatusList(kycStatus);
+            } else if (kycStatus && typeof kycStatus === 'object') {
+                // If single object returned, wrap in array
+                setKycStatusList([kycStatus as KycStatus]);
+            } else {
+                setKycStatusList([]);
+            }
         } catch (error) {
             console.error('Error loading KYC status:', error);
+            // FIXED: Set empty array on error instead of leaving it null
+            setKycStatusList([]);
+            message.error('Failed to load verification status. Please refresh the page.');
         }
     };
 
@@ -739,7 +824,7 @@ const KycPageContent: React.FC = () => {
 
                                         <div style={{ padding: '32px' }}>
                                             {/* Progress Steps */}
-                                            {kycStatus && kycStatus.status !== 'NOT_STARTED' && (
+                                            {kycStatusList && userCurrentStatus !== 'NOT_STARTED' && (
                                                 <motion.div
                                                     initial={{ opacity: 0, y: 20 }}
                                                     animate={{ opacity: 1, y: 0 }}
@@ -749,13 +834,13 @@ const KycPageContent: React.FC = () => {
                                                     <Card
                                                         size="small"
                                                         style={{
-                                                            background: kycStatus.status === 'APPROVED'
+                                                            background: userCurrentStatus === 'APPROVED'
                                                                 ? 'linear-gradient(135deg, #f6ffed 0%, #d9f7be 100%)'
-                                                                : kycStatus.status === 'PENDING'
+                                                                : userCurrentStatus === 'PENDING'
                                                                     ? 'linear-gradient(135deg, #fff7e6 0%, #ffd591 100%)'
                                                                     : 'linear-gradient(135deg, #fff2f0 0%, #ffccc7 100%)',
-                                                            border: `1px solid ${kycStatus.status === 'APPROVED' ? '#b7eb8f' :
-                                                                    kycStatus.status === 'PENDING' ? '#ffd591' : '#ffccc7'
+                                                            border: `1px solid ${userCurrentStatus === 'APPROVED' ? '#b7eb8f' :
+                                                                userCurrentStatus === 'PENDING' ? '#ffd591' : '#ffccc7'
                                                                 }`,
                                                             borderRadius: '12px'
                                                         }}
@@ -763,26 +848,26 @@ const KycPageContent: React.FC = () => {
                                                         <Row align="middle" gutter={16}>
                                                             <Col>
                                                                 <div style={{
-                                                                    background: kycStatus.status === 'APPROVED' ? '#52c41a' :
-                                                                        kycStatus.status === 'PENDING' ? '#faad14' : '#ff4d4f',
+                                                                    background: userCurrentStatus === 'APPROVED' ? '#52c41a' :
+                                                                        userCurrentStatus === 'PENDING' ? '#faad14' : '#ff4d4f',
                                                                     padding: '8px',
                                                                     borderRadius: '8px',
                                                                     color: 'white'
                                                                 }}>
-                                                                    {kycStatus.status === 'APPROVED' ? <CheckCircleOutlined /> :
-                                                                        kycStatus.status === 'PENDING' ? <ClockCircleOutlined /> :
+                                                                    {userCurrentStatus === 'APPROVED' ? <CheckCircleOutlined /> :
+                                                                        userCurrentStatus === 'PENDING' ? <ClockCircleOutlined /> :
                                                                             <SafetyOutlined />}
                                                                 </div>
                                                             </Col>
                                                             <Col flex={1}>
                                                                 <Text strong style={{ fontSize: '16px' }}>
-                                                                    Current Status: {kycStatus.status} ({userCurrentLevel} Level)
+                                                                    Current Status: {userCurrentStatus} ({userCurrentLevel} Level)
                                                                 </Text>
                                                                 <br />
                                                                 <Text type="secondary" style={{ fontSize: '14px' }}>
-                                                                    {kycStatus.status === 'APPROVED'
+                                                                    {userCurrentStatus === 'APPROVED'
                                                                         ? 'Your verification is complete! Upgrade to unlock more benefits.'
-                                                                        : kycStatus.status === 'PENDING'
+                                                                        : userCurrentStatus === 'PENDING'
                                                                             ? 'Your verification is being reviewed. You can start a higher level in the meantime.'
                                                                             : 'Continue your verification or try a higher level.'
                                                                     }
@@ -830,7 +915,7 @@ const KycPageContent: React.FC = () => {
                                                 {(Object.entries(VERIFICATION_LEVEL_CONFIG) as [ValidKycLevel, typeof VERIFICATION_LEVEL_CONFIG[ValidKycLevel]][])
                                                     .sort(([, a], [, b]) => a.order - b.order)
                                                     .map(([levelKey, config], index) => {
-                                                        const status = getLevelStatus(levelKey, userCurrentLevel, userCurrentStatus);
+                                                        const status = getLevelStatus(levelKey, kycStatusList);
                                                         return (
                                                             <KycLevelCard
                                                                 key={levelKey}
@@ -861,7 +946,7 @@ const KycPageContent: React.FC = () => {
                                                 </Col>
                                                 <Col>
                                                     <Space>
-                                                        {kycStatus && kycStatus.status !== 'NOT_STARTED' && (
+                                                        {kycStatusList && userCurrentStatus !== 'NOT_STARTED' && (
                                                             <Button
                                                                 size="large"
                                                                 onClick={loadKycStatus}
@@ -876,7 +961,7 @@ const KycPageContent: React.FC = () => {
                                                             size="large"
                                                             loading={sessionCreating}
                                                             onClick={() => handleStartVerification(selectedLevel)}
-                                                            disabled={getLevelStatus(selectedLevel, userCurrentLevel, userCurrentStatus) === 'locked'}
+                                                            disabled={getLevelStatus(selectedLevel, kycStatusList) === 'locked'}
                                                             style={{
                                                                 background: 'linear-gradient(135deg, #1890ff 0%, #722ed1 100%)',
                                                                 border: 'none',
@@ -1069,12 +1154,12 @@ const KycPageContent: React.FC = () => {
 
 const KycPage: React.FC = () => {
     return (
-        <>
+        <ErrorBoundry>
             <Navbar />
             <div className="relative">
                 <KycPageContent />
             </div>
-        </>
+        </ErrorBoundry>
     );
 };
 

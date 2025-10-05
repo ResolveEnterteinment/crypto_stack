@@ -1,4 +1,5 @@
 ﻿using Domain.Constants;
+using System.Text.Json.Serialization;
 
 namespace Domain.DTOs.Error
 {
@@ -10,21 +11,26 @@ namespace Domain.DTOs.Error
         /// <summary>
         /// Human-readable error message
         /// </summary>
+        [JsonPropertyName("message")]
         public string Message { get; set; }
 
         /// <summary>
         /// Machine-readable error code
         /// </summary>
+        [JsonPropertyName("code")]
         public string Code { get; set; }
 
         /// <summary>
         /// Validation errors (if applicable)
         /// </summary>
-        public Dictionary<string, string[]> ValidationErrors { get; set; }
+        [JsonPropertyName("validationErrors")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public Dictionary<string, string[]>? ValidationErrors { get; set; }
 
         /// <summary>
         /// Correlation ID for tracing the error in logs
         /// </summary>
+        [JsonPropertyName("traceId")]
         public string TraceId { get; set; }
     }
 
@@ -39,7 +45,9 @@ namespace Domain.DTOs.Error
         public string ErrorMessage { get; private set; }
         public string ErrorCode { get; private set; }
         public FailureReason Reason { get; private set; }
-        public Dictionary<string, string[]> ValidationErrors { get; private set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public Dictionary<string, string[]>? ValidationErrors { get; private set; }
 
         private EnhancedResultWrapper() { }
 
@@ -57,7 +65,7 @@ namespace Domain.DTOs.Error
             FailureReason reason,
             string errorMessage,
             string errorCode = null,
-            Dictionary<string, string[]> validationErrors = null)
+            Dictionary<string, string[]>? validationErrors = null)
         {
             return new EnhancedResultWrapper<T>
             {
@@ -65,7 +73,7 @@ namespace Domain.DTOs.Error
                 ErrorMessage = errorMessage,
                 ErrorCode = errorCode ?? reason.ToString(),
                 Reason = reason,
-                ValidationErrors = validationErrors
+                ValidationErrors = validationErrors // Can be null
             };
         }
 

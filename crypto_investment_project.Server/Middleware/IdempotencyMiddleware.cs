@@ -1,17 +1,13 @@
+﻿using Application.Interfaces;
+using Domain.Settings;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 using System.Diagnostics;
-using System.IO;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Application.Interfaces;
-using Domain.DTOs;
-using Domain.Settings;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace crypto_investment_project.Server.Middleware
 {
@@ -89,116 +85,62 @@ namespace crypto_investment_project.Server.Middleware
 
             // Add correlation for tracing
             var correlationId = Activity.Current?.Id ?? context.TraceIdentifier;
-            using (_logger.BeginScope(new Dictionary<string, object>
+
+            try
             {
-                ["IdempotencyKey"] = idempotencyKey,
-                ["CorrelationId"] = correlationId,
-                ["UserId"] = context.User?.FindFirstValue(ClaimTypes.NameIdentifier)
-            }))
-            {
-                try
+                // Update metrics if enabled
+                if (_settings.EnableMetrics)
                 {
-                    // Update metrics if enabled
+                    _metrics.IncrementTotalRequests();
+                }
+
+                // Check for in-flight request (prevents race conditions)
+                var lockKey = $"lock:{idempotencyKey}";
+                if (!await AcquireLock(lockKey, context.RequestAborted))
+                {
                     if (_settings.EnableMetrics)
                     {
-                        _metrics.IncrementTotalRequests();
+                        _metrics.IncrementLockContentions();
                     }
 
-                    // Check for in-flight request (prevents race conditions)
-                    var lockKey = $"lock:{idempotencyKey}";
-                    if (!await AcquireLock(lockKey, context.RequestAborted))
+                    _logger.LogWarning("Request already in progress for idempotency key: {Key}", idempotencyKey);
+                    await WriteErrorResponse(context, "Request already in progress", StatusCodes.Status409Conflict);
+                    return;
+                }
+
+                try
+                {
+                    // Check if this request was already processed
+                    var (exists, cachedResponse) = await idempotencyService.GetResultAsync<IdempotentResponse>(idempotencyKey);
+
+                    if (exists && cachedResponse != null)
                     {
                         if (_settings.EnableMetrics)
                         {
-                            _metrics.IncrementLockContentions();
+                            _metrics.IncrementCacheHits();
                         }
 
-                        _logger.LogWarning("Request already in progress for idempotency key: {Key}", idempotencyKey);
-                        await WriteErrorResponse(context, "Request already in progress", StatusCodes.Status409Conflict);
+                        _logger.LogInformation("Returning cached response for idempotency key: {Key}", idempotencyKey);
+                        await WriteCachedResponse(context, cachedResponse);
                         return;
                     }
 
-                    try
+                    if (_settings.EnableMetrics)
                     {
-                        // Check if this request was already processed
-                        var (exists, cachedResponse) = await idempotencyService.GetResultAsync<IdempotentResponse>(idempotencyKey);
-
-                        if (exists && cachedResponse != null)
-                        {
-                            if (_settings.EnableMetrics)
-                            {
-                                _metrics.IncrementCacheHits();
-                            }
-
-                            _logger.LogInformation("Returning cached response for idempotency key: {Key}", idempotencyKey);
-                            await WriteCachedResponse(context, cachedResponse);
-                            return;
-                        }
-
-                        if (_settings.EnableMetrics)
-                        {
-                            _metrics.IncrementCacheMisses();
-                        }
-
-                        // Capture the original response body
-                        var originalBodyStream = context.Response.Body;
-                        using var responseBodyStream = new MemoryStream();
-                        context.Response.Body = responseBodyStream;
-
-                        // Process the request
-                        await _next(context);
-
-                        // Only cache successful responses or specific status codes
-                        if (_settings.ShouldCacheStatusCode(context.Response.StatusCode))
-                        {
-                            // Check response size before caching
-                            if (responseBodyStream.Length <= _settings.MaxResponseBodySize)
-                            {
-                                // Capture response for caching
-                                responseBodyStream.Seek(0, SeekOrigin.Begin);
-                                var responseBody = _settings.CacheResponseBody
-                                    ? await new StreamReader(responseBodyStream).ReadToEndAsync()
-                                    : null;
-                                responseBodyStream.Seek(0, SeekOrigin.Begin);
-
-                                var idempotentResponse = new IdempotentResponse
-                                {
-                                    StatusCode = context.Response.StatusCode,
-                                    Headers = context.Response.Headers.ToDictionary(h => h.Key, h => h.Value.ToString()),
-                                    Body = responseBody,
-                                    Timestamp = DateTime.UtcNow
-                                };
-
-                                // Store the response
-                                var expiration = _settings.GetExpirationForStatusCode(context.Response.StatusCode);
-                                await idempotencyService.StoreResultAsync(idempotencyKey, idempotentResponse, expiration);
-
-                                if (_settings.EnableDetailedLogging)
-                                {
-                                    _logger.LogInformation("Cached response for idempotency key: {Key}, StatusCode: {StatusCode}, Size: {Size} bytes",
-                                        idempotencyKey, context.Response.StatusCode, responseBodyStream.Length);
-                                }
-                            }
-                            else
-                            {
-                                _logger.LogWarning("Response body too large to cache. Size: {Size} bytes, Max: {MaxSize} bytes",
-                                    responseBodyStream.Length, _settings.MaxResponseBodySize);
-                            }
-                        }
-
-                        // Copy the response body back to the original stream
-                        await responseBodyStream.CopyToAsync(originalBodyStream);
+                        _metrics.IncrementCacheMisses();
                     }
-                    finally
-                    {
-                        ReleaseLock(lockKey);
-                    }
+
+                    await _next(context);
                 }
-                catch (Exception ex)
+                finally
                 {
-                    _logger.LogError(ex, "Error processing idempotent request with key: {Key}", idempotencyKey);
-                    throw;
+                    ReleaseLock(lockKey);
                 }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing idempotent request with key: {Key}", idempotencyKey);
+                throw;
             }
         }
 
@@ -323,7 +265,7 @@ namespace crypto_investment_project.Server.Middleware
         private async Task WriteErrorResponse(HttpContext context, string message, int statusCode)
         {
             context.Response.StatusCode = statusCode;
-            context.Response.ContentType = "application/json";
+            context.Response.ContentType = "application/json; charset=utf-8";
 
             object error;
 

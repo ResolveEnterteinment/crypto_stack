@@ -13,7 +13,7 @@ namespace Domain.DTOs
     public class ResultWrapper<T>
     {
         // Static cache for empty validation errors to reduce allocations
-        protected static readonly Dictionary<string, string[]> EmptyValidationErrors = new();
+        //protected static readonly Dictionary<string, string[]> EmptyValidationErrors = new();
 
         // Thread-safe cache for common result types
         private static readonly ConcurrentDictionary<string, ResultWrapper<T>> CommonResults = new();
@@ -115,7 +115,7 @@ namespace Domain.DTOs
                 ErrorMessage = errorMessage,
                 ErrorCode = errorCode ?? reason.ToString(),
                 Reason = reason,
-                ValidationErrors = validationErrors ?? EmptyValidationErrors,
+                ValidationErrors = validationErrors ?? null,
                 DebugInformation = debugInformation
             };
         }
@@ -628,7 +628,7 @@ namespace Domain.DTOs
                 ErrorMessage = errorMessage,
                 ErrorCode = errorCode ?? reason.ToString(),
                 Reason = reason,
-                ValidationErrors = validationErrors ?? EmptyValidationErrors,
+                ValidationErrors = validationErrors ?? null,
                 DebugInformation = debugInformation
             };
         }
@@ -668,7 +668,7 @@ namespace Domain.DTOs
                 ErrorMessage = errorMessage,
                 ErrorCode = errorCode ?? reason.ToString(),
                 Reason = reason,
-                ValidationErrors = validationErrors ?? EmptyValidationErrors,
+                ValidationErrors = validationErrors ?? null,
                 DebugInformation = debugInfo,
                 CorrelationId = Activity.Current?.Id ?? Guid.NewGuid().ToString()
             };
@@ -719,7 +719,7 @@ namespace Domain.DTOs
                 ErrorMessage = message,
                 ErrorCode = "VALIDATION_ERROR",
                 Reason = FailureReason.ValidationError,
-                ValidationErrors = errors ?? EmptyValidationErrors
+                ValidationErrors = errors ?? null
             };
         }
 

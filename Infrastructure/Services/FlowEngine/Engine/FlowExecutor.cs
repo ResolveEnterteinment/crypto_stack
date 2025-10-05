@@ -347,7 +347,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     try
                     {
                         var tasks = step.TriggeredFlows.Select(triggeredFlowData => TriggerFlow(flow.Context, triggeredFlowData, cancellationToken));
-                        Task.WhenAll(tasks);
+                        await Task.WhenAll(tasks);
                     }
                     catch (Exception ex)
                     {

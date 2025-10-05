@@ -100,11 +100,6 @@ namespace Domain.Settings
         public int DefaultExpirationMinutes { get; set; } = 15;
 
         /// <summary>
-        /// Whether to include response body in cached responses
-        /// </summary>
-        public bool CacheResponseBody { get; set; } = true;
-
-        /// <summary>
         /// Maximum response body size in bytes to cache (to prevent memory issues)
         /// </summary>
         [Range(1024, 10485760)] // 1KB to 10MB

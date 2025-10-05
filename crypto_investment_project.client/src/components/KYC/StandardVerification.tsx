@@ -16,6 +16,7 @@ import kycService from "../../services/kycService";
 import LiveDocumentCapture from './LiveDocumentCapture';
 import { DocumentCaptureData, DocumentUpload, LiveDocumentCaptureRequest, LiveSelfieCaptureRequest, SelfieCaptureData, DocumentType, StandardPersonalInfo, StandardVerificationData } from '../../types/kyc';
 import LiveSelfieCapture from './LiveSelfieCapture';
+import SecureFileValidator from '../../utils/SecureFileValidator';
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -184,6 +185,21 @@ const StandardVerification: React.FC<StandardVerificationProps> = ({
 
         try {
             setLoading(true);
+
+            // SECURE VALIDATION
+            const validation = await SecureFileValidator.validateFile(file as File);
+            if (!validation.valid) {
+                message.error(validation.reason || 'File validation failed');
+                onError?.(new Error(validation.reason));
+                return;
+            }
+
+            // Show warnings if any
+            if (validation.warnings) {
+                validation.warnings.forEach(warning => {
+                    message.warning(warning);
+                });
+            }
 
             // Validate file
             const isValid = await validateFile(file as File);

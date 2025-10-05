@@ -43,7 +43,9 @@ namespace Application.Extensions
             {
                 Message = result.ErrorMessage,
                 Code = result.ErrorCode ?? result.Reason.ToString(),
-                ValidationErrors = result.ValidationErrors,
+                ValidationErrors = result.ValidationErrors?.Count > 0
+                    ? result.ValidationErrors
+                    : null,
                 TraceId = controller.HttpContext.TraceIdentifier
             };
 
@@ -80,7 +82,9 @@ namespace Application.Extensions
             {
                 Message = result.ErrorMessage,
                 Code = result.ErrorCode ?? result.Reason.ToString(),
-                ValidationErrors = result.ValidationErrors,
+                ValidationErrors = result.ValidationErrors?.Count > 0
+                    ? result.ValidationErrors
+                    : null,
                 TraceId = controller.HttpContext.TraceIdentifier
             };
 

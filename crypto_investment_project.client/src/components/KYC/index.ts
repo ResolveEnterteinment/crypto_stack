@@ -117,6 +117,21 @@ export const getKycLevelValue = (level: string): number => {
     }
 };
 
+export const getKycLevelName = (level: number): string => {
+    switch (level) {
+        case 1:
+            return KYC_LEVELS.BASIC;
+        case 2:
+            return KYC_LEVELS.STANDARD;
+        case 3:
+            return KYC_LEVELS.ADVANCED;
+        case 4:
+            return KYC_LEVELS.ENHANCED;
+        default:
+            return KYC_LEVELS.NONE;
+    }
+};
+
 export const canUpgradeKycLevel = (currentLevel: string, targetLevel: string): boolean => {
     return getKycLevelValue(targetLevel) > getKycLevelValue(currentLevel);
 };

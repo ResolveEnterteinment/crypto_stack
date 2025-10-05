@@ -11,6 +11,8 @@ using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 using Serilog;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,7 +39,14 @@ builder.Services
     .ConfigureCorsPolicy(builder.Configuration)
     .AddSwaggerServices()
     .AddHostedServices(builder.Environment)
-    .AddFlowEngine(builder.Configuration);
+    .AddFlowEngine(builder.Configuration)
+    .AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+    });
 
 builder.Host.UseSerilog();
 
@@ -51,12 +60,20 @@ Console.WriteLine("🔧 Configuring middleware pipeline...");
 // Initialize default roles
 app.InitializeDefaultRoles();
 
-// Configure the HTTP request pipeline
-app.UseGlobalExceptionHandling();
+// ✅ CORS must be FIRST to ensure headers are set for all responses
+app.UseCors("AllowSpecifiedOrigins");
+Console.WriteLine("✅ CORS configured");
+
+// ✅ Configure tracing pipeline (before exception handling to capture all requests)
 app.UseTraceContext();
 app.UseActivityNaming();
 app.UseTraceUserEnrichment();
+
+// ✅ Exception handling AFTER tracing but BEFORE response writing
+app.UseGlobalExceptionHandling();
 app.UseTraceException();
+
+// ✅ Add trace IDs to response headers (runs after request processing)
 app.UseTraceIdResponse();
 
 // Static files and development tools
@@ -77,10 +94,6 @@ app.UseSecurityHeaders();
 
 // Add rate limiting
 app.UseRateLimiter();
-
-// Add CORS - IMPORTANT: Must be before authentication
-app.UseCors("AllowSpecifiedOrigins");
-Console.WriteLine("✅ CORS configured");
 
 // Configure antiforgery - IMPORTANT: Must be before authentication
 app.UseCustomAntiforgery();

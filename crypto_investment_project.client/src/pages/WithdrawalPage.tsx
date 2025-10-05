@@ -1,31 +1,32 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import ErrorBoundry from '../components/ErrorBoundary';
 import WithdrawalForm from '../components/Withdrawal/WithdrawalForm';
 import WithdrawalHistory from '../components/Withdrawal/WithdrawalHistory';
 import WithdrawalLimitsComponent from '../components/Withdrawal/WithdrawalLimitsComponent';
 import {
     Typography,
-    Tabs,
     message,
-    Row,
-    Col,
-    Card,
     Space,
+    Segmented,
 } from 'antd';
 import {
     WalletOutlined,
     HistoryOutlined,
-    InfoCircleOutlined,
+    BarChartOutlined,
+    SafetyOutlined,
 } from '@ant-design/icons';
 import Navbar from '../components/Navbar';
 import Layout, { Content } from 'antd/es/layout/layout';
 import ProtectedRoute from '../components/ProtectedRoute';
+import { KYC_LEVELS } from '../components/KYC';
+import './WithdrawalPage.css';
 
 const { Title, Text } = Typography;
 
 const WithdrawalPageContent: React.FC = () => {
     const { user } = useAuth();
-    const [activeTab, setActiveTab] = useState('1');
+    const [activeTab, setActiveTab] = useState<string>('withdraw');
     const [refreshHistory, setRefreshHistory] = useState<number>(0);
     const [refreshLimits, setRefreshLimits] = useState<number>(0);
 
@@ -39,140 +40,139 @@ const WithdrawalPageContent: React.FC = () => {
 
     const handleWithdrawalSuccess = () => {
         message.success('Withdrawal request submitted successfully');
-        setActiveTab('3'); // Switch to history tab
-        setRefreshHistory(prev => prev + 1); // Trigger history refresh
-        setRefreshLimits(prev => prev + 1); // Trigger limits refresh
+        setActiveTab('history');
+        setRefreshHistory(prev => prev + 1);
+        setRefreshLimits(prev => prev + 1);
     };
 
     const handleWithdrawalError = (error: string) => {
         message.error(error || 'Failed to submit withdrawal request');
-        //setRefreshHistory(prev => prev + 1); // Trigger history refresh
     };
 
     const handleWithdrawalCancelled = () => {
-        setRefreshHistory(prev => prev + 1); // Trigger history refresh
-        setRefreshLimits(prev => prev + 1); // Trigger limits refresh
+        setRefreshHistory(prev => prev + 1);
+        setRefreshLimits(prev => prev + 1);
     };
 
     if (!user) {
         return (
-            <Layout style={{ minHeight: '100vh', background: 'linear-gradient(to right, #f7fafc, #edf2f7)' }}>
-                <Content style={{ padding: '50px 20px' }}>
-                    <Card className="text-center">
-                        <Space direction="vertical" size="large">
-                            <WalletOutlined style={{ fontSize: '48px', color: '#1890ff' }} />
-                            <Title level={3}>Access Required</Title>
-                            <Text type="secondary">Please log in to access withdrawal functionality.</Text>
-                        </Space>
-                    </Card>
+            <Layout className="withdrawal-page-layout">
+                <Content className="withdrawal-content">
+                    <div className="access-required-card">
+                        <WalletOutlined className="access-icon" />
+                        <Title level={3}>Access Required</Title>
+                        <Text type="secondary">Please log in to access withdrawal functionality.</Text>
+                    </div>
                 </Content>
             </Layout>
         );
     }
 
-    // Enhanced tab items with better content organization
-    const tabItems = [
-        {
-            key: '1',
-            label: (
-                <Space>
-                    <WalletOutlined />
-                    <span>Withdraw Limits</span>
-                </Space>
-            ),
-            children: (
-                <WithdrawalLimitsComponent
-                    key={refreshLimits}
-                    userId={user.id}
-                    onSuccess={handleLimitsSuccess}
-                    onError={handleLimitsError}
-                />
-            )
-        },
-        {
-            key: '2',
-            label: (
-                <Space>
-                    <WalletOutlined />
-                    <span>Withdraw Funds</span>
-                </Space>
-            ),
-            children: (
-                <ProtectedRoute requiredKycLevel = "BASIC">
-                    <WithdrawalForm
+    const renderContent = () => {
+        switch (activeTab) {
+            case 'limits':
+                return (
+                    <WithdrawalLimitsComponent
+                        key={refreshLimits}
                         userId={user.id}
-                        onSuccess={handleWithdrawalSuccess}
-                        onError={handleWithdrawalError}
+                        onSuccess={handleLimitsSuccess}
+                        onError={handleLimitsError}
+                    />
+                );
+            case 'withdraw':
+                return (
+                    <ProtectedRoute requiredKycLevel={KYC_LEVELS.BASIC}>
+                        <WithdrawalForm
+                            userId={user.id}
+                            onSuccess={handleWithdrawalSuccess}
+                            onError={handleWithdrawalError}
                         />
-                </ProtectedRoute>
-            )
-        },
-        {
-            key: '3',
-            label: (
-                <Space>
-                    <HistoryOutlined />
-                    <span>Transaction History</span>
-                </Space>
-            ),
-            children: <WithdrawalHistory key={refreshHistory} onWithdrawalCancelled={handleWithdrawalCancelled} />
+                    </ProtectedRoute>
+                );
+            case 'history':
+                return (
+                    <WithdrawalHistory
+                        key={refreshHistory}
+                        onWithdrawalCancelled={handleWithdrawalCancelled}
+                    />
+                );
+            default:
+                return null;
         }
-    ];
+    };
 
     return (
-        <Layout style={{ minHeight: '100vh', background: 'linear-gradient(to right, #f7fafc, #edf2f7)' }}>
-            <Content className="max-w-7xl mx-auto" style={{ padding: '50px 20px' }}>
-                {/* Enhanced header */}
-                <div className="mb-6">
-                    <Space direction="vertical" size="small">
-                        <Title level={2} className="mb-0">
-                            <WalletOutlined className="mr-2" />
-                            Withdrawals
-                        </Title>
-                        <Text type="secondary">
-                            Manage your withdrawal requests and view transaction history
-                        </Text>
-                    </Space>
-                </div>
-
-                {/* Main content with improved spacing */}
-                <Card
-                    className="mb-6"
-                    bodyStyle={{ padding: 0 }}
-                    style={{
-                        borderRadius: '8px',
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
-                    }}
-                >
-                    <Tabs
-                        activeKey={activeTab}
-                        onChange={setActiveTab}
-                        type="card"
-                        size="large"
-                        items={tabItems}
-                        tabBarStyle={{
-                            margin: 0,
-                            padding: '0 24px',
-                            background: '#fafafa'
-                        }}
-                        tabBarGutter={0}
-                    />
-                </Card>
-
-                {/* Additional help section */}
-                <Card className="mt-6 bg-gray-50" size="small">
-                    <Row align="middle">
-                        <Col flex="auto">
-                            <Space>
-                                <InfoCircleOutlined style={{ color: '#1890ff' }} />
-                                <Text strong>Need Help?</Text>
-                                <Text type="secondary">
-                                    Contact support if you experience any issues with your withdrawal.
+        <Layout className="withdrawal-page-layout">
+            <Content className="withdrawal-content">
+                <div className="withdrawal-page-container">
+                    {/* Header */}
+                    <div className="withdrawal-header">
+                        <div className="header-content">
+                            <WalletOutlined className="header-icon" />
+                            <div>
+                                <Title level={2} className="header-title">Withdrawals</Title>
+                                <Text type="secondary" className="header-subtitle">
+                                    Manage your funds securely
                                 </Text>
-                            </Space>
-                        </Col>
-                    </Row>
-                </Card>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Tab Navigation - Apple-style Segmented Control */}
+                    <div className="tab-navigation">
+                        <Segmented
+                            value={activeTab}
+                            onChange={setActiveTab}
+                            size="large"
+                            options={[
+                                {
+                                    label: (
+                                        <div className="segment-option">
+                                            <BarChartOutlined />
+                                            <span>Limits</span>
+                                        </div>
+                                    ),
+                                    value: 'limits',
+                                },
+                                {
+                                    label: (
+                                        <div className="segment-option">
+                                            <WalletOutlined />
+                                            <span>Withdraw</span>
+                                        </div>
+                                    ),
+                                    value: 'withdraw',
+                                },
+                                {
+                                    label: (
+                                        <div className="segment-option">
+                                            <HistoryOutlined />
+                                            <span>History</span>
+                                        </div>
+                                    ),
+                                    value: 'history',
+                                },
+                            ]}
+                            block
+                        />
+                    </div>
+
+                    {/* Content Area */}
+                    <div className="tab-content">
+                        {renderContent()}
+                    </div>
+
+                    {/* Help Section */}
+                    <div className="help-section">
+                        <SafetyOutlined />
+                        <div className="help-text">
+                            <Text strong>Need Help?</Text>
+                            <Text type="secondary">
+                                Contact support if you experience any issues with your withdrawal.
+                            </Text>
+                        </div>
+                    </div>
+                </div>
             </Content>
         </Layout>
     );
@@ -180,13 +180,13 @@ const WithdrawalPageContent: React.FC = () => {
 
 const WithdrawalPage: React.FC = () => {
     return (
-        <>
+        <ErrorBoundry>
             <Navbar />
-            <div className="relative top-5">
+            <div className="page-wrapper">
                 <WithdrawalPageContent />
             </div>
-        </>
+        </ErrorBoundry>
     );
-}
+};
 
 export default WithdrawalPage;

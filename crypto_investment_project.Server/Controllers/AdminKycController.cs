@@ -38,6 +38,7 @@ namespace crypto_investment_project.Server.Controllers
         {
             var result = await _kycService.UpdateKycStatusAsync(
                     userId,
+                    request.VerificationLevel,
                     request.Status,
                     request.Comment);
 

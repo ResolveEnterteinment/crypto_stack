@@ -1,851 +1,649 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿// LandingPage.tsx - Apple-Inspired Elegant Design
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Layout,
-    Typography,
     Button,
+    Typography,
+    Space,
     Card,
     Row,
     Col,
     Statistic,
-    Steps,
-    Rate,
-    Carousel,
-    Collapse,
-    Space,
-    Tag,
-    Divider,
     Avatar,
-    List,
-    Progress,
+    Divider,
     Timeline,
-    Badge,
-    FloatButton,
-    Anchor,
-    ConfigProvider,
-    theme
+    Grid
 } from 'antd';
 import {
-    DollarOutlined,
-    TrophyOutlined,
-    SecurityScanOutlined,
-    ThunderboltOutlined,
+    RiseOutlined,
     SafetyOutlined,
+    ThunderboltOutlined,
     CheckCircleOutlined,
     ArrowRightOutlined,
-    PlayCircleOutlined,
-    StarFilled,
-    PhoneOutlined,
-    MailOutlined,
-    EnvironmentOutlined,
-    FacebookFilled,
-    TwitterOutlined,
-    LinkedinFilled,
-    InstagramOutlined,
-    RocketOutlined,
-    CheckOutlined,
-    BankOutlined,
-    ApiOutlined,
+    DollarOutlined,
     ClockCircleOutlined,
+    LineChartOutlined,
+    LockOutlined,
     TeamOutlined
 } from '@ant-design/icons';
-
-// Import enhanced components
-import HeroSection from "../components/LandingPage/HeroSection";
 import Navbar from '../components/LandingPage/Navbar';
+import '../components/LandingPage/LandingPage.css';
 
 const { Content, Footer } = Layout;
-const { Title, Paragraph, Text } = Typography;
-const { Panel } = Collapse;
+const { Title, Text, Paragraph } = Typography;
+const { useBreakpoint } = Grid;
 
-// Custom theme for professional appearance
-const customTheme = {
-    algorithm: theme.defaultAlgorithm,
-    token: {
-        colorPrimary: '#1890ff',
-        colorSuccess: '#52c41a',
-        colorWarning: '#faad14',
-        colorError: '#ff4d4f',
-        borderRadius: 8,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-    },
-};
-
-// Animation state
-const useCounter = (end: number, duration = 2000) => {
-    const [count, setCount] = useState(0);
-
-    useEffect(() => {
-        let startTime: number | null = null;
-        let animationFrame: number;
-
-        const step = (timestamp: number) => {
-            if (!startTime) startTime = timestamp;
-            const progress = Math.min((timestamp - startTime) / duration, 1);
-            setCount(Math.floor(progress * end));
-
-            if (progress < 1) {
-                animationFrame = requestAnimationFrame(step);
-            }
-        };
-
-        animationFrame = requestAnimationFrame(step);
-        return () => cancelAnimationFrame(animationFrame);
-    }, [end, duration]);
-
-    return count;
-};
-
-const LandingPageContent: React.FC = () => {
+const LandingPage: React.FC = () => {
     const navigate = useNavigate();
-    const [isLoading, setIsLoading] = useState(true);
+    const screens = useBreakpoint();
+    const [scrolled, setScrolled] = useState(false);
 
-    // Counters for stats section
-    const userCount = useCounter(15000);
-    const investedAmount = useCounter(25000000);
-    const cryptoCount = useCounter(32);
-
+    // Handle scroll effect for navbar
     useEffect(() => {
-        setIsLoading(false);
+        const handleScroll = () => {
+            setScrolled(window.scrollY > 50);
+        };
+        window.addEventListener('scroll', handleScroll);
+        return () => window.removeEventListener('scroll', handleScroll);
     }, []);
 
-    if (isLoading) {
-        return (
-            <div style={{
-                minHeight: '100vh',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-            }}>
-                <div style={{ textAlign: 'center' }}>
-                    <Progress
-                        type="circle"
-                        percent={100}
-                        status="active"
-                        strokeColor="#1890ff"
-                    />
-                    <Paragraph style={{ marginTop: 16 }}>Loading...</Paragraph>
-                </div>
-            </div>
-        );
-    }
-
-    // Stats data
-    const statsData = [
-        {
-            title: userCount.toLocaleString() + '+',
-            value: 'Active Investors',
-            icon: <TeamOutlined style={{ color: '#1890ff', fontSize: 32 }} />,
-            prefix: '',
-            suffix: '',
-            color: '#1890ff'
-        },
-        {
-            title: '$' + (investedAmount / 1000000).toFixed(1) + 'M+',
-            value: 'Total Invested',
-            icon: <DollarOutlined style={{ color: '#52c41a', fontSize: 32 }} />,
-            prefix: '',
-            suffix: '',
-            color: '#52c41a'
-        },
-        {
-            title: cryptoCount + '+',
-            value: 'Cryptocurrencies',
-            icon: <ApiOutlined style={{ color: '#722ed1', fontSize: 32 }} />,
-            prefix: '',
-            suffix: '',
-            color: '#722ed1'
-        },
-        {
-            title: '99.9%',
-            value: 'Uptime Guarantee',
-            icon: <SafetyOutlined style={{ color: '#fa8c16', fontSize: 32 }} />,
-            prefix: '',
-            suffix: '',
-            color: '#fa8c16'
+    // Smooth scroll to section
+    const scrollToSection = (id: string) => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
-    ];
-
-    // Features data
-    const featuresData = [
-        {
-            icon: <ThunderboltOutlined style={{ fontSize: 48, color: '#1890ff' }} />,
-            title: 'Automated Investments',
-            description: 'Set up recurring investments on your schedule. Daily, weekly, or monthly—you decide.',
-            badge: 'Popular'
-        },
-        {
-            icon: <TrophyOutlined style={{ fontSize: 48, color: '#52c41a' }} />,
-            title: 'Diversified Portfolio',
-            description: 'Spread your investment across multiple cryptocurrencies to balance risk and reward.',
-            badge: 'Recommended'
-        },
-        {
-            icon: <CheckOutlined style={{ fontSize: 48, color: '#722ed1' }} />,
-            title: 'Bank-Level Security',
-            description: 'Your investments are protected with military-grade encryption and strict security protocols.',
-            badge: 'Secure'
-        },
-        {
-            icon: <DollarOutlined style={{ fontSize: 48, color: '#13c2c2' }} />,
-            title: 'Low Fees',
-            description: 'Competitive pricing with transparent fee structure—no hidden costs or surprises.',
-            badge: 'Value'
-        },
-        {
-            icon: <SecurityScanOutlined style={{ fontSize: 48, color: '#fa8c16' }} />,
-            title: 'Regulated & Compliant',
-            description: 'We follow all regulatory requirements to ensure your investments are legitimate and protected.',
-            badge: 'Trusted'
-        },
-        {
-            icon: <ClockCircleOutlined style={{ fontSize: 48, color: '#eb2f96' }} />,
-            title: 'Instant Processing',
-            description: 'Your orders are executed immediately with optimized trade routing for the best prices.',
-            badge: 'Fast'
-        }
-    ];
-
-    // Steps data
-    const stepsData = [
-        {
-            title: 'Create Your Account',
-            description: 'Sign up in less than 2 minutes with just your email and basic information.',
-            icon: <Avatar size={64} style={{ backgroundColor: '#1890ff' }}>1</Avatar>
-        },
-        {
-            title: 'Set Investment Plan',
-            description: 'Choose your investment amount, frequency, and the cryptocurrencies you want to buy.',
-            icon: <Avatar size={64} style={{ backgroundColor: '#52c41a' }}>2</Avatar>
-        },
-        {
-            title: 'Watch Portfolio Grow',
-            description: 'We\'ll automatically execute your investment plan and you can track performance in real-time.',
-            icon: <Avatar size={64} style={{ backgroundColor: '#722ed1' }}>3</Avatar>
-        }
-    ];
-
-    // Testimonials data
-    const testimonialsData = [
-        {
-            name: 'Michael T.',
-            title: 'Software Engineer',
-            avatar: 'https://randomuser.me/api/portraits/men/1.jpg',
-            rating: 5,
-            comment: 'I\'ve tried many platforms, but this one makes investing in crypto truly effortless. The automated buys have consistently built my portfolio even during market dips.'
-        },
-        {
-            name: 'Sarah L.',
-            title: 'Marketing Director',
-            avatar: 'https://randomuser.me/api/portraits/women/2.jpg',
-            rating: 5,
-            comment: 'As someone new to crypto, I was intimidated by the complexity. This platform made it simple to start small and grow my investments over time.'
-        },
-        {
-            name: 'David R.',
-            title: 'Financial Analyst',
-            avatar: 'https://randomuser.me/api/portraits/men/3.jpg',
-            rating: 4,
-            comment: 'The diversification options are excellent. I\'ve been able to spread my risk across multiple cryptocurrencies while still focusing on the ones I believe in.'
-        },
-        {
-            name: 'Emily K.',
-            title: 'Small Business Owner',
-            avatar: 'https://randomuser.me/api/portraits/women/4.jpg',
-            rating: 5,
-            comment: 'Customer support is fantastic. When I had questions about my subscription, they responded quickly and resolved everything in minutes.'
-        }
-    ];
-
-    // FAQ data
-    const faqData = [
-        {
-            key: '1',
-            label: 'How do I get started?',
-            children: (
-                <Paragraph>
-                    Creating an account takes less than 2 minutes. Just click the Get Started button,
-                    enter your email, create a password, and you're ready to set up your first investment plan.
-                </Paragraph>
-            ),
-        },
-        {
-            key: '2',
-            label: 'What are the fees?',
-            children: (
-                <div>
-                    <Paragraph>
-                        We charge a simple 1% platform fee on each transaction, plus standard payment
-                        processing fees (2.9% + $0.30). There are no hidden charges or subscription fees.
-                    </Paragraph>
-                    <Timeline
-                        items={[
-                            { children: 'Platform Fee: 1% per transaction' },
-                            { children: 'Payment Processing: 2.9% + $0.30' },
-                            { children: 'No monthly or annual fees' },
-                            { children: 'No withdrawal fees' }
-                        ]}
-                    />
-                </div>
-            ),
-        },
-        {
-            key: '3',
-            label: 'How secure is my investment?',
-            children: (
-                <Paragraph>
-                    We use bank-level encryption and security measures to protect your data and investments.
-                    We never store your credit card information and all transactions are processed through
-                    secure, regulated channels.
-                </Paragraph>
-            ),
-        },
-        {
-            key: '4',
-            label: 'Can I withdraw my funds anytime?',
-            children: (
-                <Paragraph>
-                    Yes, you have full control over your portfolio. You can withdraw your crypto or sell
-                    it back to fiat currency at any time without penalties.
-                </Paragraph>
-            ),
-        },
-        {
-            key: '5',
-            label: 'Which cryptocurrencies can I invest in?',
-            children: (
-                <div>
-                    <Paragraph>
-                        We support over 30 cryptocurrencies including:
-                    </Paragraph>
-                    <Space wrap>
-                        <Tag color="blue">Bitcoin (BTC)</Tag>
-                        <Tag color="purple">Ethereum (ETH)</Tag>
-                        <Tag color="green">Solana (SOL)</Tag>
-                        <Tag color="orange">Cardano (ADA)</Tag>
-                        <Tag color="cyan">Polkadot (DOT)</Tag>
-                        <Tag color="gold">Chainlink (LINK)</Tag>
-                        <Text type="secondary">...and many more</Text>
-                    </Space>
-                </div>
-            ),
-        }
-    ];
+    };
 
     return (
-        <ConfigProvider theme={customTheme}>
-            <Layout style={{ minHeight: '100vh', backgroundColor: '#f0f2f5' }}>
-                {/* Hero Section */}
-                <HeroSection />
+        <Layout className="landing-page">
+            {/* Navigation */}
+            <Navbar transparent={!scrolled} />
 
-                <Content>
-                    {/* Stats Section */}
-                    <section style={{ padding: '80px 0', backgroundColor: '#fff' }}>
-                        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px' }}>
-                            <Row gutter={[32, 32]} justify="center">
-                                {statsData.map((stat, index) => (
-                                    <Col xs={24} sm={12} lg={6} key={index}>
-                                        <Card
-                                            hoverable
-                                            style={{
-                                                textAlign: 'center',
-                                                height: '100%',
-                                                border: 'none',
-                                                boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                                                borderRadius: 12
-                                            }}
-                                            bodyStyle={{ padding: '32px 24px' }}
-                                        >
-                                            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                                                {stat.icon}
-                                                <Statistic
-                                                    title={stat.value}
-                                                    value={stat.title}
-                                                    valueStyle={{
-                                                        color: stat.color,
-                                                        fontSize: '2.5rem',
-                                                        fontWeight: 'bold'
-                                                    }}
-                                                />
-                                            </Space>
-                                        </Card>
-                                    </Col>
-                                ))}
-                            </Row>
-                        </div>
-                    </section>
-
-                    {/* Features Section */}
-                    <section style={{ padding: '80px 0', backgroundColor: '#f0f2f5' }}>
-                        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px' }}>
-                            <div style={{ textAlign: 'center', marginBottom: 64 }}>
-                                <Title level={1} style={{ color: '#262626', marginBottom: 16 }}>
-                                    Why Choose Our Platform
-                                </Title>
-                                <Paragraph
-                                    style={{
-                                        fontSize: '1.2rem',
-                                        color: '#595959',
-                                        maxWidth: 600,
-                                        margin: '0 auto'
-                                    }}
-                                >
-                                    Investing in crypto shouldn't be complicated. Our platform makes it
-                                    simple, secure, and effective.
-                                </Paragraph>
-                            </div>
-
-                            <Row gutter={[32, 32]}>
-                                {featuresData.map((feature, index) => (
-                                    <Col xs={24} md={12} lg={8} key={index}>
-                                        <Badge.Ribbon text={feature.badge} color="blue">
-                                            <Card
-                                                hoverable
-                                                style={{
-                                                    height: '100%',
-                                                    borderRadius: 12,
-                                                    border: 'none',
-                                                    boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
-                                                }}
-                                                bodyStyle={{ padding: '32px 24px' }}
-                                            >
-                                                <Space direction="vertical" size="large" style={{ width: '100%' }}>
-                                                    <div style={{ textAlign: 'center' }}>
-                                                        {feature.icon}
-                                                    </div>
-                                                    <Title level={3} style={{ textAlign: 'center', marginBottom: 16 }}>
-                                                        {feature.title}
-                                                    </Title>
-                                                    <Paragraph style={{ textAlign: 'center', color: '#595959' }}>
-                                                        {feature.description}
-                                                    </Paragraph>
-                                                </Space>
-                                            </Card>
-                                        </Badge.Ribbon>
-                                    </Col>
-                                ))}
-                            </Row>
-                        </div>
-                    </section>
-
-                    {/* How It Works Section */}
-                    <section style={{ padding: '80px 0', backgroundColor: '#fff' }}>
-                        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px' }}>
-                            <div style={{ textAlign: 'center', marginBottom: 64 }}>
-                                <Title level={1} style={{ color: '#262626', marginBottom: 16 }}>
-                                    How It Works
-                                </Title>
-                                <Paragraph
-                                    style={{
-                                        fontSize: '1.2rem',
-                                        color: '#595959',
-                                        maxWidth: 600,
-                                        margin: '0 auto'
-                                    }}
-                                >
-                                    Get started in three simple steps
-                                </Paragraph>
-                            </div>
-
-                            <Row gutter={[48, 48]} align="middle">
-                                {stepsData.map((step, index) => (
-                                    <Col xs={24} lg={8} key={index}>
-                                        <Card
-                                            style={{
-                                                textAlign: 'center',
-                                                height: '100%',
-                                                borderRadius: 12,
-                                                border: 'none',
-                                                boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
-                                            }}
-                                            bodyStyle={{ padding: '40px 24px' }}
-                                        >
-                                            <Space direction="vertical" size="large" style={{ width: '100%' }}>
-                                                {step.icon}
-                                                <Title level={2} style={{ marginBottom: 16 }}>
-                                                    {step.title}
-                                                </Title>
-                                                <Paragraph style={{ color: '#595959', fontSize: '1rem' }}>
-                                                    {step.description}
-                                                </Paragraph>
-                                            </Space>
-                                        </Card>
-                                    </Col>
-                                ))}
-                            </Row>
-
-                            <div style={{ textAlign: 'center', marginTop: 48 }}>
-                                <Button
-                                    type="primary"
-                                    size="large"
-                                    icon={<RocketOutlined />}
-                                    onClick={() => navigate('/auth/register')}
-                                    style={{
-                                        height: 48,
-                                        borderRadius: 24,
-                                        paddingLeft: 32,
-                                        paddingRight: 32,
-                                        fontSize: '1.1rem'
-                                    }}
-                                >
-                                    Start Investing Today
-                                </Button>
-                            </div>
-                        </div>
-                    </section>
-
-                    {/* Testimonials Section */}
-                    <section style={{ padding: '80px 0', backgroundColor: '#f0f2f5' }}>
-                        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px' }}>
-                            <div style={{ textAlign: 'center', marginBottom: 64 }}>
-                                <Title level={1} style={{ color: '#262626', marginBottom: 16 }}>
-                                    What Our Users Say
-                                </Title>
-                                <Paragraph
-                                    style={{
-                                        fontSize: '1.2rem',
-                                        color: '#595959',
-                                        maxWidth: 600,
-                                        margin: '0 auto'
-                                    }}
-                                >
-                                    Join thousands of satisfied investors already growing their crypto portfolios
-                                </Paragraph>
-                            </div>
-
-                            <Carousel autoplay autoplaySpeed={4000} dots={{ className: 'custom-dots' }}>
-                                {testimonialsData.map((testimonial, index) => (
-                                    <div key={index}>
-                                        <Card
-                                            style={{
-                                                maxWidth: 800,
-                                                margin: '0 auto',
-                                                borderRadius: 12,
-                                                border: 'none',
-                                                boxShadow: '0 8px 24px rgba(0,0,0,0.1)'
-                                            }}
-                                            bodyStyle={{ padding: '48px 32px' }}
-                                        >
-                                            <div style={{ textAlign: 'center' }}>
-                                                <Avatar
-                                                    size={80}
-                                                    src={testimonial.avatar}
-                                                    style={{ marginBottom: 24 }}
-                                                />
-                                                <Rate disabled defaultValue={testimonial.rating} style={{ marginBottom: 24 }} />
-                                                <Paragraph
-                                                    style={{
-                                                        fontSize: '1.1rem',
-                                                        fontStyle: 'italic',
-                                                        color: '#595959',
-                                                        marginBottom: 24,
-                                                        lineHeight: 1.6
-                                                    }}
-                                                >
-                                                    "{testimonial.comment}"
-                                                </Paragraph>
-                                                <Title level={4} style={{ marginBottom: 4 }}>
-                                                    {testimonial.name}
-                                                </Title>
-                                                <Text type="secondary">{testimonial.title}</Text>
-                                            </div>
-                                        </Card>
-                                    </div>
-                                ))}
-                            </Carousel>
-                        </div>
-                    </section>
-
-                    {/* FAQ Section */}
-                    <section style={{ padding: '80px 0', backgroundColor: '#fff' }}>
-                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
-                            <div style={{ textAlign: 'center', marginBottom: 64 }}>
-                                <Title level={1} style={{ color: '#262626', marginBottom: 16 }}>
-                                    Frequently Asked Questions
-                                </Title>
-                                <Paragraph
-                                    style={{
-                                        fontSize: '1.2rem',
-                                        color: '#595959',
-                                        maxWidth: 600,
-                                        margin: '0 auto'
-                                    }}
-                                >
-                                    Got questions? We've got answers.
-                                </Paragraph>
-                            </div>
-
-                            <Collapse
-                                items={faqData}
-                                size="large"
-                                expandIconPosition="end"
-                                style={{
-                                    backgroundColor: 'transparent',
-                                    border: 'none'
-                                }}
-                            />
-
-                            <div style={{ textAlign: 'center', marginTop: 48 }}>
-                                <Title level={4} style={{ marginBottom: 24 }}>
-                                    Still have questions?
-                                </Title>
-                                <Button
-                                    type="primary"
-                                    size="large"
-                                    icon={<MailOutlined />}
-                                    onClick={() => navigate('/contact')}
-                                    style={{
-                                        height: 48,
-                                        borderRadius: 24,
-                                        paddingLeft: 32,
-                                        paddingRight: 32
-                                    }}
-                                >
-                                    Contact Support
-                                </Button>
-                            </div>
-                        </div>
-                    </section>
-
-                    {/* CTA Section */}
-                    <section style={{
-                        padding: '100px 0',
-                        background: 'linear-gradient(135deg, #1890ff 0%, #722ed1 100%)',
-                        color: '#fff'
-                    }}>
-                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px', textAlign: 'center' }}>
-                            <Title level={1} style={{ color: '#fff', marginBottom: 24 }}>
-                                Ready to Start Your Crypto Journey?
+            <Content>
+                {/* Hero Section - Apple-style minimalism */}
+                <section className="hero-section">
+                    <div className="hero-content">
+                        <div className="hero-text">
+                            <Title level={1} className="hero-title">
+                                Stop timing the market.
+                                <br />
+                                <span className="gradient-text">Start building wealth.</span>
                             </Title>
-                            <Paragraph
-                                style={{
-                                    fontSize: '1.3rem',
-                                    color: 'rgba(255,255,255,0.9)',
-                                    marginBottom: 48,
-                                    maxWidth: 600,
-                                    margin: '0 auto 48px auto'
-                                }}
-                            >
-                                Join thousands of investors who are already building their crypto portfolio the smart way.
+                            <Paragraph className="hero-description">
+                                The easiest way to build a diversified crypto portfolio automatically,
+                                with professional-grade tools and transparent pricing.
                             </Paragraph>
-
-                            <Space size="large" wrap>
+                            <Space size="large" className="hero-actions">
                                 <Button
                                     type="primary"
                                     size="large"
+                                    className="cta-button"
+                                    onClick={() => navigate('/signup')}
                                     icon={<ArrowRightOutlined />}
-                                    onClick={() => navigate('/auth/register')}
-                                    style={{
-                                        height: 56,
-                                        borderRadius: 28,
-                                        paddingLeft: 40,
-                                        paddingRight: 40,
-                                        fontSize: '1.2rem',
-                                        backgroundColor: '#fff',
-                                        borderColor: '#fff',
-                                        color: '#1890ff'
-                                    }}
+                                    iconPosition="end"
                                 >
-                                    Create Free Account
+                                    Get Started Free
                                 </Button>
                                 <Button
-                                    type="default"
                                     size="large"
-                                    icon={<PlayCircleOutlined />}
-                                    onClick={() => navigate('/pricing')}
-                                    style={{
-                                        height: 56,
-                                        borderRadius: 28,
-                                        paddingLeft: 40,
-                                        paddingRight: 40,
-                                        fontSize: '1.2rem',
-                                        backgroundColor: 'transparent',
-                                        borderColor: '#fff',
-                                        color: '#fff'
-                                    }}
+                                    className="secondary-button"
+                                    onClick={() => scrollToSection('how-it-works')}
                                 >
-                                    View Demo
+                                    See How It Works
                                 </Button>
                             </Space>
+                            <Text className="hero-note">
+                                <CheckCircleOutlined /> First month free · No credit card required
+                            </Text>
+                        </div>
 
-                            <div style={{ marginTop: 48 }}>
-                                <Row gutter={[32, 16]} justify="center">
-                                    <Col><CheckCircleOutlined /> No Credit Card Required</Col>
-                                    <Col><CheckCircleOutlined /> Start with $10</Col>
-                                    <Col><CheckCircleOutlined /> Cancel Anytime</Col>
-                                </Row>
+                        {/* Hero Visual - Floating Dashboard Preview */}
+                        <div className="hero-visual">
+                            <div className="dashboard-preview">
+                                <div className="preview-header">
+                                    <div className="preview-dots">
+                                        <span className="dot red"></span>
+                                        <span className="dot yellow"></span>
+                                        <span className="dot green"></span>
+                                    </div>
+                                    <Text className="preview-title">Your Portfolio</Text>
+                                </div>
+                                <div className="preview-content">
+                                    <Row gutter={16} style={{ marginBottom: 24 }}>
+                                        <Col span={12}>
+                                            <div className="stat-card">
+                                                <Text className="stat-label">Total Invested</Text>
+                                                <Title level={3} className="stat-value">$12,450</Title>
+                                            </div>
+                                        </Col>
+                                        <Col span={12}>
+                                            <div className="stat-card success">
+                                                <Text className="stat-label">Current Value</Text>
+                                                <Title level={3} className="stat-value">$13,892</Title>
+                                            </div>
+                                        </Col>
+                                    </Row>
+                                    <div className="chart-placeholder">
+                                        <div className="chart-line"></div>
+                                        <Text className="chart-label">+11.6% growth</Text>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </section>
-                </Content>
+                    </div>
+                </section>
 
-                {/* Footer */}
-                <Footer style={{ backgroundColor: '#001529', color: '#fff', padding: '60px 0' }}>
-                    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px' }}>
-                        <Row gutter={[48, 32]}>
-                            <Col xs={24} sm={12} lg={6}>
-                                <Space direction="vertical" size="large">
-                                    <div>
-                                        <Title level={3} style={{ color: '#fff', marginBottom: 16 }}>
-                                            CryptoInvest
-                                        </Title>
-                                        <Paragraph style={{ color: 'rgba(255,255,255,0.7)' }}>
-                                            Automated crypto investing for everyone. Build your portfolio
-                                            with confidence.
-                                        </Paragraph>
-                                    </div>
-                                    <Space size="middle">
-                                        <Button type="text" shape="circle" icon={<FacebookFilled />} style={{ color: '#fff' }} />
-                                        <Button type="text" shape="circle" icon={<TwitterOutlined />} style={{ color: '#fff' }} />
-                                        <Button type="text" shape="circle" icon={<LinkedinFilled />} style={{ color: '#fff' }} />
-                                        <Button type="text" shape="circle" icon={<InstagramOutlined />} style={{ color: '#fff' }} />
-                                    </Space>
-                                </Space>
-                            </Col>
-
-                            <Col xs={24} sm={12} lg={6}>
-                                <Title level={4} style={{ color: '#fff', marginBottom: 24 }}>
-                                    Quick Links
-                                </Title>
-                                <List
-                                    dataSource={[
-                                        { title: 'Features', link: '/features' },
-                                        { title: 'Pricing', link: '/pricing' },
-                                        { title: 'Learn', link: '/learn' },
-                                        { title: 'Blog', link: '/blog' }
-                                    ]}
-                                    renderItem={item => (
-                                        <List.Item style={{ border: 'none', padding: '8px 0' }}>
-                                            <Button
-                                                type="text"
-                                                onClick={() => navigate(item.link)}
-                                                style={{ color: 'rgba(255,255,255,0.7)', padding: 0 }}
-                                            >
-                                                {item.title}
-                                            </Button>
-                                        </List.Item>
-                                    )}
+                {/* Trust Indicators - Subtle but powerful */}
+                <section className="trust-section">
+                    <div className="container-narrow">
+                        <Row gutter={[48, 24]} justify="center" align="middle">
+                            <Col xs={12} md={6} className="trust-stat">
+                                <Statistic
+                                    value={99.9}
+                                    suffix="%"
+                                    valueStyle={{ fontSize: '32px', fontWeight: 600 }}
                                 />
+                                <Text className="trust-label">Uptime</Text>
                             </Col>
-
-                            <Col xs={24} sm={12} lg={6}>
-                                <Title level={4} style={{ color: '#fff', marginBottom: 24 }}>
-                                    Legal
-                                </Title>
-                                <List
-                                    dataSource={[
-                                        { title: 'Terms of Service', link: '/terms' },
-                                        { title: 'Privacy Policy', link: '/privacy' },
-                                        { title: 'Security', link: '/security' },
-                                        { title: 'Compliance', link: '/compliance' }
-                                    ]}
-                                    renderItem={item => (
-                                        <List.Item style={{ border: 'none', padding: '8px 0' }}>
-                                            <Button
-                                                type="text"
-                                                onClick={() => navigate(item.link)}
-                                                style={{ color: 'rgba(255,255,255,0.7)', padding: 0 }}
-                                            >
-                                                {item.title}
-                                            </Button>
-                                        </List.Item>
-                                    )}
+                            <Col xs={12} md={6} className="trust-stat">
+                                <Statistic
+                                    value={256}
+                                    suffix="-bit"
+                                    valueStyle={{ fontSize: '32px', fontWeight: 600 }}
                                 />
+                                <Text className="trust-label">Encryption</Text>
                             </Col>
-
-                            <Col xs={24} sm={12} lg={6}>
-                                <Title level={4} style={{ color: '#fff', marginBottom: 24 }}>
-                                    Contact
-                                </Title>
-                                <List
-                                    dataSource={[
-                                        { icon: <MailOutlined />, text: 'support@cryptoinvest.example' },
-                                        { icon: <PhoneOutlined />, text: '+1 (555) 123-4567' },
-                                        { icon: <EnvironmentOutlined />, text: '123 Crypto Street, San Francisco, CA 94105' }
-                                    ]}
-                                    renderItem={item => (
-                                        <List.Item style={{ border: 'none', padding: '8px 0' }}>
-                                            <Space>
-                                                <span style={{ color: '#1890ff' }}>{item.icon}</span>
-                                                <Text style={{ color: 'rgba(255,255,255,0.7)' }}>
-                                                    {item.text}
-                                                </Text>
-                                            </Space>
-                                        </List.Item>
-                                    )}
+                            <Col xs={12} md={6} className="trust-stat">
+                                <Statistic
+                                    prefix="$"
+                                    value={0}
+                                    valueStyle={{ fontSize: '32px', fontWeight: 600 }}
                                 />
+                                <Text className="trust-label">Hidden Fees</Text>
                             </Col>
-                        </Row>
-
-                        <Divider style={{ borderColor: 'rgba(255,255,255,0.2)', marginTop: 48, marginBottom: 24 }} />
-
-                        <Row justify="space-between" align="middle">
-                            <Col>
-                                <Text style={{ color: 'rgba(255,255,255,0.5)' }}>
-                                    © 2024 CryptoInvest. All rights reserved.
-                                </Text>
-                            </Col>
-                            <Col>
-                                <Space>
-                                    <BankOutlined style={{ color: 'rgba(255,255,255,0.5)' }} />
-                                    <Text style={{ color: 'rgba(255,255,255,0.5)' }}>
-                                        Regulated & Insured
-                                    </Text>
-                                </Space>
+                            <Col xs={12} md={6} className="trust-stat">
+                                <Statistic
+                                    value={24}
+                                    suffix="/7"
+                                    valueStyle={{ fontSize: '32px', fontWeight: 600 }}
+                                />
+                                <Text className="trust-label">Support</Text>
                             </Col>
                         </Row>
                     </div>
-                </Footer>
+                </section>
 
-                {/* Float Action Button */}
-                <FloatButton.Group shape="circle" style={{ right: 24 }}>
-                    <FloatButton
-                        icon={<PhoneOutlined />}
-                        tooltip="Contact Support"
-                        onClick={() => navigate('/contact')}
-                    />
-                    <FloatButton
-                        icon={<ArrowRightOutlined />}
-                        type="primary"
-                        tooltip="Get Started"
-                        onClick={() => navigate('/auth/register')}
-                    />
-                </FloatButton.Group>
-            </Layout>
+                {/* Value Proposition - 3 Core Benefits */}
+                <section className="benefits-section" id="benefits">
+                    <div className="container">
+                        <div className="section-header">
+                            <Title level={2} className="section-title">
+                                Built for serious investors.
+                                <br />
+                                <span className="text-secondary">Designed for everyone.</span>
+                            </Title>
+                        </div>
 
-            {/* Custom Styles */}
-            <style dangerouslySetInnerHTML={{
-                __html: `
-                    .custom-dots .slick-dots li button {
-                        background: rgba(24, 144, 255, 0.3);
-                    }
-                    .custom-dots .slick-dots li.slick-active button {
-                        background: #1890ff;
-                    }
-                    .ant-carousel .slick-slide {
-                        text-align: center;
-                        height: auto;
-                        padding: 0 16px;
-                    }
-                    .ant-float-btn-group .ant-float-btn {
-                        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
-                    }
-                    .ant-card:hover {
-                        transform: translateY(-4px);
-                        transition: all 0.3s ease;
-                    }
-                `
-            }} />
-        </ConfigProvider>
-    );
-};
+                        <Row gutter={[48, 48]} className="benefits-grid">
+                            <Col xs={24} md={8}>
+                                <div className="benefit-card">
+                                    <div className="benefit-icon">
+                                        <LineChartOutlined />
+                                    </div>
+                                    <Title level={3} className="benefit-title">
+                                        Smart Allocation
+                                    </Title>
+                                    <Paragraph className="benefit-description">
+                                        Set your portfolio allocation once. We automatically rebalance
+                                        and execute purchases according to your strategy. Not just
+                                        recurring buys—intelligent portfolio management.
+                                    </Paragraph>
+                                    <div className="benefit-highlight">
+                                        <CheckCircleOutlined /> Portfolio-level control
+                                        <br />
+                                        <CheckCircleOutlined /> Automatic rebalancing
+                                    </div>
+                                </div>
+                            </Col>
 
-const LandingPage: React.FC = () => {
-    return (
-        <>
-            <Navbar />
-            <LandingPageContent />
-        </>
+                            <Col xs={24} md={8}>
+                                <div className="benefit-card">
+                                    <div className="benefit-icon">
+                                        <ThunderboltOutlined />
+                                    </div>
+                                    <Title level={3} className="benefit-title">
+                                        True Automation
+                                    </Title>
+                                    <Paragraph className="benefit-description">
+                                        Your crypto autopilot. Set it once, never think about it again.
+                                        Our enterprise-grade flow engine handles edge cases, retries
+                                        failed transactions, and ensures zero missed purchases.
+                                    </Paragraph>
+                                    <div className="benefit-highlight">
+                                        <CheckCircleOutlined /> Never miss a purchase
+                                        <br />
+                                        <CheckCircleOutlined /> Works with any exchange
+                                    </div>
+                                </div>
+                            </Col>
+
+                            <Col xs={24} md={8}>
+                                <div className="benefit-card">
+                                    <div className="benefit-icon">
+                                        <SafetyOutlined />
+                                    </div>
+                                    <Title level={3} className="benefit-title">
+                                        Total Transparency
+                                    </Title>
+                                    <Paragraph className="benefit-description">
+                                        Real-time dashboard shows exactly where your money goes.
+                                        Track every transaction, monitor performance, see all fees.
+                                        No surprises, no hidden costs, no duplicate charges.
+                                    </Paragraph>
+                                    <div className="benefit-highlight">
+                                        <CheckCircleOutlined /> Real-time tracking
+                                        <br />
+                                        <CheckCircleOutlined /> Complete transparency
+                                    </div>
+                                </div>
+                            </Col>
+                        </Row>
+                    </div>
+                </section>
+
+                {/* How It Works - Simple 3-step process */}
+                <section className="how-it-works-section" id="how-it-works">
+                    <div className="container-narrow">
+                        <div className="section-header">
+                            <Title level={2} className="section-title">
+                                Get started in minutes.
+                            </Title>
+                            <Paragraph className="section-description">
+                                No complex forms. No confusing interfaces. Just simple, elegant automation.
+                            </Paragraph>
+                        </div>
+
+                        <div className="steps-container">
+                            <div className="step-item">
+                                <div className="step-number">1</div>
+                                <div className="step-content">
+                                    <Title level={4}>Create Your Account</Title>
+                                    <Paragraph>
+                                        Sign up with your email. Quick identity verification for security.
+                                        Takes less than 2 minutes.
+                                    </Paragraph>
+                                </div>
+                            </div>
+
+                            <div className="step-divider"></div>
+
+                            <div className="step-item">
+                                <div className="step-number">2</div>
+                                <div className="step-content">
+                                    <Title level={4}>Set Your Strategy</Title>
+                                    <Paragraph>
+                                        Choose investment amount, frequency, and asset allocation.
+                                        Customize your portfolio or use our smart defaults.
+                                    </Paragraph>
+                                </div>
+                            </div>
+
+                            <div className="step-divider"></div>
+
+                            <div className="step-item">
+                                <div className="step-number">3</div>
+                                <div className="step-content">
+                                    <Title level={4}>Watch It Grow</Title>
+                                    <Paragraph>
+                                        We handle the rest. Track performance in your dashboard.
+                                        Adjust anytime. Cancel anytime. Full control.
+                                    </Paragraph>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style={{ textAlign: 'center', marginTop: 64 }}>
+                            <Button
+                                type="primary"
+                                size="large"
+                                className="cta-button"
+                                onClick={() => navigate('/signup')}
+                                icon={<ArrowRightOutlined />}
+                                iconPosition="end"
+                            >
+                                Start Your First Investment
+                            </Button>
+                        </div>
+                    </div>
+                </section>
+
+                {/* Why Choose Us - Competitive Advantages */}
+                <section className="why-choose-section">
+                    <div className="container">
+                        <div className="section-header">
+                            <Title level={2} className="section-title">
+                                Why choose us?
+                            </Title>
+                        </div>
+
+                        <Row gutter={[32, 32]}>
+                            <Col xs={24} md={12}>
+                                <div className="feature-item">
+                                    <DollarOutlined className="feature-icon" />
+                                    <div className="feature-content">
+                                        <Title level={4}>Fair, Transparent Pricing</Title>
+                                        <Paragraph>
+                                            Just 1% platform fee. No hidden charges. No monthly subscriptions.
+                                            You see exactly what you pay before every transaction.
+                                        </Paragraph>
+                                    </div>
+                                </div>
+                            </Col>
+
+                            <Col xs={24} md={12}>
+                                <div className="feature-item">
+                                    <LockOutlined className="feature-icon" />
+                                    <div className="feature-content">
+                                        <Title level={4}>Bank-Level Security</Title>
+                                        <Paragraph>
+                                            256-bit encryption. Secure KYC verification. Never store your
+                                            credit card. Compliant with all financial regulations.
+                                        </Paragraph>
+                                    </div>
+                                </div>
+                            </Col>
+
+                            <Col xs={24} md={12}>
+                                <div className="feature-item">
+                                    <ThunderboltOutlined className="feature-icon" />
+                                    <div className="feature-content">
+                                        <Title level={4}>Enterprise-Grade Reliability</Title>
+                                        <Paragraph>
+                                            99.9% uptime. Automatic retry on failures. Idempotency
+                                            protection prevents duplicate charges. Never miss a purchase.
+                                        </Paragraph>
+                                    </div>
+                                </div>
+                            </Col>
+
+                            <Col xs={24} md={12}>
+                                <div className="feature-item">
+                                    <TeamOutlined className="feature-icon" />
+                                    <div className="feature-content">
+                                        <Title level={4}>Dedicated Support</Title>
+                                        <Paragraph>
+                                            Real humans, real fast. Email support within 2 hours.
+                                            Comprehensive knowledge base. Active community forum.
+                                        </Paragraph>
+                                    </div>
+                                </div>
+                            </Col>
+                        </Row>
+                    </div>
+                </section>
+
+                {/* Social Proof - Simple testimonial */}
+                <section className="testimonial-section">
+                    <div className="container-narrow">
+                        <div className="testimonial-card">
+                            <div className="quote-mark">"</div>
+                            <Paragraph className="testimonial-text">
+                                I've tried every DCA platform. This one actually gets it right.
+                                The portfolio allocation feature is genius—I can rebalance
+                                my entire strategy in seconds. And the dashboard is beautiful.
+                            </Paragraph>
+                            <div className="testimonial-author">
+                                <Avatar size={56} style={{ backgroundColor: '#1890ff' }}>
+                                    MK
+                                </Avatar>
+                                <div>
+                                    <Text strong className="author-name">Michael K.</Text>
+                                    <br />
+                                    <Text className="author-title">Software Engineer, Early Adopter</Text>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                {/* Pricing - Crystal clear */}
+                <section className="pricing-section" id="pricing">
+                    <div className="container-narrow">
+                        <div className="section-header">
+                            <Title level={2} className="section-title">
+                                Simple, transparent pricing.
+                            </Title>
+                            <Paragraph className="section-description">
+                                No hidden fees. No surprises. Just honest pricing.
+                            </Paragraph>
+                        </div>
+
+                        <div className="pricing-card">
+                            <div className="pricing-header">
+                                <Title level={1} className="pricing-rate">1%</Title>
+                                <Text className="pricing-label">platform fee per transaction</Text>
+                            </div>
+
+                            <Divider />
+
+                            <div className="pricing-breakdown">
+                                <Timeline
+                                    items={[
+                                        {
+                                            dot: <CheckCircleOutlined style={{ fontSize: 16 }} />,
+                                            children: (
+                                                <>
+                                                    <Text strong>Platform Fee: 1%</Text>
+                                                    <br />
+                                                    <Text type="secondary">Applied to each investment</Text>
+                                                </>
+                                            )
+                                        },
+                                        {
+                                            dot: <CheckCircleOutlined style={{ fontSize: 16 }} />,
+                                            children: (
+                                                <>
+                                                    <Text strong>Payment Processing: 2.9% + $0.30</Text>
+                                                    <br />
+                                                    <Text type="secondary">Standard Stripe fees (pass-through)</Text>
+                                                </>
+                                            )
+                                        },
+                                        {
+                                            dot: <CheckCircleOutlined style={{ fontSize: 16 }} />,
+                                            children: (
+                                                <>
+                                                    <Text strong>Everything Else: $0</Text>
+                                                    <br />
+                                                    <Text type="secondary">No monthly fees · No withdrawal fees</Text>
+                                                </>
+                                            )
+                                        }
+                                    ]}
+                                />
+                            </div>
+
+                            <div className="pricing-example">
+                                <Text className="example-label">Example: $100 investment</Text>
+                                <div className="example-breakdown">
+                                    <div className="breakdown-row">
+                                        <Text>Your investment</Text>
+                                        <Text strong>$100.00</Text>
+                                    </div>
+                                    <div className="breakdown-row">
+                                        <Text type="secondary">Platform fee (1%)</Text>
+                                        <Text type="secondary">-$1.00</Text>
+                                    </div>
+                                    <div className="breakdown-row">
+                                        <Text type="secondary">Payment processing</Text>
+                                        <Text type="secondary">-$3.20</Text>
+                                    </div>
+                                    <Divider style={{ margin: '8px 0' }} />
+                                    <div className="breakdown-row">
+                                        <Text strong>Net invested in crypto</Text>
+                                        <Text strong style={{ color: '#52c41a', fontSize: '18px' }}>
+                                            $95.80
+                                        </Text>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <Button
+                                type="primary"
+                                size="large"
+                                block
+                                className="pricing-cta"
+                                onClick={() => navigate('/signup')}
+                            >
+                                Start Investing Now
+                            </Button>
+                        </div>
+                    </div>
+                </section>
+
+                {/* FAQ - Education */}
+                <section className="faq-section" id="faq">
+                    <div className="container-narrow">
+                        <div className="section-header">
+                            <Title level={2} className="section-title">
+                                Common questions.
+                            </Title>
+                        </div>
+
+                        <div className="faq-list">
+                            <div className="faq-item">
+                                <Title level={4} className="faq-question">
+                                    What is Dollar-Cost Averaging (DCA)?
+                                </Title>
+                                <Paragraph className="faq-answer">
+                                    DCA is an investment strategy where you invest a fixed amount
+                                    at regular intervals, regardless of price. This removes emotion
+                                    from investing and reduces the impact of volatility. Instead of
+                                    trying to time the market (which experts struggle with), you build
+                                    your position steadily over time.
+                                </Paragraph>
+                            </div>
+
+                            <div className="faq-item">
+                                <Title level={4} className="faq-question">
+                                    How is this different from Coinbase recurring buys?
+                                </Title>
+                                <Paragraph className="faq-answer">
+                                    Coinbase offers simple recurring purchases. We offer portfolio-level
+                                    allocation and automatic rebalancing. You set percentage allocations
+                                    (e.g., 50% BTC, 30% ETH, 20% SOL), and we maintain that balance with
+                                    each purchase. Plus, we work with any exchange, not just Coinbase.
+                                </Paragraph>
+                            </div>
+
+                            <div className="faq-item">
+                                <Title level={4} className="faq-question">
+                                    Is my money safe?
+                                </Title>
+                                <Paragraph className="faq-answer">
+                                    Yes. We use bank-level 256-bit encryption, never store your credit
+                                    card information, and follow all financial regulations. Your crypto
+                                    is purchased on regulated exchanges and can be withdrawn anytime.
+                                    We're fully KYC-compliant and transparent about all operations.
+                                </Paragraph>
+                            </div>
+
+                            <div className="faq-item">
+                                <Title level={4} className="faq-question">
+                                    Can I cancel anytime?
+                                </Title>
+                                <Paragraph className="faq-answer">
+                                    Absolutely. You have full control. Pause your subscription, change
+                                    your allocation, adjust your investment amount, or cancel completely
+                                    —all with one click. No penalties, no fees, no questions asked.
+                                </Paragraph>
+                            </div>
+
+                            <div className="faq-item">
+                                <Title level={4} className="faq-question">
+                                    What's the minimum investment?
+                                </Title>
+                                <Paragraph className="faq-answer">
+                                    Just $50. We want investing to be accessible to everyone. Start small,
+                                    grow as you're comfortable. Increase or decrease anytime.
+                                </Paragraph>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                {/* Final CTA - Strong, clear */}
+                <section className="final-cta-section">
+                    <div className="container-narrow">
+                        <div className="final-cta-content">
+                            <Title level={2} className="final-cta-title">
+                                Start building your crypto portfolio today.
+                            </Title>
+                            <Paragraph className="final-cta-description">
+                                Join investors who've discovered the easiest way to DCA into crypto.
+                            </Paragraph>
+                            <Button
+                                type="primary"
+                                size="large"
+                                className="cta-button"
+                                onClick={() => navigate('/signup')}
+                                icon={<ArrowRightOutlined />}
+                                iconPosition="end"
+                            >
+                                Get Started Free
+                            </Button>
+                            <Text className="final-cta-note">
+                                First month free · No credit card required · Cancel anytime
+                            </Text>
+                        </div>
+                    </div>
+                </section>
+            </Content>
+
+            {/* Footer - Clean, minimal */}
+            <Footer className="landing-footer">
+                <div className="container">
+                    <Row gutter={[48, 24]}>
+                        <Col xs={24} md={8}>
+                            <Title level={4} className="footer-brand">InvestEase</Title>
+                            <Paragraph className="footer-tagline">
+                                The smart way to build your crypto portfolio.
+                            </Paragraph>
+                        </Col>
+                        <Col xs={12} md={8}>
+                            <Title level={5}>Product</Title>
+                            <div className="footer-links">
+                                <a onClick={() => scrollToSection('benefits')}>Features</a>
+                                <a onClick={() => scrollToSection('pricing')}>Pricing</a>
+                                <a onClick={() => scrollToSection('how-it-works')}>How It Works</a>
+                                <a onClick={() => navigate('/signup')}>Get Started</a>
+                            </div>
+                        </Col>
+                        <Col xs={12} md={8}>
+                            <Title level={5}>Company</Title>
+                            <div className="footer-links">
+                                <a href="/about">About Us</a>
+                                <a href="/security">Security</a>
+                                <a href="/terms">Terms of Service</a>
+                                <a href="/privacy">Privacy Policy</a>
+                            </div>
+                        </Col>
+                    </Row>
+                    <Divider />
+                    <div className="footer-bottom">
+                        <Text className="footer-copyright">
+                            © 2025 InvestEase. All rights reserved.
+                        </Text>
+                        <Text className="footer-disclaimer">
+                            Cryptocurrency investments carry risk. Past performance is not indicative
+                            of future results. Invest responsibly.
+                        </Text>
+                    </div>
+                </div>
+            </Footer>
+        </Layout>
     );
 };
 
