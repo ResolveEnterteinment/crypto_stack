@@ -236,16 +236,16 @@ namespace Domain.Settings
 
             // Check excluded paths first
             if (ExcludedPaths.Any(excludedPath =>
-                normalizedPath.StartsWith(excludedPath.ToLowerInvariant())))
+                normalizedPath.StartsWith(excludedPath, StringComparison.InvariantCultureIgnoreCase)))
             {
                 return false;
             }
 
             // If included paths are specified, only process those
-            if (IncludedPaths.Any())
+            if (IncludedPaths.Count != 0)
             {
                 return IncludedPaths.Any(includedPath =>
-                    normalizedPath.StartsWith(includedPath.ToLowerInvariant()));
+                    normalizedPath.StartsWith(includedPath, StringComparison.InvariantCultureIgnoreCase));
             }
 
             // Process all non-excluded paths

@@ -1,15 +1,15 @@
 ﻿using Application.Contracts.Requests.Payment;
+using Application.Interfaces;
 using Application.Interfaces.Base;
-using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
+using Domain.Constants.Subscription;
 using Domain.DTOs.Subscription;
 using Domain.Events.Payment;
 using Domain.Exceptions;
 using Domain.Models.Payment;
 using Domain.Models.Subscription;
 using Infrastructure.Flows.Exchange;
-using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Microsoft.Extensions.Logging;
@@ -21,6 +21,7 @@ namespace Infrastructure.Flows.Payment
     {
         private readonly ISubscriptionService _subscriptionService;
         private readonly IPaymentService _paymentService;
+        private readonly IDashboardService _dashboardService;
         private readonly IEventService _eventService;
         private readonly ILogger<PaymentProcessingFlow> _logger;
 
@@ -28,22 +29,71 @@ namespace Infrastructure.Flows.Payment
             ILogger<PaymentProcessingFlow> logger,
             ISubscriptionService subscriptionService,
             IPaymentService paymentService,
+            IDashboardService dashboardService,
             IEventService eventService)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
+            _dashboardService = dashboardService ?? throw new ArgumentNullException(nameof(dashboardService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
         protected override void DefineSteps()
         {
-            _builder.Step("PreparePayment")
+            _builder.Step("ValidateInvoice")
                 .RequiresData<InvoiceRequest>("InvoiceRequest")
                 .Execute(async context =>
                 {
                     var invoice = context.GetData<InvoiceRequest>("InvoiceRequest");
 
                     ValidateInvoiceRequest(invoice);
+
+                    return StepResult.Success($"Invoice {invoice.Id} validated.");
+                })
+                .Build();
+
+            _builder.Step("SetSubscripitonStateToProcessingInvoice")
+                .After("ValidateInvoice")
+                .Execute(async context =>
+                {
+                    var invoice = context.GetData<InvoiceRequest>("InvoiceRequest");
+
+                    // Fetch subscription
+                    var subWr = await _subscriptionService.GetOneAsync(
+                        Builders<SubscriptionData>.Filter.Eq(s => s.Id, Guid.Parse(invoice.SubscriptionId)));
+
+                    if (subWr == null || !subWr.IsSuccess || subWr.Data == null)
+                        throw new SubscriptionFetchException($"Subscription with ID {invoice.SubscriptionId} not found");
+
+                    var subscription = subWr.Data;
+
+                    // Update our subscription with the active status
+                    var updatedFields = new Dictionary<string, object>
+                    {
+                        ["State"] = SubscriptionState.ProcessingInvoice
+                    };
+
+                    var updateResult = await _subscriptionService.UpdateAsync(subscription.Id, updatedFields);
+
+                    if (!updateResult.IsSuccess || updateResult.Data.Documents.FirstOrDefault() == null)
+                    {
+                        throw new DatabaseException($"Failed to set subscription {subscription.Id} state to ProcessingInvoice: {updateResult.ErrorMessage}");
+                    }
+                    context.SetData("Subscription", updateResult.Data.Documents.First());
+
+                    await _dashboardService.InvalidateCacheAndPush(subscription.UserId);
+
+                    return StepResult.Success($"Set Subscription ID {subscription.Id} state to ProcessingPayments.", updateResult.Data.Documents.First());
+                })
+                .InParallel()
+                .Build();
+
+            _builder.Step("PreparePayment")
+                .After("ValidateInvoice")
+                .RequiresData<InvoiceRequest>("InvoiceRequest")
+                .Execute(async context =>
+                {
+                    var invoice = context.GetData<InvoiceRequest>("InvoiceRequest");
 
                     // Check existing
                     var existingWr = await _paymentService.GetOneAsync(
@@ -79,6 +129,7 @@ namespace Infrastructure.Flows.Payment
                     return StepResult.Success($"Payment data ready", paymentData);
                 })
                 .WithIdempotency()
+                .InParallel()
                 .Build();
 
             _builder.Step("CreatePaymentRecord")
@@ -107,6 +158,30 @@ namespace Infrastructure.Flows.Payment
                 })
                 .Build();
 
+            _builder.Step("SetSubscriptionStateToAcquiringAssets")
+                .Execute(async ctx =>
+                {
+                    var subscription = ctx.GetData<SubscriptionData>("Subscription");
+
+                    var updatedFields = new Dictionary<string, object>
+                    {
+                        ["State"] = SubscriptionState.AcquiringAssets
+                    };
+
+                    var updateResult = await _subscriptionService.UpdateAsync(subscription.Id, updatedFields);
+                    if (!updateResult.IsSuccess || updateResult.Data.Documents.FirstOrDefault() == null)
+                    {
+                        throw new DatabaseException($"Failed to update subscription {subscription.Id} state to AcquiringAssets: {updateResult.ErrorMessage}");
+                    }
+
+                    ctx.SetData("Subscription", updateResult.Data.Documents.First());
+
+                    await _dashboardService.InvalidateCacheAndPush(subscription.UserId);
+
+                    return StepResult.Success($"Updated subscription {subscription.Id} state to AcquiringAssets.", updateResult.Data.Documents.First());
+                })
+                .Build();
+
             _builder.Step("FetchAllocations")
                 .After("PreparePayment")
                 .RequiresData<SubscriptionData>("Subscription")
@@ -131,46 +206,63 @@ namespace Infrastructure.Flows.Payment
                     return StepResult.Success($"Fetched {allocations.Count} allocations for subscription {subscription.Id}.", allocations);
                 })
                 .WithDynamicBranches(
-                // Data selector: Your existing allocation fetching logic
+                    // Data selector: Your existing allocation fetching logic
                     ctx => ctx.GetData<List<EnhancedAllocationDto>>("Allocations"),
 
                     // Step factory: Convert each allocation to a sub-step
-                    (builder, allocation, index) => builder.Branch($"ExecuteOrder_{allocation.AssetTicker}_{index}")
+                    (builder, allocation, index) => builder.Branch($"Allocation_{index}_{allocation.AssetTicker}")
                         .WithSourceData(allocation)
                         .WithResourceGroup(allocation.Exchange) // For round-robin
                         .WithPriority(allocation.Priority)
-                        .WithSteps(stepBuilder => stepBuilder
-                            .Step("ProcessSingleAllocation")
-                            .Execute(async ctx =>
-                            {
-                                // Your existing ProcessSingleAllocation logic
-                                var payment = ctx.GetData<PaymentData>("Payment");
-                                return StepResult.Success($"Processing allocation for {allocation.AssetTicker} on {allocation.Exchange}.",
-                                    allocation);
-                            })
-                            .Triggers<AllocationExchangeOrderFlow>(context => new()
-                            {
-                                ["Allocation"] = allocation,
-                                ["Payment"] = context.GetData<PaymentData>("Payment")
-                            })
-                            .Build())
+                        .WithSteps(stepBuilder => {
+                            stepBuilder.Step("ProcessSingleAllocation")
+                                .Execute(async ctx =>
+                                {
+                                    // Your existing ProcessSingleAllocation logic
+                                    var payment = ctx.GetData<PaymentData>("Payment");
+                                    return StepResult.Success($"Processing allocation for {allocation.AssetTicker} on {allocation.Exchange}.",
+                                        allocation);
+                                })
+                                .Triggers<AllocationExchangeOrderFlow>(context => new()
+                                {
+                                    ["Allocation"] = allocation,
+                                    ["Payment"] = context.GetData<PaymentData>("Payment")
+                                })
+                                .Build();
+                        })
                         .Build(),
-
-                    ExecutionStrategy.RoundRobin // Smart exchange distribution
-                    )
+                    ExecutionStrategy.RoundRobin) // Smart exchange distribution
                 .InParallel()
                 .Critical()
                 .Build();
 
-            _builder.Step("HandleDust")
-                .Triggers<HandleDustFlow>()
+            _builder.Step("ResetSubscriptionState")
+                .Execute(async ctx =>
+                {
+                    var subscription = ctx.GetData<SubscriptionData>("Subscription");
+
+                    var updatedFields = new Dictionary<string, object>
+                    {
+                        ["State"] = SubscriptionState.Idle
+                    };
+
+                    var updateResult = await _subscriptionService.UpdateAsync(subscription.Id, updatedFields);
+                    if (!updateResult.IsSuccess || updateResult.Data.Documents.FirstOrDefault() == null)
+                    {
+                        throw new DatabaseException($"Failed to update subscription {subscription.Id} state to AcquiringAssets: {updateResult.ErrorMessage}");
+                    }
+
+                    ctx.SetData("Subscription", updateResult.Data.Documents.First());
+
+                    await _dashboardService.InvalidateCacheAndPush(subscription.UserId);
+
+                    return StepResult.Success($"Updated subscription {subscription.Id} state to AcquiringAssets.", updateResult.Data.Documents.First());
+                })
                 .Build();
 
-            _builder.Step("Completed")
-                .Execute(async context =>
-                {
-                    return StepResult.Success("Payment processing flow completed.");
-                })
+            _builder.Step("HandleDust")
+                .After("FetchAllocations")
+                .Triggers<HandleDustFlow>()
                 .Build();
         }
 

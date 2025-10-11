@@ -222,8 +222,6 @@ namespace Infrastructure.Services.FlowEngine.Services.Notification
                     }).ToList() ?? [],
                     Events = flow.State.Events?.Select(e => new FlowEventDto
                     {
-                        EventId = e?.EventId ?? Guid.Empty,
-                        FlowId = e?.FlowId ?? flow.State.FlowId,
                         EventType = e?.EventType ?? "Unknown",
                         Description = e?.Description ?? "No description",
                         Timestamp = e?.Timestamp ?? DateTime.UtcNow,

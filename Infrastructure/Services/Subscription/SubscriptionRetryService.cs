@@ -2,8 +2,8 @@
 using Application.Interfaces.Logging;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
-using Domain.Constants;
 using Domain.Constants.Logging;
+using Domain.Constants.Subscription;
 using Domain.DTOs.Base;
 using Domain.DTOs.Logging;
 using Domain.Events.Subscription;

@@ -1,4 +1,4 @@
-﻿using Domain.Constants;
+﻿using Domain.Constants.Subscription;
 
 namespace Domain.DTOs.Subscription
 {

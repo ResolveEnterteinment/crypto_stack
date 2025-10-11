@@ -32,7 +32,7 @@ const PaymentSuccessPage: React.FC = () => {
 
             setSubscription(subscriptionData);
         } catch (error) {
-            console.error('Error verifying payment:', error);
+            console.error('Error fetching subscription:', error);
         } finally {
             setLoading(false);
         }
@@ -41,7 +41,7 @@ const PaymentSuccessPage: React.FC = () => {
     const fetchPaymentDetails = async (subscriptionId: string) => {
         try {
             setLoading(true);
-            // Simulate API call delay
+
             var paymentData = await paymentService.getSubscriptionPaymentStatus(subscriptionId);
 
             if (paymentData)

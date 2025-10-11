@@ -358,7 +358,6 @@ namespace Controllers
                 flow.State.Status = FlowStatus.Resolved;
                 flow.State.Events.Add(new FlowEvent
                 {
-                    FlowId = flowId,
                     EventType = "FlowResolved",
                     Description = $"Flow resolved by {resolvedBy}: {resolution}",
                     Data = new Dictionary<string, object>
@@ -599,8 +598,6 @@ namespace Controllers
                 }).ToList(),
                 Events = flow.Events.Select(e => new FlowEventDto
                 {
-                    EventId = e.EventId,
-                    FlowId = e.FlowId,
                     EventType = e.EventType,
                     Description = e.Description,
                     Timestamp = e.Timestamp,

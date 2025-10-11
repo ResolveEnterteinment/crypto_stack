@@ -2,7 +2,6 @@
 using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Logging;
-using CryptoExchange.Net.CommonObjects;
 using Domain.Constants.Logging;
 using Domain.DTOs.Exchange;
 using Domain.DTOs.Subscription;
@@ -11,11 +10,9 @@ using Domain.Exceptions;
 using Domain.Models.Asset;
 using Domain.Models.Exchange;
 using Domain.Models.Payment;
-using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
-using Stripe;
 
 namespace Infrastructure.Flows.Exchange
 {
@@ -183,7 +180,7 @@ namespace Infrastructure.Flows.Exchange
                 })
                 .Build();
 
-            _builder.Step("GetAndCheckMinimumNotional")
+            _builder.Step("CheckMinimumNotional")
                 .After("CalculateRemainingQuantity")
                 .RequiresData<AssetData>("Asset")
                 .RequiresData<decimal>("RemainingQuantity")
@@ -243,7 +240,7 @@ namespace Infrastructure.Flows.Exchange
                 .Build();
 
             _builder.Step("PlaceExchangeOrder")
-                .After("GetAndCheckMinimumNotional")
+                .After("CheckMinimumNotional")
                 .RequiresData<PaymentData>("Payment")
                 .RequiresData<EnhancedAllocationDto>("Allocation")
                 .RequiresData<AssetData>("Asset")

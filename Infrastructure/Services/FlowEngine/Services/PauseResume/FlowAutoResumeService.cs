@@ -69,12 +69,12 @@ namespace Infrastructure.Services.FlowEngine.Services.PauseResume
             if (resumeConfig == null) return false;
 
             // Check timeout condition
-            if (resumeConfig.TimeoutDuration.HasValue && flow.State.PausedAt.HasValue)
+            if (resumeConfig.ResumeOnTimeout && resumeConfig.TimeoutDuration.HasValue && flow.State.PausedAt.HasValue)
             {
                 var timeoutAt = flow.State.PausedAt.Value.Add(resumeConfig.TimeoutDuration.Value);
                 if (DateTime.UtcNow >= timeoutAt)
                 {
-                    return resumeConfig.ResumeOnTimeout;
+                    return true;
                 }
             }
 

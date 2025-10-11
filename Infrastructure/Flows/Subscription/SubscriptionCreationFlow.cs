@@ -3,14 +3,20 @@ using Application.Contracts.Responses.Subscription;
 using Application.Interfaces;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
-using Domain.Constants;
+using Domain.Constants.Subscription;
 using Domain.DTOs.Payment;
 using Domain.Exceptions;
+using Domain.Models.Dashboard;
+using Domain.Models.Payment;
 using FluentValidation;
+using Infrastructure.Hubs;
+using Infrastructure.Services;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
 
 namespace Infrastructure.Flows.Subscription
 {
@@ -26,6 +32,7 @@ namespace Infrastructure.Flows.Subscription
         private readonly INotificationService _notificationService;
         private readonly IIdempotencyService _idempotencyService;
         private readonly ILogger<SubscriptionCreationFlow> _logger;
+        private readonly IDashboardService _dashboardService;
 
         public SubscriptionCreationFlow(
             ISubscriptionService subscriptionService,
@@ -33,7 +40,8 @@ namespace Infrastructure.Flows.Subscription
             IValidator<SubscriptionCreateRequest> validator,
             INotificationService notificationService,
             IIdempotencyService idempotencyService,
-            ILogger<SubscriptionCreationFlow> logger)
+            ILogger<SubscriptionCreationFlow> logger,
+            IDashboardService dashboardService)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
@@ -41,6 +49,12 @@ namespace Infrastructure.Flows.Subscription
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _dashboardService = dashboardService ?? throw new ArgumentNullException(nameof(dashboardService));
+        }
+
+        protected override void ConfigureMiddleware()
+        {
+            // TO-DO: UseMiddleware<IdempotencyMiddleware>();
         }
 
         protected override void DefineSteps()
@@ -155,7 +169,30 @@ namespace Infrastructure.Flows.Subscription
                 })
                 .Build();
 
-            // Setup payment method and create checkout session
+            // Step 5: Update subscription state to PendingCheckout
+            _builder.Step("UpdateSubscriptionState")
+                .After("CreateSubscriptionEntity")
+                .RequiresData<Guid>("SubscriptionId")
+                .Execute(async context =>
+                {
+                    var subscriptionId = context.GetData<Guid>("SubscriptionId");
+
+                    var updateResult = await _subscriptionService.UpdateAsync(subscriptionId, new Dictionary<string, object>
+                    {
+                        ["State"] = SubscriptionState.PendingCheckout
+                    });
+                    if (!updateResult.IsSuccess)
+                    {
+                        throw new DatabaseException($"Failed to update subscription {subscriptionId} state to PendingPayment: {updateResult.ErrorMessage}");
+                    }
+                    return StepResult.Success($"Subscription {subscriptionId} state updated to PendingPayment");
+                })
+                .AllowFailure()
+                .InParallel()
+                .Critical()
+                .Build();
+
+            // Step 6: Setup payment method and create checkout session
             _builder.Step("SetupPaymentSession")
                 .After("CreateSubscriptionEntity")
                 .RequiresData<SubscriptionCreateRequest>("Request")
@@ -205,19 +242,19 @@ namespace Infrastructure.Flows.Subscription
                 .Critical()
                 .Build();
 
-            // Step 6: Wait for payment completion (pause flow)
+            // Step 7: Wait for payment completion (pause flow)
             _builder.Step("AwaitPaymentCompletion")
                 .After("SetupPaymentSession")
                 .RequiresData<SessionDto>("CheckoutSession")
                 .CanPause(async context =>
                 {
-                    _logger.LogInformation("Pausing flow to await payment completion");
+                    _logger.LogInformation("Pausing flow to await checkout completion");
 
                     var session = context.GetData<SessionDto>("CheckoutSession");
 
                     return PauseCondition.Pause(
                         PauseReason.WaitingForPayment,
-                        "Waiting for payment completion",
+                        "Waiting for checkout completion",
                         session
                         );
                 })
@@ -232,13 +269,35 @@ namespace Infrastructure.Flows.Subscription
                         var subscriptionId = context.GetData<Guid>("SubscriptionId");
 
                         // Check if this event is for our subscription
-                        var canResume = session?.Metadata?.ContainsKey("subscriptionId") == true &&
+                        var canResume = session.Metadata.ContainsKey("subscriptionId") &&
                                session.Metadata["subscriptionId"] == subscriptionId.ToString();
 
                         if (canResume)
                         {
-                            context.SetData("CheckoutSessionResult", session);
-                            return true;
+                            context.SetData("Session", session);
+                            if (context.HasData("Invoice")) return true; // Resume if we also received the invoice.paid event
+                        }
+
+                        return false;
+                    });
+
+                    // Resume when invoice.paid event is received
+                    resume.OnEvent("InvoicePaid", (context, eventData) =>
+                    {
+                        if (eventData == null || eventData is not Stripe.Invoice invoice)
+                            return false;
+
+                        var subscriptionId = context.GetData<Guid>("SubscriptionId");
+                        var invoiceId = context.GetData<string>("InvoiceId");
+
+                        // Check if this event is for our subscription
+                        var canResume = invoice.SubscriptionDetails.Metadata?.ContainsKey("subscriptionId") == true &&
+                                invoice.SubscriptionDetails.Metadata["subscriptionId"] == subscriptionId.ToString();
+
+                        if (canResume)
+                        {
+                            context.SetData("Invoice", invoice);
+                            if (context.HasData("Session")) return true; // Resume if we also received the checkout.session.completed event
                         }
 
                         return false;
@@ -248,8 +307,15 @@ namespace Infrastructure.Flows.Subscription
                     resume.WhenCondition(async context =>
                     {
                         var pausedAt = context.State.PausedAt;
-                        return pausedAt.HasValue && 
-                               DateTime.UtcNow.Subtract(pausedAt.Value) > TimeSpan.FromHours(1);
+                        bool hasReachedtimeout = pausedAt.HasValue && 
+                               DateTime.UtcNow.Subtract(pausedAt.Value) > TimeSpan.FromMinutes(15);
+
+                        if (hasReachedtimeout)
+                        {
+                            context.SetData("CheckoutTimedOut", true);
+                        }
+                        
+                        return hasReachedtimeout;
                     });
 
                     // Allow manual resume by admins
@@ -257,36 +323,45 @@ namespace Infrastructure.Flows.Subscription
                 })
                 .Execute(async context =>
                 {
+                    if (context.TryGetData("CheckoutTimedOut", out bool chekoutTimedOut) && chekoutTimedOut)
+                    {
+                        throw new TimeoutException("Checkout session was not completed in time.");
+                    }
+
                     // This executes after resume
                     var subscriptionId = context.GetData<Guid>("SubscriptionId");
 
-                    var session = context.GetData<SessionDto>("CheckoutSessionResult");
+                    var checkoutSession = context.GetData<SessionDto>("CheckoutSession");
+                    var session = context.GetData<Stripe.Checkout.Session>("Session");
+
                     // Update our subscription with the active status
                     var updatedFields = new Dictionary<string, object>
                     {
-                        ["Provider"] = session.Provider,
-                        ["ProviderSubscriptionId"] = session.SubscriptionId,
-                        ["Status"] = SubscriptionStatus.Active
+                        ["Provider"] = checkoutSession.Provider,
+                        ["ProviderSubscriptionId"] = checkoutSession.SubscriptionId,
+                        ["Status"] = SubscriptionStatus.Active,
+                        ["State"] = SubscriptionState.ProcessingInvoice,
                     };
 
                     var updateResult = await _subscriptionService.UpdateAsync(subscriptionId, updatedFields);
 
-                    if (!updateResult.IsSuccess)
+                    if (!updateResult.IsSuccess || updateResult.Data.Documents.FirstOrDefault() == null)
                     {
                         throw new DatabaseException($"Failed to update subscription {subscriptionId}: {updateResult.ErrorMessage}");
                     }
 
-                    await _notificationService.CreateAndSendNotificationAsync(new NotificationData
-                    {
-                        UserId = context.State.UserId,
-                        Message = "Your subscription has been activated."
-                    });
+                    var subscription = updateResult.Data.Documents.FirstOrDefault();
+
+                    context.SetData("InvoiceId", session.InvoiceId);
+                    context.SetData("Subscription", subscription);
+
+                    await _dashboardService.InvalidateCacheAndPush(subscription.UserId);
 
                     return StepResult.Success($"Updated and activated subscription {subscriptionId} with session data. Notification sent to user ID {context.State.UserId}");
                 })
                 .Build();
 
-            // Step 7: Send notification to user
+            // Step 8: Send notification to user
             _builder.Step("NotifyUser")
                 .After("AwaitPaymentCompletion")
                 .RequiresData<SubscriptionCreateRequest>("Request")
@@ -297,9 +372,7 @@ namespace Infrastructure.Flows.Subscription
                     var subscriptionId = context.GetData<Guid>("SubscriptionId");
                     var paymentCompleted = context.GetData<bool>("PaymentCompleted");
 
-                    var message = paymentCompleted 
-                        ? "Your subscription has been created and activated successfully!"
-                        : "Your subscription has been created. Please complete payment setup to activate it.";
+                    var message = $"Your {request.Interval} {request.Amount} {request.Currency} subscription has been activated!";
 
                     await _notificationService.CreateAndSendNotificationAsync(new NotificationData
                     {
@@ -314,7 +387,7 @@ namespace Infrastructure.Flows.Subscription
                 .AllowFailure() // Don't fail the entire flow if notification fails
                 .Build();
 
-            // Step 8: Prepare final response
+            // Step 9: Prepare final response
             _builder.Step("PrepareResponse")
                 .Execute(async context =>
                 {

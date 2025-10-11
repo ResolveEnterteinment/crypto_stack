@@ -8,6 +8,7 @@ import {
     ExclamationCircleOutlined,
     EyeOutlined,
     FlagFilled,
+    GroupOutlined,
     LoadingOutlined,
     NodeIndexOutlined,
     PauseCircleOutlined,
@@ -17,7 +18,8 @@ import {
     SearchOutlined,
     SisternodeOutlined,
     StopFilled,
-    StopOutlined
+    StopOutlined,
+    UnorderedListOutlined
 } from '@ant-design/icons';
 import {
     Alert,
@@ -116,6 +118,20 @@ const flowStatusConfig: Record<FlowStatusKey, {
     }
 };
 
+// Type for grouped flows
+interface GroupedFlow {
+    correlationId: string;
+    flows: FlowSummaryDto[];
+    totalFlows: number;
+    completedFlows: number;
+    runningFlows: number;
+    failedFlows: number;
+    overallStatus: FlowStatusKey;
+    earliestCreated: string;
+    latestCreated: string;
+    totalDuration: number;
+}
+
 // Real-time update indicator
 const UpdateIndicator: React.FC<{ lastUpdate?: Date }> = ({ lastUpdate }) => {
     const [pulse, setPulse] = useState(false);
@@ -148,7 +164,7 @@ const SubStepRenderer: React.FC<{
 
     if (!subSteps || subSteps.length === 0) {
         return <Text type="secondary" style={{ fontSize: '11px' }}>No substeps</Text>;
-    }
+    };
 
     if (compact) {
         // Compact view for inline display
@@ -248,10 +264,10 @@ const SubStepRenderer: React.FC<{
     );
 };
 
-// FIXED: Enhanced Branch Renderer Component with Independent Context
+// Branch Renderer Component with Independent Context
 const BranchRenderer: React.FC<{
     branches: BranchDto[];
-    stepName: string; // NEW: Add stepName for unique context
+    stepName: string;
     onSubStepClick?: (subStep: any) => void;
     expandedBranches?: string[];
     onBranchToggle?: (branchKey: string) => void;
@@ -269,21 +285,17 @@ const BranchRenderer: React.FC<{
                 activeKey={expandedBranches}
                 onChange={(keys) => {
                     if (onBranchToggle && Array.isArray(keys)) {
-                        // Handle both expand and collapse actions properly
                         const currentKeys = new Set(expandedBranches);
                         const newKeys = new Set(keys as string[]);
 
-                        // Find what changed
                         const added = [...newKeys].filter(key => !currentKeys.has(key));
                         const removed = [...currentKeys].filter(key => !newKeys.has(key));
 
-                        // Process changes one by one to maintain proper state
                         [...added, ...removed].forEach(key => onBranchToggle(key));
                     }
                 }}
             >
                 {branches.map((branch, branchIndex) => {
-                    // FIXED: Create unique branch keys with step context
                     const branchKey = `${stepName}-branch-${branchIndex}`;
                     const hasSubSteps = branch.steps && branch.steps.length > 0;
 
@@ -294,8 +306,8 @@ const BranchRenderer: React.FC<{
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                     <BranchesOutlined style={{ color: '#1890ff', fontSize: '12px' }} />
                                     <Text style={{ fontSize: '12px' }}>
-                                        Branch {branchIndex + 1} { branch.name }
-                                        {branch.isDefault ? '(Default)' : branch.isConditional ? `(Conditional)` : ''}
+                                        Branch {branchIndex + 1} {branch.name}
+                                        {branch.isDefault ? ' (Default)' : branch.isConditional ? ' (Conditional)' : ''}
                                     </Text>
                                     {hasSubSteps && (
                                         <Badge
@@ -341,6 +353,10 @@ const FlowEngineAdminPanel: React.FC = () => {
     const [actionLoading, setActionLoading] = useState<{ [key: string]: boolean }>({});
     const [expandedBranches, setExpandedBranches] = useState<string[]>([]);
 
+    // NEW: Grouping state - default to grouped view
+    const [groupByCorrelation, setGroupByCorrelation] = useState(true);
+    const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+
     const [pagination, setPagination] = useState({
         current: 1,
         pageSize: 10,
@@ -351,12 +367,10 @@ const FlowEngineAdminPanel: React.FC = () => {
     const handleFlowStatusChanged = useCallback((update: FlowDetailDto) => {
         setLastUpdateTime(new Date());
 
-        // Update flows list - handle both existing and new flows
         setFlows(prev => {
             const existingIndex = prev.findIndex(flow => flow.flowId === update.flowId);
 
             if (existingIndex >= 0) {
-                // Update existing flow
                 const updatedFlows = [...prev];
                 updatedFlows[existingIndex] = {
                     ...updatedFlows[existingIndex],
@@ -369,7 +383,6 @@ const FlowEngineAdminPanel: React.FC = () => {
                 };
                 return updatedFlows;
             } else {
-                // Add new flow to the list if it matches current filters
                 const matchesFilter = statusFilter === 'ALL' || update.status === statusFilter;
                 if (matchesFilter) {
                     const newFlowSummary: FlowSummaryDto = {
@@ -387,18 +400,15 @@ const FlowEngineAdminPanel: React.FC = () => {
                             : undefined
                     };
 
-                    // Add to beginning of list (most recent first)
                     return [newFlowSummary, ...prev];
                 }
                 return prev;
             }
         });
 
-        // Update selected flow if it's the same and modal is open
         if (selectedFlow && update.flowId === selectedFlow.flowId && flowChartVisible) {
             setSelectedFlow(update);
 
-            // Show a subtle notification for live updates
             const statusChanged = selectedFlow.status !== update.status;
             if (statusChanged) {
                 message.info({
@@ -409,22 +419,18 @@ const FlowEngineAdminPanel: React.FC = () => {
             }
         }
 
-        // Refresh statistics on terminal states
         if (['Completed', 'Failed', 'Cancelled'].includes(update.status)) {
             setTimeout(fetchStatistics, 1000);
         }
     }, [selectedFlow, flowChartVisible, statusFilter]);
 
-    // NEW: Handle step status changes specifically
     const handleStepStatusChanged = useCallback((stepUpdate: StepStatusUpdateDto) => {
         setLastUpdateTime(new Date());
 
-        // Only update if the modal is open for this flow
         if (selectedFlow && stepUpdate.flowId === selectedFlow.flowId && flowChartVisible) {
             setSelectedFlow(prev => {
                 if (!prev) return prev;
 
-                // Update the specific step in the steps array
                 const updatedSteps = prev.steps.map(step =>
                     step.name === stepUpdate.stepName
                         ? {
@@ -435,7 +441,6 @@ const FlowEngineAdminPanel: React.FC = () => {
                         : step
                 );
 
-                // Return updated flow with new step status and current step info
                 return {
                     ...prev,
                     steps: updatedSteps,
@@ -445,7 +450,6 @@ const FlowEngineAdminPanel: React.FC = () => {
                 };
             });
 
-            // Show step-level notification
             message.info({
                 content: `Step "${stepUpdate.stepName}" status: ${stepUpdate.stepStatus}`,
                 duration: 1.5,
@@ -455,7 +459,6 @@ const FlowEngineAdminPanel: React.FC = () => {
             console.log(`Step update: ${stepUpdate.stepName} -> ${stepUpdate.stepStatus}`);
         }
 
-        // Also update the flows list for current step info
         setFlows(prev => prev.map(flow =>
             flow.flowId === stepUpdate.flowId
                 ? {
@@ -473,27 +476,75 @@ const FlowEngineAdminPanel: React.FC = () => {
         message.error('Flow admin connection error');
     }, []);
 
-    // Real-time updates with both flow and step handlers
     const { isConnected: isAdminConnected, reconnect: reconnectAdmin } = useAdminFlowSignalR(
         handleFlowStatusChanged,
-        handleStepStatusChanged, // NEW: Pass step handler
+        handleStepStatusChanged,
         handleError
     );
 
-    // Update connection state
     useEffect(() => {
         setConnectionState(isAdminConnected ? 'connected' : 'disconnected');
     }, [isAdminConnected]);
+
+    // NEW: Function to group flows by correlationId
+    const groupFlowsByCorrelation = useCallback((flowList: FlowSummaryDto[]): GroupedFlow[] => {
+        const grouped = flowList.reduce((acc, flow) => {
+            const corrId = flow.correlationId || 'no-correlation';
+            if (!acc[corrId]) {
+                acc[corrId] = [];
+            }
+            acc[corrId].push(flow);
+            return acc;
+        }, {} as Record<string, FlowSummaryDto[]>);
+
+        return Object.entries(grouped).map(([correlationId, groupFlows]) => {
+            const completedFlows = groupFlows.filter(f => f.status === 'Completed').length;
+            const runningFlows = groupFlows.filter(f => f.status === 'Running').length;
+            const failedFlows = groupFlows.filter(f => f.status === 'Failed').length;
+            const totalDuration = groupFlows.reduce((sum, f) => sum + (f.duration || 0), 0);
+
+            // Determine overall status
+            let overallStatus: FlowStatusKey = 'Completed';
+            if (runningFlows > 0) overallStatus = 'Running';
+            else if (failedFlows > 0) overallStatus = 'Failed';
+            else if (groupFlows.some(f => f.status === 'Paused')) overallStatus = 'Paused';
+
+            const sortedByDate = [...groupFlows].sort((a, b) =>
+                new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+            );
+
+            return {
+                correlationId,
+                flows: groupFlows,
+                totalFlows: groupFlows.length,
+                completedFlows,
+                runningFlows,
+                failedFlows,
+                overallStatus,
+                earliestCreated: sortedByDate[0].createdAt,
+                latestCreated: sortedByDate[sortedByDate.length - 1].createdAt,
+                totalDuration
+            };
+        }).sort((a, b) =>
+            new Date(b.latestCreated).getTime() - new Date(a.latestCreated).getTime()
+        );
+    }, []);
 
     const filteredFlows = useMemo(() => {
         return flows.filter(flow => {
             const matchesSearch = flow.flowId.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 flow.flowType.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                flow.userId.toLowerCase().includes(searchTerm.toLowerCase());
+                flow.userId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (flow.correlationId && flow.correlationId.toLowerCase().includes(searchTerm.toLowerCase()));
             const matchesStatus = statusFilter === 'ALL' || flow.status === statusFilter;
             return matchesSearch && matchesStatus;
         });
     }, [flows, searchTerm, statusFilter]);
+
+    // NEW: Grouped flows memoization
+    const groupedFlows = useMemo(() => {
+        return groupFlowsByCorrelation(filteredFlows);
+    }, [filteredFlows, groupFlowsByCorrelation]);
 
     const fetchFlows = useCallback(async () => {
         setLoading(true);
@@ -552,7 +603,6 @@ const FlowEngineAdminPanel: React.FC = () => {
         setSelectedStep(null);
         setSelectedFlow(null);
         setExpandedBranches([]);
-        // Clear any action loading states
         setActionLoading({});
     };
 
@@ -566,20 +616,27 @@ const FlowEngineAdminPanel: React.FC = () => {
         setStepModalVisible(true);
     };
 
-    // FIXED: Enhanced branch toggle handler with proper state management
     const handleBranchToggle = (branchKey: string) => {
         setExpandedBranches(prev => {
             if (prev.includes(branchKey)) {
-                // Remove the key (collapse)
                 return prev.filter(key => key !== branchKey);
             } else {
-                // Add the key (expand)
                 return [...prev, branchKey];
             }
         });
     };
 
-    // Enhanced flow actions that don't close the modal
+    // NEW: Toggle group expansion
+    const toggleGroupExpansion = (correlationId: string) => {
+        setExpandedGroups(prev => {
+            if (prev.includes(correlationId)) {
+                return prev.filter(id => id !== correlationId);
+            } else {
+                return [...prev, correlationId];
+            }
+        });
+    };
+
     const handlePauseFlow = async (flowId: string, keepModalOpen: boolean = false) => {
         const actionKey = `pause-${flowId}`;
         setActionLoading(prev => ({ ...prev, [actionKey]: true }));
@@ -589,10 +646,8 @@ const FlowEngineAdminPanel: React.FC = () => {
             message.success('Flow paused successfully');
 
             if (!keepModalOpen) {
-                // Only refresh flows if modal is not open
                 fetchFlows();
             }
-            // If modal is open, the live update will handle the refresh
         } catch (error: any) {
             console.error('Failed to pause flow:', error);
             message.error('Failed to pause flow');
@@ -666,13 +721,13 @@ const FlowEngineAdminPanel: React.FC = () => {
 
     const handleExport = async () => {
         try {
-            // Create CSV content
-            const headers = ['Flow ID', 'Type', 'Status', 'User', 'Created', 'Duration'];
+            const headers = ['Flow ID', 'Type', 'Status', 'User', 'Correlation ID', 'Created', 'Duration'];
             const rows = flows.map(flow => [
                 flow.flowId,
                 flow.flowType,
                 flow.status,
                 flow.userId,
+                flow.correlationId || 'N/A',
                 flow.createdAt,
                 flow.duration ? `${Math.round(flow.duration)}s` : ''
             ]);
@@ -698,6 +753,7 @@ const FlowEngineAdminPanel: React.FC = () => {
         }
     };
 
+    // Individual flow columns
     const columns = [
         {
             title: 'Flow Details',
@@ -822,13 +878,11 @@ const FlowEngineAdminPanel: React.FC = () => {
         }
     ];
 
-    // Add new navigation handler
     const navigateToTriggeredFlow = async (flowId: string) => {
         try {
             setLoading(true);
             const flowDetails = await flowService.getFlowById(flowId);
             setSelectedFlow(flowDetails);
-            // Don't close current modal, just update content
         } catch (error) {
             console.error('Failed to load triggered flow details:', error);
             message.error('Failed to load triggered flow details');
@@ -837,7 +891,6 @@ const FlowEngineAdminPanel: React.FC = () => {
         }
     };
 
-    // Add component for triggered flow cards
     const TriggeredFlowCard: React.FC<{
         triggeredFlow: TriggeredFlowDataDto;
         onNavigate: (flowId: string) => void;
@@ -901,6 +954,107 @@ const FlowEngineAdminPanel: React.FC = () => {
         );
     };
 
+    // NEW: Render grouped flow table
+    const renderGroupedTable = () => {
+        return (
+            <div>
+                {groupedFlows.map((group) => {
+                    const isExpanded = expandedGroups.includes(group.correlationId);
+                    const config = getStatusConfig(group.overallStatus);
+
+                    return (
+                        <Card
+                            key={group.correlationId}
+                            style={{ marginBottom: 16 }}
+                            bodyStyle={{ padding: 0 }}
+                        >
+                            {/* Group Header */}
+                            <div
+                                style={{
+                                    padding: '16px 24px',
+                                    background: '#fafafa',
+                                    borderBottom: isExpanded ? '1px solid #f0f0f0' : 'none',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between'
+                                }}
+                                onClick={() => toggleGroupExpansion(group.correlationId)}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1 }}>
+                                    <CaretRightOutlined
+                                        rotate={isExpanded ? 90 : 0}
+                                        style={{ fontSize: '14px', color: '#666' }}
+                                    />
+                                    <GroupOutlined style={{ fontSize: '18px', color: '#1890ff' }} />
+                                    <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <Text strong style={{ fontSize: '15px' }}>
+                                                Correlation ID: {group.correlationId === 'no-correlation' ? 'None' : group.correlationId.substring(0, 16)}...
+                                            </Text>
+                                            <Tag color={config.antdColor} icon={config.icon}>
+                                                {group.overallStatus}
+                                            </Tag>
+                                        </div>
+                                        <Text type="secondary" style={{ fontSize: '12px' }}>
+                                            Created: {new Date(group.earliestCreated).toLocaleString()}
+                                        </Text>
+                                    </div>
+                                </div>
+
+                                {/* Group Statistics */}
+                                <Space size="large">
+                                    <Statistic
+                                        title="Total Flows"
+                                        value={group.totalFlows}
+                                        valueStyle={{ fontSize: '20px' }}
+                                    />
+                                    <Statistic
+                                        title="Completed"
+                                        value={group.completedFlows}
+                                        valueStyle={{ fontSize: '20px', color: '#52c41a' }}
+                                        prefix={<CheckCircleOutlined />}
+                                    />
+                                    <Statistic
+                                        title="Running"
+                                        value={group.runningFlows}
+                                        valueStyle={{ fontSize: '20px', color: '#1890ff' }}
+                                        prefix={<LoadingOutlined spin={group.runningFlows > 0} />}
+                                    />
+                                    <Statistic
+                                        title="Failed"
+                                        value={group.failedFlows}
+                                        valueStyle={{ fontSize: '20px', color: '#ff4d4f' }}
+                                        prefix={<CloseCircleOutlined />}
+                                    />
+                                    <Statistic
+                                        title="Total Duration"
+                                        value={`${Math.round(group.totalDuration)}s`}
+                                        valueStyle={{ fontSize: '20px' }}
+                                    />
+                                </Space>
+                            </div>
+
+                            {/* Group Content (Flows) */}
+                            {isExpanded && (
+                                <div style={{ padding: '0' }}>
+                                    <Table
+                                        columns={columns}
+                                        dataSource={group.flows}
+                                        rowKey="flowId"
+                                        pagination={false}
+                                        size="small"
+                                        showHeader={true}
+                                    />
+                                </div>
+                            )}
+                        </Card>
+                    );
+                })}
+            </div>
+        );
+    };
+
     return (
         <Layout style={{ minHeight: '100vh', background: '#f5f5f5' }}>
             {/* Header */}
@@ -932,13 +1086,13 @@ const FlowEngineAdminPanel: React.FC = () => {
             <Content style={{ padding: '24px' }}>
                 {/* Search and Filters */}
                 <Card style={{ marginBottom: 24 }}>
-                    <Space size="large" style={{ width: '100%' }}>
+                    <Space size="large" style={{ width: '100%', flexWrap: 'wrap' }}>
                         <Input
-                            placeholder="Search flows by ID, type, or user..."
+                            placeholder="Search flows by ID, type, user, or correlation ID..."
                             prefix={<SearchOutlined />}
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            style={{ width: 300 }}
+                            style={{ width: 350 }}
                         />
                         <Select
                             value={statusFilter}
@@ -950,6 +1104,18 @@ const FlowEngineAdminPanel: React.FC = () => {
                                 <Option key={status} value={status}>{status}</Option>
                             ))}
                         </Select>
+
+                        {/* NEW: Group By Toggle */}
+                        <Tooltip title={groupByCorrelation ? "Switch to list view" : "Group by correlation ID"}>
+                            <Button
+                                icon={groupByCorrelation ? <UnorderedListOutlined /> : <GroupOutlined />}
+                                onClick={() => setGroupByCorrelation(!groupByCorrelation)}
+                                type={groupByCorrelation ? 'primary' : 'default'}
+                            >
+                                {groupByCorrelation ? 'Grouped View' : 'List View'}
+                            </Button>
+                        </Tooltip>
+
                         <Button
                             type="primary"
                             icon={<ReloadOutlined />}
@@ -1009,22 +1175,26 @@ const FlowEngineAdminPanel: React.FC = () => {
                     </Col>
                 </Row>
 
-                {/* Flows Table */}
+                {/* NEW: Conditional rendering based on group mode */}
                 <Card>
-                    <Table
-                        columns={columns}
-                        dataSource={filteredFlows}
-                        rowKey="flowId"
-                        loading={loading}
-                        pagination={{
-                            current: pagination.current,
-                            pageSize: pagination.pageSize,
-                            total: pagination.total,
-                            onChange: (page, pageSize) => {
-                                setPagination({ current: page, pageSize, total: pagination.total });
-                            }
-                        }}
-                    />
+                    {groupByCorrelation ? (
+                        renderGroupedTable()
+                    ) : (
+                        <Table
+                            columns={columns}
+                            dataSource={filteredFlows}
+                            rowKey="flowId"
+                            loading={loading}
+                            pagination={{
+                                current: pagination.current,
+                                pageSize: pagination.pageSize,
+                                total: pagination.total,
+                                onChange: (page, pageSize) => {
+                                    setPagination({ current: page, pageSize, total: pagination.total });
+                                }
+                            }}
+                        />
+                    )}
                 </Card>
             </Content>
 
@@ -1100,7 +1270,6 @@ const FlowEngineAdminPanel: React.FC = () => {
                 {selectedFlow && (
                     <Row gutter={24}>
                         <Col span={16}>
-                            {/* NEW: Triggered By Information */}
                             {selectedFlow.triggeredBy && (
                                 <Card title="Triggered By" style={{ marginBottom: 16 }}>
                                     <TriggeredFlowCard
@@ -1111,7 +1280,6 @@ const FlowEngineAdminPanel: React.FC = () => {
                                 </Card>
                             )}
 
-                            {/* Flow Steps - FIXED WITH PROPER BRANCH RENDERING */}
                             <Card title="Flow Steps" style={{ marginBottom: 16 }}>
                                 <Steps
                                     direction="vertical"
@@ -1135,7 +1303,7 @@ const FlowEngineAdminPanel: React.FC = () => {
                                                 title: (
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
                                                         onClick={() => handleStepClick(step)}>
-                                                        <span >{step.name}</span>
+                                                        <span>{step.name}</span>
                                                         {step.triggeredFlows && step.triggeredFlows.length > 0 && (
                                                             <Badge
                                                                 count={step.triggeredFlows.length}
@@ -1160,18 +1328,16 @@ const FlowEngineAdminPanel: React.FC = () => {
                                                     <div>
                                                         <div>{step.result?.message || 'Step'}</div>
 
-                                                        {/* FIXED: Proper Branch Rendering with Step Context */}
                                                         {step.branches && step.branches.length > 0 && (
                                                             <BranchRenderer
                                                                 branches={step.branches}
-                                                                stepName={step.name} // Pass step name for unique context
+                                                                stepName={step.name}
                                                                 onSubStepClick={handleSubStepClick}
                                                                 expandedBranches={expandedBranches}
                                                                 onBranchToggle={handleBranchToggle}
                                                             />
                                                         )}
 
-                                                        {/* Show triggered flows inline */}
                                                         {step.triggeredFlows && step.triggeredFlows.length > 0 && (
                                                             <div style={{ marginTop: 8 }}>
                                                                 <Text type="secondary" style={{ fontSize: '12px' }}>
@@ -1179,7 +1345,7 @@ const FlowEngineAdminPanel: React.FC = () => {
                                                                 </Text>
                                                                 <div style={{ marginTop: 4 }}>
                                                                     {step.triggeredFlows.map((tf, index) => (
-                                                                        <div onClick={tf.flowId ? () => navigateToTriggeredFlow(tf.flowId!) : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                                        <div key={index} onClick={tf.flowId ? () => navigateToTriggeredFlow(tf.flowId!) : undefined} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                                                             <NodeIndexOutlined style={{ color: '#666', fontSize: '12px' }} />
                                                                             <Text strong style={{ fontSize: '12px' }}>{tf.type}</Text>
                                                                             <Tag
@@ -1187,7 +1353,7 @@ const FlowEngineAdminPanel: React.FC = () => {
                                                                                 icon={config.icon}
                                                                                 style={{ fontSize: '10px' }}
                                                                             >
-                                                                                 {tf.status && `(${tf.status})`}
+                                                                                {tf.status && `(${tf.status})`}
                                                                             </Tag>
                                                                             {tf.flowId && <EyeOutlined style={{ marginLeft: 4 }} />}
                                                                         </div>
@@ -1213,13 +1379,17 @@ const FlowEngineAdminPanel: React.FC = () => {
                             </Card>
                         </Col>
                         <Col span={8}>
-                            {/* Flow Information */}
                             <Card title="Flow Information" style={{ marginBottom: 16 }}>
                                 <Descriptions column={1} size="small">
                                     <Descriptions.Item label="Status">
                                         <Tag color={getStatusConfig(selectedFlow.status).antdColor}>
                                             {selectedFlow.status}
                                         </Tag>
+                                    </Descriptions.Item>
+                                    <Descriptions.Item label="Correlation ID">
+                                        <Text code style={{ fontSize: '11px' }}>
+                                            {selectedFlow.correlationId || 'N/A'}
+                                        </Text>
                                     </Descriptions.Item>
                                     <Descriptions.Item label="Total Steps">
                                         {selectedFlow.totalSteps}
@@ -1256,16 +1426,16 @@ const FlowEngineAdminPanel: React.FC = () => {
                                 </Descriptions>
                             </Card>
 
-                            {/* Error Information */}
-                            <Card title="Error" style={{ marginBottom: 16 }}>
-                                <Descriptions column={1} size="small">
-                                    <Descriptions.Item label="Message">
-                                        {selectedFlow.lastError}
-                                    </Descriptions.Item>
-                                </Descriptions>
-                            </Card>
+                            {selectedFlow.lastError && (
+                                <Card title="Error" style={{ marginBottom: 16 }}>
+                                    <Descriptions column={1} size="small">
+                                        <Descriptions.Item label="Message">
+                                            {selectedFlow.lastError}
+                                        </Descriptions.Item>
+                                    </Descriptions>
+                                </Card>
+                            )}
 
-                            {/* Triggered Flows Summary */}
                             {selectedFlow.steps.some(step => step.triggeredFlows && step.triggeredFlows.length > 0) && (
                                 <Card title="Triggered Flows Summary" style={{ marginBottom: 16 }}>
                                     {selectedFlow.steps
@@ -1288,7 +1458,6 @@ const FlowEngineAdminPanel: React.FC = () => {
                                 </Card>
                             )}
 
-                            {/* Recent Events */}
                             {selectedFlow.events && selectedFlow.events.length > 0 && (
                                 <Card title="Recent Events">
                                     <Timeline
@@ -1355,7 +1524,6 @@ const FlowEngineAdminPanel: React.FC = () => {
                             )}
                         </Descriptions>
 
-                        {/* Step Result */}
                         {selectedStep.result && (
                             <Alert
                                 message="Result"
@@ -1365,18 +1533,16 @@ const FlowEngineAdminPanel: React.FC = () => {
                             />
                         )}
 
-                        {/* Step Error */}
-                        {selectedStep.status == 'Failed' && (
+                        {selectedStep.status === 'Failed' && (
                             <Alert
-                                banner={ true }
+                                banner={true}
                                 message={selectedStep.error?.message ?? "Error"}
-                                description={selectedStep.error?.stackTrace ?? "An unknown error occured during step execution"}
+                                description={selectedStep.error?.stackTrace ?? "An unknown error occurred during step execution"}
                                 type={'error'}
                                 style={{ marginBottom: 16 }}
                             />
                         )}
 
-                        {/* Triggered Flows in Step Modal */}
                         {selectedStep.triggeredFlows && selectedStep.triggeredFlows.length > 0 && (
                             <div style={{ marginBottom: 16 }}>
                                 <Title level={5}>Triggered Flows</Title>
@@ -1391,13 +1557,12 @@ const FlowEngineAdminPanel: React.FC = () => {
                             </div>
                         )}
 
-                        {/* Branches in Step Modal - FIXED */}
                         {selectedStep.branches && selectedStep.branches.length > 0 && (
                             <div style={{ marginBottom: 16 }}>
                                 <Title level={5}>Branches</Title>
                                 <BranchRenderer
                                     branches={selectedStep.branches}
-                                    stepName={`modal-${selectedStep.name}`} // Unique context for modal
+                                    stepName={`modal-${selectedStep.name}`}
                                     onSubStepClick={handleSubStepClick}
                                     expandedBranches={expandedBranches}
                                     onBranchToggle={handleBranchToggle}
@@ -1405,7 +1570,6 @@ const FlowEngineAdminPanel: React.FC = () => {
                             </div>
                         )}
 
-                        {/* Dependencies */}
                         {Object.keys(selectedStep.dataDependencies || {}).length > 0 && (
                             <div>
                                 <Title level={5}>Data Dependencies</Title>

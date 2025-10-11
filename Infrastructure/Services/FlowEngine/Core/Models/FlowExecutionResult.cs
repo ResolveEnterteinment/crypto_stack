@@ -8,6 +8,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
     {
         public Guid FlowId { get; set; }
         public FlowStatus Status { get; set; }
+        public bool IsSuccess => Error == null;
         public string Message { get; set; }
         public object? Data { get; set; } = null;
         public TimeSpan ExecutionTime { get; set; }

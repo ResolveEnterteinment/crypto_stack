@@ -42,6 +42,7 @@ namespace Infrastructure.Services.FlowEngine.Core.Interfaces
         Task<bool> ResumeManuallyAsync(Guid flowId, string userId, string reason = null);
         Task<bool> ResumeByEventAsync(Guid flowId, string eventType, object eventData = null);
         List<Flow> GetPausedFlows();
+        List<Flow> GetPausedFlows<FlowType>();
         Task PublishEventAsync(string eventType, object eventData, string correlationId = null);
 
         // NEW: Health and Statistics methods for health checks

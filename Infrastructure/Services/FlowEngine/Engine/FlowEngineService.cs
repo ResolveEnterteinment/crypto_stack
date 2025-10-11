@@ -1,10 +1,8 @@
-﻿using Domain.Events.Payment;
-using Infrastructure.Services.FlowEngine.Core.Builders;
+﻿using Infrastructure.Services.FlowEngine.Core.Builders;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Exceptions;
 using Infrastructure.Services.FlowEngine.Core.Interfaces;
 using Infrastructure.Services.FlowEngine.Core.Models;
-using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -308,6 +306,14 @@ namespace Infrastructure.Services.FlowEngine.Engine
         public List<Flow> GetPausedFlows()
         {
             var pausedFlows = _runtimeStore.Flows.Values.Where(f => f.Status == FlowStatus.Paused).ToList();
+            return pausedFlows;
+        }
+
+        public List<Flow> GetPausedFlows<FlowType>()
+        {
+            var pausedFlows = _runtimeStore.Flows.Values
+                .Where(f => f.Status == FlowStatus.Paused && f.Definition.GetType() == typeof(FlowType))
+                .ToList();
             return pausedFlows;
         }
 

@@ -190,11 +190,11 @@ namespace Infrastructure.Services.FlowEngine.Core.Builders
         /// <summary>
         /// Configure how this step can be resumed
         /// </summary>
-        public StepBuilder<TStep> ResumeOn(Action<ResumeConfigBuilder> configureResume)
+        public StepBuilder<TStep> ResumeOn(Action<ResumeConfigBuilder> resumeBuilder)
         {
             var resumeConfig = new ResumeConfig();
             var builder = new ResumeConfigBuilder(resumeConfig);
-            configureResume(builder);
+            resumeBuilder(builder);
             _step.ResumeConfig = resumeConfig;
             return this;
         }

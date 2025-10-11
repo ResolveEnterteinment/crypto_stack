@@ -390,30 +390,25 @@ namespace Infrastructure.Services
 
         public Task Handle(EntityUpdatedEvent<BalanceData> notification, CancellationToken ct)
         {
-            InvalidateDashboardCacheAsync(notification.Entity.UserId);
             return InvalidateCacheAndPush(notification.Entity.UserId);
         }
 
         public Task Handle(EntityCreatedEvent<BalanceData> notification, CancellationToken ct)
         {
-            InvalidateDashboardCacheAsync(notification.Entity.UserId);
             return InvalidateCacheAndPush(notification.Entity.UserId);
         }
 
         public Task Handle(EntityCreatedEvent<ExchangeOrderData> notification, CancellationToken ct)
         {
-            InvalidateDashboardCacheAsync(notification.Entity.UserId);
             return InvalidateCacheAndPush(notification.Entity.UserId);
         }
 
         public Task Handle(EntityCreatedEvent<WithdrawalData> notification, CancellationToken ct)
         {
-            InvalidateDashboardCacheAsync(notification.Entity.UserId);
             return InvalidateCacheAndPush(notification.Entity.UserId);
         }
 
-        #region Private Methods
-        private async Task InvalidateCacheAndPush(Guid userId)
+        public async Task InvalidateCacheAndPush(Guid userId)
         {
             try
             {
@@ -439,6 +434,7 @@ namespace Infrastructure.Services
             }
         }
 
+        #region Private Methods
         private async Task<ResultWrapper<IEnumerable<AssetHoldingDto>>> FetchAssetHoldingsCachedAsync(Guid userId, string? assetType = null)
         {
             return await _resilienceService.CreateBuilder(

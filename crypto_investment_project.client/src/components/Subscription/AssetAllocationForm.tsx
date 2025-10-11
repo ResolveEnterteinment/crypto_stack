@@ -231,7 +231,7 @@ const AssetAllocationForm: React.FC<AssetAllocationFormProps> = ({
         if (allocations.length === 0) return;
 
         // Calculate base percentage per asset
-        const basePercentPerAsset = Math.floor((100 / allocations.length) * 100) / 100;
+        const basePercentPerAsset = Math.floor(100 / allocations.length);
         let remainder = 100 - (basePercentPerAsset * allocations.length);
 
         // Check if any assets would violate minimum notional with base percentage

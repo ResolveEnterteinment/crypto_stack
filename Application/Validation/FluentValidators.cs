@@ -1,7 +1,7 @@
 ﻿using Application.Contracts.Requests.Asset;
 using Application.Contracts.Requests.Payment;
 using Application.Contracts.Requests.Subscription;
-using Domain.Constants;
+using Domain.Constants.Subscription;
 using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using System.Globalization;

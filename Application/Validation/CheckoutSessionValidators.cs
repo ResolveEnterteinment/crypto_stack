@@ -1,4 +1,4 @@
-using Domain.Constants;
+using Domain.Constants.Subscription;
 using Domain.DTOs.Payment;
 using FluentValidation;
 using System.Globalization;

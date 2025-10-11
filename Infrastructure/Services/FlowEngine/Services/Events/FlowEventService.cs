@@ -49,13 +49,13 @@ namespace Infrastructure.Services.FlowEngine.Services.Events
 
             foreach (var flow in pausedFlows)
             {
-                if (flow.Definition.ActiveResumeConfig != null && flow.Definition.ActiveResumeConfig.EventTriggers?.Count != 0)
+                if (flow.Definition.ActiveResumeConfig != null && flow.Definition.ActiveResumeConfig.EventTriggers?.Count > 0)
                 {
                     foreach (var trigger in flow.Definition.ActiveResumeConfig.EventTriggers!)
                     {
                         if (trigger.EventType == eventType)
                         {
-                            bool shouldResume = trigger.EventFilter?.Invoke(flow.Context, eventData) ?? true;
+                            bool shouldResume = trigger.EventFilter?.Invoke(flow.Context, eventData) == true;
 
                             if (shouldResume)
                             {

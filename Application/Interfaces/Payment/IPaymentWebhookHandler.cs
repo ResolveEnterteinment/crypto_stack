@@ -13,6 +13,6 @@ namespace Application.Interfaces.Payment
         /// <param name="stripeEvent">The Stripe event object</param>
         /// <param name="correlationId">Correlation ID for tracing</param>
         /// <returns>True if the event was successfully handled</returns>
-        Task<ResultWrapper> HandleStripeEventAsync(object stripeEvent, string? correlationId = null);
+        Task<ResultWrapper> HandleStripeEventAsync(object stripeEvent, string correlationId);
     }
 }

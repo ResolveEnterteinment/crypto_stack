@@ -6,6 +6,7 @@ using Application.Interfaces;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
+using Domain.Constants.Subscription;
 using Domain.DTOs;
 using Domain.DTOs.Payment;
 using Domain.Models.Subscription;
@@ -260,7 +261,7 @@ namespace crypto_investment_project.Server.Controllers
             var correlationId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
             using (_logger.BeginScope(new Dictionary<string, object>
             {
-                ["UserId"] = subscriptionCreateRequest?.UserId,
+                ["UserId"] = subscriptionCreateRequest.UserId,
                 ["Operation"] = "CreateSubscription",
                 ["CorrelationId"] = correlationId,
                 ["IdempotencyKey"] = idempotencyKey
@@ -293,7 +294,12 @@ namespace crypto_investment_project.Server.Controllers
 
                     // Authorization check - verify current user can create this subscription
                     var currentUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-                    var isAdmin = User.IsInRole("ADMIN");
+                    if (currentUserId == null)
+                    {
+                        return ResultWrapper.Unauthorized()
+                            .ToActionResult(this);
+                    }
+                        var isAdmin = User.IsInRole("ADMIN");
 
                     if (!isAdmin && subscriptionCreateRequest?.UserId != currentUserId)
                     {
@@ -317,18 +323,21 @@ namespace crypto_investment_project.Server.Controllers
 
                     var subscriptionCreateResult = await flow.ExecuteAsync();
 
-                    if (subscriptionCreateResult.Error != null)
+                    if (!subscriptionCreateResult.IsSuccess)
                     {
-                        throw subscriptionCreateResult.Error;
+                        throw subscriptionCreateResult.Error!;
                     }
 
                     var subscriptionId = flow.State.GetData<Guid>("SubscriptionId");
-                    if (subscriptionId == null || subscriptionId == Guid.Empty)
+                    if (subscriptionId == Guid.Empty)
                     {
                         throw new Exception("Subscription creation flow did not return a valid SubscriptionId");
                     }
 
-                    var checkoutSession = subscriptionCreateResult.Data as SessionDto;
+                    if(subscriptionCreateResult.Data is not SessionDto checkoutSession)
+                    {
+                        throw new Exception("Subscription creation flow did not return a valid Checkout Session");
+                    }
 
                     var response = new CheckoutSessionResponse
                     {

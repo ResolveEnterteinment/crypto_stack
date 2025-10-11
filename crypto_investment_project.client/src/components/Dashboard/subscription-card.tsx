@@ -1,52 +1,206 @@
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { SubscriptionCardProps, Allocation, SubscriptionStatus } from '../../types/subscription';
 import {
-    Modal,
-    Form,
-    Input,
-    Select,
-    DatePicker,
-    Button,
-    message,
-    InputNumber,
-    Card,
-    Divider,
-    Popconfirm,
-    Space,
-    Row,
-    Col,
-    Typography,
-    Progress,
-    Tooltip,
-    Tag,
-} from 'antd';
-import {
-    PlusOutlined,
-    DeleteOutlined,
-    EditOutlined,
-    HistoryOutlined,
-    RedoOutlined,
+    CheckCircleOutlined,
+    ClockCircleOutlined,
+    CloseCircleOutlined,
     CloseOutlined,
     CreditCardOutlined,
-    QuestionCircleOutlined,
-    DownOutlined,
-    UpOutlined,
+    DeleteOutlined,
+    DollarCircleOutlined,
     DollarOutlined,
-    CalendarOutlined,
-    PieChartOutlined
+    DownOutlined,
+    EditOutlined,
+    ExclamationCircleOutlined,
+    HistoryOutlined,
+    PieChartOutlined,
+    PlusOutlined,
+    QuestionCircleOutlined,
+    RedoOutlined,
+    ShoppingCartOutlined,
+    ShoppingOutlined,
+    SyncOutlined,
+    UpOutlined
 } from '@ant-design/icons';
-import SubscriptionPaymentManager from '../Subscription/SubscriptionPaymentManager';
-import { Asset, AssetColors } from '../../types/assetTypes';
-import { updateSubscription } from '../../services/subscription';
-import { getSupportedAssets } from '../../services/asset';
+import {
+    Badge,
+    Button,
+    Card,
+    Col,
+    DatePicker,
+    Divider,
+    Form,
+    Input,
+    InputNumber,
+    Modal,
+    Popconfirm,
+    Progress,
+    Row,
+    Select,
+    Space,
+    Tag,
+    Tooltip,
+    Typography,
+    message,
+} from 'antd';
 import dayjs from 'dayjs';
-import { PaymentRequestData, initiatePayment, syncPayments } from '../../services/payment';
-import { formatApiError } from '../../utils/apiErrorHandler';
+import { AnimatePresence, motion } from 'framer-motion';
+import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { getSupportedAssets } from '../../services/asset';
+import { PaymentRequestData, initiatePayment, syncPayments } from '../../services/payment';
+import { updateSubscription } from '../../services/subscription';
+import { Asset, AssetColors } from '../../types/assetTypes';
+import ProcessingIndicator from './ProcessingIndicator';
+import { Allocation, Subscription, SubscriptionCardProps, SubscriptionState, SubscriptionStateType, SubscriptionStatus } from '../../types/subscription';
+import { formatApiError } from '../../utils/apiErrorHandler';
+import SubscriptionPaymentManager from '../Subscription/SubscriptionPaymentManager';
 
 const { Option } = Select;
 const { Title, Text } = Typography;
+
+// Get status color and theme
+const getStatusConfig = (subscription: Subscription) => {
+    const status = subscription.status.toUpperCase();
+    const state = subscription.state;
+
+    // State takes precedence for visual feedback when there's active processing
+    if (state !== SubscriptionState.IDLE) {
+        return getProcessingStateConfig(state, status);
+    }
+
+    // Default status-based configuration when IDLE
+    return getIdleStatusConfig(status);
+};
+
+const getProcessingStateConfig = (state: SubscriptionStateType, status: string) => {
+    const stateConfigs = {
+        PENDING_CHECKOUT: {
+            color: '#faad14',
+            borderColor: 'rgba(250, 173, 20, 0.3)',
+            gradientStart: '#fff7e6',
+            gradientEnd: '#ffe7ba',
+            text: 'Awaiting Checkout',
+            badgeStatus: 'warning',
+            showPulse: true,
+            showProgress: false,
+            icon: <ShoppingCartOutlined />,
+            description: 'Complete your checkout to activate this subscription',
+            progressPercent: 20
+        },
+        PENDING_PAYMENT: {
+            color: '#1890ff',
+            borderColor: 'rgba(24, 144, 255, 0.3)',
+            gradientStart: '#e6f7ff',
+            gradientEnd: '#bae7ff',
+            text: 'Processing Payment',
+            badgeStatus: 'processing',
+            showPulse: true,
+            showProgress: true,
+            icon: <SyncOutlined spin />,
+            description: 'Your payment is being processed by our payment provider',
+            progressPercent: 40
+        },
+        PROCESSING_INVOICE: {
+            color: '#1890ff',
+            borderColor: 'rgba(24, 144, 255, 0.3)',
+            gradientStart: '#e6f7ff',
+            gradientEnd: '#bae7ff',
+            text: 'Processing Invoice',
+            badgeStatus: 'processing',
+            showPulse: true,
+            showProgress: true,
+            icon: <DollarCircleOutlined />,
+            description: 'Recording your payment and preparing asset allocation',
+            progressPercent: 60
+        },
+        ACQUIRING_ASSETS: {
+            color: '#13c2c2',
+            borderColor: 'rgba(19, 194, 194, 0.3)',
+            gradientStart: '#e6fffb',
+            gradientEnd: '#b5f5ec',
+            text: 'Acquiring Assets',
+            badgeStatus: 'processing',
+            showPulse: true,
+            showProgress: true,
+            icon: <ShoppingOutlined />,
+            description: 'Purchasing your allocated crypto assets on the exchange',
+            progressPercent: 80
+        },
+        IDLE: {
+            color: '#52c41a',
+            borderColor: 'rgba(82, 196, 26, 0.3)',
+            gradientStart: '#f6ffed',
+            gradientEnd: '#d9f7be',
+            text: status === 'ACTIVE' ? 'Active' : status,
+            badgeStatus: 'success',
+            showPulse: false,
+            showProgress: false,
+            icon: <CheckCircleOutlined />,
+            description: null,
+            progressPercent: 100
+        }
+    };
+
+    return stateConfigs[state] || stateConfigs.IDLE;
+};
+
+const getIdleStatusConfig = (status: string) => {
+    const statusConfigs = {
+        ACTIVE: {
+            color: '#52c41a',
+            borderColor: 'rgba(82, 196, 26, 0.3)',
+            gradientStart: '#f6ffed',
+            gradientEnd: '#d9f7be',
+            text: 'Active',
+            badgeStatus: 'success',
+            showPulse: false,
+            showProgress: false,
+            icon: <CheckCircleOutlined />,
+            description: null,
+            progressPercent: 100
+        },
+        SUSPENDED: {
+            color: '#ff4d4f',
+            borderColor: 'rgba(255, 77, 79, 0.3)',
+            gradientStart: '#fff1f0',
+            gradientEnd: '#ffccc7',
+            text: 'Suspended',
+            badgeStatus: 'error',
+            showPulse: false,
+            showProgress: false,
+            icon: <ExclamationCircleOutlined />,
+            description: 'Subscription suspended due to payment issues',
+            progressPercent: 0
+        },
+        CANCELLED: {
+            color: '#8c8c8c',
+            borderColor: 'rgba(140, 140, 140, 0.3)',
+            gradientStart: '#fafafa',
+            gradientEnd: '#e8e8e8',
+            text: 'Cancelled',
+            badgeStatus: 'default',
+            showPulse: false,
+            showProgress: false,
+            icon: <CloseCircleOutlined />,
+            description: null,
+            progressPercent: 0
+        },
+        PENDING: {
+            color: '#faad14',
+            borderColor: 'rgba(250, 173, 20, 0.3)',
+            gradientStart: '#fff7e6',
+            gradientEnd: '#ffe7ba',
+            text: 'Pending Setup',
+            badgeStatus: 'warning',
+            showPulse: false,
+            showProgress: false,
+            icon: <ClockCircleOutlined />,
+            description: 'Complete setup to activate',
+            progressPercent: 10
+        }
+    };
+
+    return statusConfigs[status as keyof typeof statusConfigs] || statusConfigs.ACTIVE;
+};
 
 interface EditFormData {
     amount: number;
@@ -71,6 +225,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
     const [assets, setAssets] = useState<Asset[]>([]);
     const [form] = Form.useForm<EditFormData>();
     const { user } = useAuth();
+    const statusConfig = getStatusConfig(subscription);
 
     // Format date
     const formatDate = (dateString: string | Date): string => {
@@ -109,22 +264,6 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
 
         return Math.min(Math.max(progress, 0), 100);
     };
-
-    // Get status color and theme
-    const getStatusConfig = () => {
-        switch (subscription.status) {
-            case SubscriptionStatus.ACTIVE:
-                return { color: '#52c41a', bgColor: '#f6ffed', borderColor: '#b7eb8f' };
-            case SubscriptionStatus.PENDING:
-                return { color: '#fa8c16', bgColor: '#fff7e6', borderColor: '#ffd591' };
-            case SubscriptionStatus.CANCELLED:
-                return { color: '#ff4d4f', bgColor: '#fff2f0', borderColor: '#ffadd2' };
-            default:
-                return { color: '#d9d9d9', bgColor: '#fafafa', borderColor: '#d9d9d9' };
-        }
-    };
-
-    const statusConfig = getStatusConfig();
 
     // Handle view history click
     const handleViewHistoryClick = () => {
@@ -366,16 +505,19 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                     style={{
                         background: 'rgba(255, 255, 255, 0.9)',
                         backdropFilter: 'blur(10px)',
-                        border: `1px solid ${statusConfig.borderColor}`,
+                        border: `2px solid ${statusConfig.borderColor}`,
                         borderRadius: '16px',
-                        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+                        boxShadow: statusConfig.showPulse
+                            ? `0 0 0 4px ${statusConfig.borderColor}, 0 8px 32px rgba(0, 0, 0, 0.1)`
+                            : '0 8px 32px rgba(0, 0, 0, 0.1)',
                         transition: 'all 0.3s ease',
-                        opacity: subscription.isCancelled ? 0.75 : 1
+                        opacity: subscription.isCancelled ? 0.75 : 1,
+                        animation: statusConfig.showPulse ? 'pulse 2s infinite' : 'none'
                     }}
                     hoverable
                     bodyStyle={{ padding: '24px' }}
                 >
-                    {/* Header with Status Badge */}
+                    {/* Header Section */}
                     <Row justify="space-between" align="top" style={{ marginBottom: '20px' }}>
                         <Col flex="1">
                             <Space direction="vertical" size="small">
@@ -399,31 +541,42 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                                         </Text>
                                     </div>
                                 </Space>
-
-                                <Space align="center" size="small">
-                                    <CalendarOutlined style={{ color: '#8c8c8c', fontSize: '12px' }} />
-                                    <Text type="secondary" style={{ fontSize: '12px' }}>
-                                        Created: {formatDate(subscription.createdAt)}
-                                    </Text>
-                                </Space>
                             </Space>
                         </Col>
 
                         <Col>
-                            <Tag
-                                color={statusConfig.color}
-                                style={{
-                                    borderRadius: '12px',
-                                    padding: '4px 12px',
-                                    fontSize: '12px',
-                                    fontWeight: 500,
-                                    border: 'none'
-                                }}
+                            <Badge
+                                status={statusConfig.badgeStatus as any}
+                                dot={statusConfig.showPulse}
+                                offset={[-5, 5]}
                             >
-                                {subscription.status}
-                            </Tag>
+                                <Tag
+                                    icon={statusConfig.icon}
+                                    color={statusConfig.color}
+                                    style={{
+                                        borderRadius: '12px',
+                                        padding: '6px 14px',
+                                        fontSize: '12px',
+                                        fontWeight: 600,
+                                        border: 'none',
+                                        boxShadow: statusConfig.showPulse
+                                            ? `0 2px 8px ${statusConfig.color}40`
+                                            : 'none'
+                                    }}
+                                >
+                                    {statusConfig.text}
+                                </Tag>
+                            </Badge>
                         </Col>
                     </Row>
+
+                    {/* Processing Indicator */}
+                    <AnimatePresence>
+                        <ProcessingIndicator
+                            config={statusConfig}
+                            subscription={subscription}
+                        />
+                    </AnimatePresence>
 
                     {/* Progress Section */}
                     <div style={{ marginBottom: '20px' }}>

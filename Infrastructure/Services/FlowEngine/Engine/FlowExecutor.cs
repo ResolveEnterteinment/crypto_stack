@@ -10,11 +10,8 @@ using Infrastructure.Services.FlowEngine.Core.PauseResume;
 using Infrastructure.Utilities;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyModel;
 using Microsoft.Extensions.Logging;
-using Stripe;
 using System.Text;
-using System.Text.Json;
 
 namespace Infrastructure.Services.FlowEngine.Engine
 {
@@ -22,7 +19,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
     {
         private readonly ILogger<FlowExecutor> _logger;
         private readonly IIdempotencyService _idempotency;
-        private readonly IFlowSecurity _security;
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly IFlowNotificationService _notificationService;
 
@@ -33,7 +29,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
             IHubContext<FlowHub> hubContext)
         {
             _logger = logger;
-            _security = serviceProvider.GetRequiredService<IFlowSecurity>();
             _idempotency = serviceProvider.GetRequiredService<IIdempotencyService>();
             _notificationService = serviceProvider.GetRequiredService<IFlowNotificationService>();
             _scopeFactory = scopeFactory;
@@ -48,12 +43,11 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                 flow.State.Events.Add(new FlowEvent
                 {
-                    FlowId = flow.State.FlowId,
                     EventType = "FlowStarted",
                     Description = $"Flow execution started.",
                     Data = new Dictionary<string, object>
                     {
-                        { "startedAt", flow.State.StartedAt }
+                        { "StartedAt", flow.State.StartedAt }
                     }.ToSafe(),
                 });
 
@@ -104,7 +98,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                 flow.State.Events.Add(new FlowEvent
                 {
-                    FlowId = flow.State.FlowId,
                     EventType = "FlowCompleted",
                     Description = $"Flow completed successfully.",
                     Data = new Dictionary<string, object>
@@ -124,8 +117,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                 flow.State.Events.Add(new FlowEvent
                 {
-                    FlowId = flow.State.FlowId,
-                    EventType = "FlowFailed",
+                    EventType = "FlowExecutionError",
                     Description = $"Flow failed with {ex.GetType().Name} error.",
                     Data = new Dictionary<string, object>
                     {
@@ -148,14 +140,31 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
         private async Task ExecuteStepAsync(FlowExecutionContext stepContext, FlowStep step, CancellationToken cancellationToken)
         {
+            var flow = stepContext.Flow;
+
             // Check for cancellation before starting step execution
             if (cancellationToken.IsCancellationRequested)
             {
                 step.Status = StepStatus.Cancelled;
+
+                flow.State.Events.Add(new FlowEvent
+                {
+                    EventType = "StepCancel",
+                    Description = $"Flow cancelled",
+                    Data = new Dictionary<string, object>
+                    {
+                        { "cancellationToken", cancellationToken }
+                    }.ToSafe(),
+                });
+
                 return;
             }
 
-            var flow = stepContext.Flow;
+            flow.State.Events.Add(new FlowEvent
+            {
+                EventType = "StepStart",
+                Description = $"Executing step {step.Name}"
+            });
 
             //add stop watch
             step.StartedAt = DateTime.UtcNow;
@@ -178,7 +187,6 @@ namespace Infrastructure.Services.FlowEngine.Engine
                         if (depStep.Status == StepStatus.Completed)
                         {
                             stepDepPassed = true;
-                            break;
                         }
                     }
 
@@ -201,6 +209,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
                         var hasRole = await securityService.UserHasRoleAsync(userId, requiredRole);
                         {
                             step.Status = StepStatus.Failed;
+
                             throw new FlowSecurityException($"User {userId} lacks required role '{requiredRole}' for step {step.Name}");
                         }
                     }
@@ -214,12 +223,14 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     if (!flow.State.Data.TryGetValue(dependency.Key, out SafeObject? value))
                     {
                         step.Status = StepStatus.Failed;
+
                         throw new FlowExecutionException($"Missing required data for step {step.Name}: {dependency.Key}");
                     }
 
                     if (value.Type != dependency.Value.FullName)
                     {
                         step.Status = StepStatus.Failed;
+
                         throw new FlowExecutionException($"Invalid required data type for step {step.Name}: {dependency.Value.Name}");
                     }
                 }
@@ -249,6 +260,12 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 {
                     step.Status = StepStatus.Skipped;
 
+                    flow.State.Events.Add(new FlowEvent
+                    {
+                        EventType = "StepConditionCheck",
+                        Description = $"Step condition check failed. Skipping execution."
+                    });
+
                     await flow.PersistAsync();
 
                     await _notificationService.NotifyStepStatusChanged(flow, step);
@@ -272,6 +289,14 @@ namespace Infrastructure.Services.FlowEngine.Engine
                         _logger.LogInformation("Idempotent step {StepName} already executed successfully, returning cached result", step.Name);
 
                         step.Result = StepResult.ConcurrencyConflict(data: cachedResult);
+
+                        flow.State.Events.Add(new FlowEvent
+                        {
+                            EventType = "StepIdempotecyCheck",
+                            Description = $"Idempotent step. Returning cached result",
+                            Data = new Dictionary<string, object>
+                                {{ "cachedResult", cachedResult }}.ToSafe(),
+                        });
 
                         // Skip execution and continue to next step
                         return;
@@ -305,7 +330,15 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                         if (step.AllowFailure)
                         {
-                            _logger.LogWarning("Step {StepName} failed but is allowed to fail, continuing flow", step.Name);
+                            flow.State.Events.Add(new FlowEvent
+                            {
+                                EventType = "StepExecution",
+                                Description = $"Step {step.Name} failed but is allowed to fail, continuing flow",
+                                Data = new Dictionary<string, object>
+                                {{ "error", ex.Message }}.ToSafe(),
+                            });
+
+                            _logger.LogWarning("Step {StepName} failed but is allowed to fail. Continuing flow", step.Name);
                         }
                         else
                         {
@@ -325,12 +358,23 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 // Handle static conditional branching
                 if (step.Branches.Count > 0)
                 {
+                    flow.State.Events.Add(new FlowEvent
+                    {
+                        EventType = "StepExecution",
+                        Description = $"Executing static branches",
+                    });
+
                     await ExecuteStaticBranches(flow.Context, step.Branches, cancellationToken);
                 }
 
                 // Handle dynamic sub-branching
                 if (step.DynamicBranching != null)
                 {
+                    flow.State.Events.Add(new FlowEvent
+                    {
+                        EventType = "StepExecution",
+                        Description = $"Executing dynamic branches",
+                    });
                     await ExecuteDynamicSubSteps(flow.Context, step.DynamicBranching, cancellationToken);
                 }
 
@@ -353,6 +397,14 @@ namespace Infrastructure.Services.FlowEngine.Engine
                     {
                         // Triggering external flows should not fail this flow.
                         _logger.LogWarning(ex, "Failed to trigger flow");
+
+                        flow.State.Events.Add(new FlowEvent
+                        {
+                            EventType = "StepTrigger",
+                            Description = $"Failed to trigger flow",
+                            Data = new Dictionary<string, object>
+                                {{ "error", ex.Message }}.ToSafe(),
+                        });
                     }
                 }
 
@@ -381,23 +433,18 @@ namespace Infrastructure.Services.FlowEngine.Engine
                 step.Status = StepStatus.Failed;
                 step.Error = SerializableError.FromException(ex);
 
-                // Create step result with safe exception handling
-                try
-                {
-                    step.Result = StepResult.Failure(ex.Message, ex);
-                }
-                catch (Exception serializationEx)
-                {
-                    _logger.LogWarning(serializationEx, "Failed to serialize exception in step result for step {StepName}, using fallback", step.Name);
-
-                    // Fallback: Create a result without the problematic exception
-                    step.Result = StepResult.Failure($"Step failed: {ex.Message} (serialization error: {serializationEx.Message})", null);
-                }
+                step.Result = StepResult.Failure(ex.Message, ex);
 
                 throw;
             }
             finally
             {
+                flow.State.Events.Add(new FlowEvent
+                {
+                    EventType = "StepCompleted",
+                    Description = $"Step {step.Name} execution completed."
+                });
+
                 step.CompletedAt = DateTime.UtcNow;
             }
             
@@ -425,8 +472,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
             // Add pause event to timeline
             flow.State.Events.Add(new FlowEvent
             {
-                FlowId = flow.State.FlowId,
-                EventType = "FlowPaused",
+                EventType = "StepExecution",
                 Description = $"Flow paused: {pauseCondition.Message}",
                 Data = new Dictionary<string, object>
                 {
@@ -456,15 +502,13 @@ namespace Infrastructure.Services.FlowEngine.Engine
             flow.State.PauseMessage = null;
             flow.State.Events.Add(new FlowEvent
             {
-                EventId = Guid.NewGuid(),
-                FlowId = flow.State.FlowId,
                 EventType = "FlowResumed",
                 Description = $"Flow resumed by {"system"} (reason: {reason})",
                 Timestamp = DateTime.UtcNow,
                 Data = new Dictionary<string, object>
                 {
-                    { "resumeReason", reason.ToString() },
-                    { "resumedBy", "system" }
+                    { "Reason", reason.ToString() },
+                    { "ResumedBy", "system" }
                 }.ToSafe()
             });
 
@@ -512,14 +556,13 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
             flow.State.Events.Add(new FlowEvent
             {
-                FlowId = flow.State.FlowId,
                 EventType = "FlowRetried",
                 Description = $"Flow retried by {"system"} (reason: {reason})",
                 Data = new Dictionary<string, object>
                 {
-                    { "retryReason", reason },
-                    { "retriedBy", "system" },
-                    { "stepName", failedStep.Name }
+                    { "Reason", reason },
+                    { "RetriedBy", "system" },
+                    { "StepName", failedStep.Name }
                 }.ToSafe()
             });
 
@@ -557,15 +600,13 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
             flow.State.Events.Add(new FlowEvent
             {
-                EventId = Guid.NewGuid(),
-                FlowId = flow.State.FlowId,
                 EventType = "FlowCancelled",
                 Description = $"Flow cancelled by {"system"} (reason: {reason})",
                 Timestamp = DateTime.UtcNow,
                 Data = new Dictionary<string, object>
                 {
-                    { "cancelReason", reason.ToString() },
-                    { "cancelledBy", "system" }
+                    { "Reason", reason.ToString() },
+                    { "CancelledBy", "system" }
                 }.ToSafe()
             });
 
@@ -600,6 +641,12 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
                     branches.Add(branch);
                 });
+
+            context.Flow.State.Events.Add(new FlowEvent
+             {
+                 EventType = "DynamicSubStepGeneration",
+                 Description = $"Generated {dataItems.Count} dynamic sub-steps for step {context.CurrentStep.Name} using strategy {config.ExecutionStrategy}"
+            });
 
             _logger.LogInformation("Generated {SubStepCount} dynamic sub-steps for step {StepName} using strategy {Strategy}",
                 dataItems.Count, context.CurrentStep.Name, config.ExecutionStrategy);
@@ -688,7 +735,7 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
             var tasks = resourceGroups.Select(async group =>
             {
-                foreach (var branch in group)
+                var groupTasks = group.ToList().Select(async branch =>
                 {
                     foreach (var subStep in branch.Steps)
                     {
@@ -704,7 +751,9 @@ namespace Infrastructure.Services.FlowEngine.Engine
                         await _notificationService.NotifyFlowStatusChanged(context.Flow);
                         await _notificationService.NotifyStepStatusChanged(context.Flow, context.CurrentStep);
                     }
-                }
+                });
+
+                await Task.WhenAll(groupTasks);
             });
 
             await Task.WhenAll(tasks);
@@ -834,15 +883,14 @@ namespace Infrastructure.Services.FlowEngine.Engine
 
             context.Flow.State.Events.Add(new FlowEvent
             {
-                FlowId = context.Flow.Id,
                 EventType = "FlowTriggered",
                 Description = $"Triggered flow {flowType.Name} with id {flow.State.FlowId}",
                 Data = new Dictionary<string, object>
-        {
-            { "triggeredFlowId", flow.State.FlowId },
-            { "triggeredFlowType", flowType.Name },
-            { "triggeredByStep", context.CurrentStep.Name }
-        }.ToSafe()
+                {
+                    { "triggeredFlowId", flow.State.FlowId },
+                    { "triggeredFlowType", flowType.Name },
+                    { "triggeredByStep", context.CurrentStep.Name }
+                }.ToSafe()
             });
 
             // Execute the flow with linked cancellation token

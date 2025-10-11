@@ -25,6 +25,32 @@ namespace Infrastructure.Services.FlowEngine.Core.Models
         }
 
         /// <summary>
+        /// Attempts to retrieve the data associated with the specified key.
+        /// </summary>
+        /// <remarks>This method does not throw an exception if the key does not exist or if the data
+        /// cannot be cast to the specified type. Instead, it returns <see langword="false"/> and sets <paramref
+        /// name="value"/> to its default value.</remarks>
+        /// <typeparam name="T">The type of the data to retrieve.</typeparam>
+        /// <param name="key">The key associated with the data to retrieve. Cannot be <see langword="null"/> or empty.</param>
+        /// <param name="value">When this method returns, contains the data associated with the specified key if the key exists and the data
+        /// is of type <typeparamref name="T"/>; otherwise, the default value for the type <typeparamref name="T"/>.</param>
+        /// <returns><see langword="true"/> if the data associated with the specified key was successfully retrieved; otherwise,
+        /// <see langword="false"/>.</returns>
+        public bool TryGetData<T>(string key, out T? value)
+        {
+            var result =  State.GetData<T>(key);
+
+            if (result == null)
+            {
+                value = default;
+                return false;
+            }
+
+            value = result;
+            return true;
+        }
+
+        /// <summary>
         /// Sets data in the flow's data dictionary as a SafeObject
         /// </summary>
         /// <param name="key">The data key</param>

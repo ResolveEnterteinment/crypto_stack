@@ -1,4 +1,4 @@
-﻿namespace Domain.Constants
+﻿namespace Domain.Constants.Subscription
 {
     /// <summary>
     /// Comprehensive categorization of failure reasons

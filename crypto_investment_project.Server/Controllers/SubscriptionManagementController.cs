@@ -1,5 +1,6 @@
 using Application.Extensions;
 using Domain.Constants;
+using Domain.Constants.Subscription;
 using Domain.DTOs;
 using Domain.Interfaces;
 using Microsoft.AspNetCore.Authorization;

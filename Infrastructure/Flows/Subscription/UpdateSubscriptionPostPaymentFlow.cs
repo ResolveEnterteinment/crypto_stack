@@ -1,6 +1,6 @@
 ﻿using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
-using Domain.Constants;
+using Domain.Constants.Subscription;
 using Domain.Exceptions;
 using Domain.Models.Payment;
 using Domain.Models.Subscription;

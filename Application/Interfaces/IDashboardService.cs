@@ -26,6 +26,7 @@ namespace Application.Interfaces
             decimal portfolioValue
             );
         public void InvalidateDashboardCacheAsync(Guid userId);
+        public Task InvalidateCacheAndPush(Guid userId);
         Task<ResultWrapper> WarmupUserCacheAsync(Guid userId);
     }
 }
