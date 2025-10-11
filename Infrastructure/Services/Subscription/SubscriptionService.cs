@@ -855,6 +855,7 @@ namespace Infrastructure.Services.Subscription
                             TotalInvestments = sub.TotalInvestments!.Value,
                             EndDate = sub.EndDate,
                             Status = sub.Status,
+                            State = sub.State,
                             IsCancelled = sub.IsCancelled
                         });
                     }

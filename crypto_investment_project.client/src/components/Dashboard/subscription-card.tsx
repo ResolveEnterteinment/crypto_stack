@@ -50,6 +50,7 @@ import { PaymentRequestData, initiatePayment, syncPayments } from '../../service
 import { updateSubscription } from '../../services/subscription';
 import { Asset, AssetColors } from '../../types/assetTypes';
 import ProcessingIndicator from './ProcessingIndicator';
+import ResponsiveProgressOverlay from './ResponsiveProgressOverlay';
 import { Allocation, Subscription, SubscriptionCardProps, SubscriptionState, SubscriptionStateType, SubscriptionStatus } from '../../types/subscription';
 import { formatApiError } from '../../utils/apiErrorHandler';
 import SubscriptionPaymentManager from '../Subscription/SubscriptionPaymentManager';
@@ -363,7 +364,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
     const handleSyncPaymentsClick = async () => {
         try {
             setSyncing(true);
-            
+
             var result = await syncPayments(subscription.id);
 
             message
@@ -517,6 +518,13 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                     hoverable
                     bodyStyle={{ padding: '24px' }}
                 >
+                    {/* Progress overlays */}
+                    <ResponsiveProgressOverlay
+                        subscription={subscription}
+                        show={subscription.state !== SubscriptionState.IDLE ||
+                            subscription.status === SubscriptionStatus.PENDING}
+                    />
+
                     {/* Header Section */}
                     <Row justify="space-between" align="top" style={{ marginBottom: '20px' }}>
                         <Col flex="1">
@@ -780,16 +788,16 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                                                         {retrying ? 'Retrying...' : 'Retry Payment'}
                                                     </Button>
                                                 )}
-  
-                                                    <Button
-                                                        size="small"
-                                                        loading={syncing}
-                                                        style={{ backgroundColor: 'green', borderColor: 'green', color: 'white' }}
-                                                        onClick={handleSyncPaymentsClick}
-                                                        icon={<RedoOutlined />}
-                                                    >
-                                                        {retrying ? 'Retrying...' : 'Sync Payments'}
-                                                    </Button>
+
+                                                <Button
+                                                    size="small"
+                                                    loading={syncing}
+                                                    style={{ backgroundColor: 'green', borderColor: 'green', color: 'white' }}
+                                                    onClick={handleSyncPaymentsClick}
+                                                    icon={<RedoOutlined />}
+                                                >
+                                                    {retrying ? 'Retrying...' : 'Sync Payments'}
+                                                </Button>
 
                                                 {subscription.status !== SubscriptionStatus.PENDING && (
                                                     <Button

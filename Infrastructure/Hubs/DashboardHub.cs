@@ -120,45 +120,5 @@ namespace Infrastructure.Hubs
 
             await base.OnDisconnectedAsync(exception);
         }
-
-        /// <summary>
-        /// Manually refresh dashboard data
-        /// </summary>
-        public async Task RefreshDashboard()
-        {
-            try
-            {
-                var userId = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var userGuid))
-                {
-                    throw new HubException("Authentication required");
-                }
-
-                // Get dashboard service when needed
-                using var scope = _scopeFactory.CreateScope();
-                var dashboardService = scope.ServiceProvider.GetRequiredService<IDashboardService>();
-
-                // Force refresh by invalidating cache and fetching new data
-                dashboardService.InvalidateDashboardCacheAsync(userGuid);
-
-                var dashboardData = await dashboardService.GetDashboardDataAsync(userGuid);
-                if (dashboardData.IsSuccess && dashboardData.Data != null)
-                {
-                    await Clients.Caller.SendAsync("DashboardUpdate", dashboardData.Data);
-                    _logger.LogInformation("Manual dashboard refresh completed for user {UserId}", userId);
-                }
-                else
-                {
-                    await Clients.Caller.SendAsync("DashboardError", "Failed to refresh dashboard data");
-                    _logger.LogWarning("Manual dashboard refresh failed for user {UserId}: {ErrorMessage}",
-                        userId, dashboardData.ErrorMessage);
-                }
-            }
-            catch (Exception ex) when (!(ex is HubException))
-            {
-                _logger.LogError(ex, "Error during manual dashboard refresh");
-                throw new HubException($"Error refreshing dashboard: {ex.Message}");
-            }
-        }
     }
 }

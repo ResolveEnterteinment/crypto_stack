@@ -8,6 +8,7 @@ using Domain.DTOs.Payment;
 using Domain.Exceptions;
 using Domain.Models.Dashboard;
 using Domain.Models.Payment;
+using Domain.Models.Subscription;
 using FluentValidation;
 using Infrastructure.Hubs;
 using Infrastructure.Services;
@@ -136,16 +137,19 @@ namespace Infrastructure.Flows.Subscription
                     // Create the subscription
                     var subscriptionCreateResult = await _subscriptionService.CreateAsync(request);
 
-                    if (subscriptionCreateResult == null || !subscriptionCreateResult.IsSuccess)
+                    if (subscriptionCreateResult == null || !subscriptionCreateResult.IsSuccess || subscriptionCreateResult.Data.Documents.FirstOrDefault() == null)
                     {
                         throw new DatabaseException($"Failed to create subscription: {subscriptionCreateResult?.ErrorMessage}");
                     }
 
-                    var subscriptionId = subscriptionCreateResult.Data.AffectedIds.First();
+                    var subscription = subscriptionCreateResult.Data.Documents.First();
+
+                    var subscriptionId = subscription.Id;
 
                     _logger.LogInformation("Successfully created subscription {SubscriptionId} for user {UserId}",
                         subscriptionId, request.UserId);
 
+                    context.SetData("Subscription", subscription);
                     context.SetData("SubscriptionId", subscriptionId);
 
                     return StepResult.Success($"Subscription entity with ID {subscriptionId} created", subscriptionId);
@@ -163,7 +167,7 @@ namespace Infrastructure.Flows.Subscription
                     var idempotencyKey = context.GetData<string>("IdempotencyKey");
                     var subscriptionId = context.GetData<Guid>("SubscriptionId");
 
-                    await _idempotencyService.StoreResultAsync(idempotencyKey, subscriptionId);
+                    _idempotencyService.StoreResultAsync(idempotencyKey, subscriptionId);
 
                     return StepResult.Success($"Idempotency result stored with key {idempotencyKey}");
                 })
@@ -172,20 +176,23 @@ namespace Infrastructure.Flows.Subscription
             // Step 5: Update subscription state to PendingCheckout
             _builder.Step("UpdateSubscriptionState")
                 .After("CreateSubscriptionEntity")
-                .RequiresData<Guid>("SubscriptionId")
+                .RequiresData<SubscriptionData>("Subscription")
                 .Execute(async context =>
                 {
-                    var subscriptionId = context.GetData<Guid>("SubscriptionId");
+                    var subscription = context.GetData<SubscriptionData>("Subscription");
 
-                    var updateResult = await _subscriptionService.UpdateAsync(subscriptionId, new Dictionary<string, object>
+                    var updateResult = await _subscriptionService.UpdateAsync(subscription.Id, new Dictionary<string, object>
                     {
                         ["State"] = SubscriptionState.PendingCheckout
                     });
                     if (!updateResult.IsSuccess)
                     {
-                        throw new DatabaseException($"Failed to update subscription {subscriptionId} state to PendingPayment: {updateResult.ErrorMessage}");
+                        throw new DatabaseException($"Failed to update subscription {subscription.Id} state to PendingPayment: {updateResult.ErrorMessage}");
                     }
-                    return StepResult.Success($"Subscription {subscriptionId} state updated to PendingPayment");
+
+                    _dashboardService.InvalidateCacheAndPush(subscription.UserId);
+
+                    return StepResult.Success($"Subscription {subscription.Id} state updated to PendingPayment");
                 })
                 .AllowFailure()
                 .InParallel()
@@ -355,7 +362,7 @@ namespace Infrastructure.Flows.Subscription
                     context.SetData("InvoiceId", session.InvoiceId);
                     context.SetData("Subscription", subscription);
 
-                    await _dashboardService.InvalidateCacheAndPush(subscription.UserId);
+                    _dashboardService.InvalidateCacheAndPush(subscription.UserId);
 
                     return StepResult.Success($"Updated and activated subscription {subscriptionId} with session data. Notification sent to user ID {context.State.UserId}");
                 })

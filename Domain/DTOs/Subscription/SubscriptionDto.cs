@@ -15,6 +15,7 @@ namespace Domain.DTOs.Subscription
         public required decimal TotalInvestments { get; set; } = 0;
         public DateTime? EndDate { get; set; } = null;
         public required string Status { get; set; } = SubscriptionStatus.Pending;
+        public required string State { get; set; } = SubscriptionState.Idle;
         public bool IsCancelled { get; set; } = false;
     }
 }

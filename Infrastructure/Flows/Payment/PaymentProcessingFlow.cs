@@ -86,6 +86,7 @@ namespace Infrastructure.Flows.Payment
                     return StepResult.Success($"Set Subscription ID {subscription.Id} state to ProcessingPayments.", updateResult.Data.Documents.First());
                 })
                 .InParallel()
+                .AllowFailure()
                 .Build();
 
             _builder.Step("PreparePayment")
@@ -180,6 +181,7 @@ namespace Infrastructure.Flows.Payment
 
                     return StepResult.Success($"Updated subscription {subscription.Id} state to AcquiringAssets.", updateResult.Data.Documents.First());
                 })
+                .AllowFailure()
                 .Build();
 
             _builder.Step("FetchAllocations")
@@ -258,6 +260,7 @@ namespace Infrastructure.Flows.Payment
 
                     return StepResult.Success($"Updated subscription {subscription.Id} state to AcquiringAssets.", updateResult.Data.Documents.First());
                 })
+                .AllowFailure()
                 .Build();
 
             _builder.Step("HandleDust")

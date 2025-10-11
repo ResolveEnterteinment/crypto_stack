@@ -62,14 +62,15 @@ const DashboardPageContent: React.FC = () => {
     }>({ show: false, message: '' });
 
     // SignalR integration for real-time updates (moved before usage)
-    const handleSignalRDashboardUpdate = useCallback((newDashboardData: Dashboard) => {
+    const handleSignalRDashboardUpdate = useCallback(async (newDashboardData: Dashboard) => {
         console.log('Received real-time dashboard update:', newDashboardData);
         setDashboardData(newDashboardData);
+        await fetchSubscriptions();
         
         // Show notification for real-time updates
         notification.info({
             message: 'Dashboard Updated',
-            description: 'Your dashboard has been updated with new data',
+            description: 'Your dashboard has been updated',
             placement: 'topRight',
             duration: 3
         });
