@@ -9,7 +9,22 @@
  */
 
 /* Import global styles */
+@import './reset.css';
+
+/* 2. Design Tokens */
+@import './variables.css';
+
+/* 3. Global Styles */
 @import './global.css';
+
+/* 4. Utilities (NEW) */
+@import './utilities.css';
+
+/* 5. Layouts (NEW) */
+@import './layouts.css';
+
+/* 6. Animations (NEW) */
+@import './animations.css';
 
 /* ========================================
    ENTRY POINT SPECIFIC STYLES

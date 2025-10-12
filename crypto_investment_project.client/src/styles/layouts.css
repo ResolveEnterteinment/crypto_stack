@@ -1,0 +1,101 @@
+/**
+ * LAYOUT UTILITIES
+ * 
+ * Common layout patterns
+ */
+
+/* Sidebar Layout */
+.layout-sidebar {
+    display: grid;
+    grid-template-columns: var(--sidebar-width) 1fr;
+    min-height: 100vh;
+}
+
+@media (max-width: 768px) {
+    .layout-sidebar {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Header Layout */
+.layout-header {
+    display: grid;
+    grid-template-rows: var(--header-height) 1fr;
+    min-height: 100vh;
+}
+
+/* Centered Layout */
+.layout-centered {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: var(--spacing-lg);
+}
+
+/* Split Layout */
+.layout-split {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-xl);
+}
+
+@media (max-width: 768px) {
+    .layout-split {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Grid Layouts */
+.grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-lg);
+}
+
+.grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--spacing-lg);
+}
+
+.grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--spacing-lg);
+}
+
+@media (max-width: 768px) {
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Aspect Ratio Boxes */
+.aspect-square {
+    aspect-ratio: 1 / 1;
+}
+
+.aspect-video {
+    aspect-ratio: 16 / 9;
+}
+
+.aspect-portrait {
+    aspect-ratio: 3 / 4;
+}
+
+/* Sticky Elements */
+.sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+}
+
+.sticky-bottom {
+    position: sticky;
+    bottom: 0;
+    z-index: var(--z-sticky);
+}

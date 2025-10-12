@@ -1,10 +1,7 @@
 ﻿import React from 'react';
 import ReactDOM from 'react-dom/client';
-import './styles/reset.css';
-import './styles/variables.css';
-import './styles/global.css';
 import App from './App';
-import './index.css';
+import './styles/index.css';
 
 // Performance monitoring
 const PERFORMANCE_CONFIG = {
