@@ -1,0 +1,192 @@
+/**
+ * CSS RESET & BASE STYLES
+ * 
+ * Modern CSS reset with Apple-inspired sensible defaults
+ * Based on modern-normalize with custom enhancements
+ */
+
+/* ========================================
+   DOCUMENT & BOX-SIZING
+   ======================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -moz-tab-size: 4;
+  tab-size: 4;
+  line-height: 1.5;
+}
+
+/* ========================================
+   BODY
+   ======================================== */
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 
+               'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #1D1D1F;
+  background-color: #FAFAFA;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* ========================================
+   TYPOGRAPHY RESET
+   ======================================== */
+
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #1D1D1F;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: #007AFF;
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+
+a:hover {
+  color: #0051D5;
+}
+
+a:active {
+  color: #004FC4;
+}
+
+/* ========================================
+   LISTS
+   ======================================== */
+
+ul, ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ========================================
+   MEDIA
+   ======================================== */
+
+img, 
+picture, 
+video, 
+canvas, 
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* ========================================
+   FORMS
+   ======================================== */
+
+button,
+input,
+optgroup,
+select,
+textarea {
+  font-family: inherit;
+  font-size: 100%;
+  line-height: 1.5;
+  margin: 0;
+}
+
+button,
+select {
+  text-transform: none;
+}
+
+button,
+[type='button'],
+[type='reset'],
+[type='submit'] {
+  -webkit-appearance: button;
+  cursor: pointer;
+}
+
+button:disabled,
+[disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* ========================================
+   TABLES
+   ======================================== */
+
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+/* ========================================
+   ACCESSIBILITY
+   ======================================== */
+
+:focus-visible {
+  outline: 2px solid #007AFF;
+  outline-offset: 2px;
+}
+
+/* Remove outline for mouse users */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ========================================
+   DARK MODE SUPPORT
+   ======================================== */
+
+html.dark body {
+  color: #F5F5F7;
+  background-color: #000000;
+}
+
+html.dark h1,
+html.dark h2,
+html.dark h3,
+html.dark h4,
+html.dark h5,
+html.dark h6 {
+  color: #F5F5F7;
+}
+
+html.dark a {
+  color: #0A84FF;
+}
+
+html.dark a:hover {
+  color: #409CFF;
+}

@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
+import { ThemeProvider } from './providers/ThemeProvider';
 
 // Pages
 import LandingPage from './pages/LandingPage';
@@ -34,6 +35,7 @@ import ProtectedRoute from './components/ProtectedRoute';
  */
 const App: React.FC = () => {
     return (
+        <ThemeProvider defaultMode="system">
         <AuthProvider>
             <NotificationProvider>
                 <BrowserRouter>
@@ -231,7 +233,8 @@ const App: React.FC = () => {
                     </Routes>
                 </BrowserRouter>
             </NotificationProvider>
-        </AuthProvider>
+            </AuthProvider>
+        </ThemeProvider>
     );
 };
 

@@ -466,11 +466,8 @@ const DashboardPageContent: React.FC = () => {
                                         marginBottom: '8px'
                                     }}
                                 >
-                                    Investment Dashboard
+                                    Dashboard
                                 </Title>
-                                <Text type="secondary" style={{ fontSize: '16px' }}>
-                                    Welcome back, {user?.fullName}. Here's your portfolio overview.
-                                </Text>
                             </Col>
                             <Col>
                                 <div style={{ textAlign: 'right' }}>
@@ -489,7 +486,7 @@ const DashboardPageContent: React.FC = () => {
                     <div style={{ 
                         position: 'fixed', 
                         bottom: '20px', 
-                        right: '20px', 
+                        right: '20px',
                         zIndex: 1000 
                     }}>
                         <Card
@@ -717,7 +714,7 @@ const DashboardPageContent: React.FC = () => {
                         <Row justify="space-between" align="middle" style={{ marginBottom: '24px' }}>
                             <Col>
                                 <Title level={3} style={{ marginBottom: '8px' }}>
-                                    Active Subscriptions
+                                    Subscriptions
                                 </Title>
                                 <Text type="secondary" style={{ fontSize: '16px' }}>
                                     Manage your investment subscriptions

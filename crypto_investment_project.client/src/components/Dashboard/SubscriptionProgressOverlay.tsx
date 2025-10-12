@@ -1,15 +1,14 @@
-import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import {
     CheckCircleOutlined,
-    ClockCircleOutlined,
-    SyncOutlined,
     DollarCircleOutlined,
-    ShoppingOutlined,
+    LoadingOutlined,
     ShoppingCartOutlined,
-    LoadingOutlined
+    ShoppingOutlined,
+    SyncOutlined
 } from '@ant-design/icons';
-import { Typography, Space } from 'antd';
+import { Space, Typography } from 'antd';
+import { AnimatePresence, motion } from 'framer-motion';
+import React from 'react';
 import { Subscription, SubscriptionState, SubscriptionStatus } from '../../types/subscription';
 
 const { Text } = Typography;
@@ -25,6 +24,7 @@ interface ProgressStep {
 interface SubscriptionProgressOverlayProps {
     subscription: Subscription;
     show: boolean;
+    showSteps: boolean;
 }
 
 // Define the progression steps in order
@@ -34,28 +34,28 @@ const PROGRESS_STEPS: ProgressStep[] = [
         label: 'Checkout',
         icon: <ShoppingCartOutlined />,
         state: SubscriptionState.PENDING_CHECKOUT,
-        description: 'Awaiting checkout completion'
+        description: 'Awaiting checkout'
     },
     {
         key: 'payment',
         label: 'Payment',
         icon: <SyncOutlined spin />,
         state: SubscriptionState.PENDING_PAYMENT,
-        description: 'Processing payment'
+        description: 'Pending payment'
     },
     {
         key: 'invoice',
         label: 'Invoice',
         icon: <DollarCircleOutlined />,
         state: SubscriptionState.PROCESSING_INVOICE,
-        description: 'Recording transaction'
+        description: 'Processing invoice'
     },
     {
         key: 'assets',
         label: 'Assets',
         icon: <ShoppingOutlined />,
         state: SubscriptionState.ACQUIRING_ASSETS,
-        description: 'Acquiring crypto assets'
+        description: 'Acquiring assets'
     },
     {
         key: 'complete',
@@ -68,7 +68,8 @@ const PROGRESS_STEPS: ProgressStep[] = [
 
 const SubscriptionProgressOverlay: React.FC<SubscriptionProgressOverlayProps> = ({
     subscription,
-    show
+    show,
+    showSteps = false
 }) => {
     // Determine if we should show the overlay
     const shouldShowOverlay = () => {
@@ -252,99 +253,101 @@ const SubscriptionProgressOverlay: React.FC<SubscriptionProgressOverlayProps> = 
                     </motion.div>
 
                     {/* Progress Steps Timeline */}
-                    <div
-                        style={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            gap: '8px',
-                            width: '100%',
-                            maxWidth: '400px'
-                        }}
-                    >
-                        {PROGRESS_STEPS.map((step, index) => {
-                            const isCompleted = index < currentStepIndex;
-                            const isCurrent = index === currentStepIndex;
-                            const isPending = index > currentStepIndex;
+                    {showSteps && (
+                        <div
+                            style={{
+                                display: 'flex',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                gap: '8px',
+                                width: '100%',
+                                maxWidth: '400px'
+                            }}
+                        >
+                            {PROGRESS_STEPS.map((step, index) => {
+                                const isCompleted = index < currentStepIndex;
+                                const isCurrent = index === currentStepIndex;
+                                const isPending = index > currentStepIndex;
 
-                            let stepColor = '#d9d9d9';
-                            let stepSize = '8px';
+                                let stepColor = '#d9d9d9';
+                                let stepSize = '8px';
 
-                            if (isCompleted) {
-                                stepColor = '#52c41a';
-                                stepSize = '10px';
-                            } else if (isCurrent) {
-                                stepColor = progressColor;
-                                stepSize = '12px';
-                            }
+                                if (isCompleted) {
+                                    stepColor = '#52c41a';
+                                    stepSize = '10px';
+                                } else if (isCurrent) {
+                                    stepColor = progressColor;
+                                    stepSize = '12px';
+                                }
 
-                            return (
-                                <React.Fragment key={step.key}>
-                                    <motion.div
-                                        initial={{ scale: 0 }}
-                                        animate={{ scale: 1 }}
-                                        transition={{ delay: index * 0.1 }}
-                                        style={{
-                                            position: 'relative'
-                                        }}
-                                    >
+                                return (
+                                    <React.Fragment key={step.key}>
                                         <motion.div
-                                            animate={{
-                                                width: stepSize,
-                                                height: stepSize,
-                                                backgroundColor: stepColor
-                                            }}
-                                            transition={{ duration: 0.3 }}
+                                            initial={{ scale: 0 }}
+                                            animate={{ scale: 1 }}
+                                            transition={{ delay: index * 0.1 }}
                                             style={{
-                                                borderRadius: '50%',
-                                                boxShadow: isCurrent
-                                                    ? `0 0 12px ${stepColor}`
-                                                    : 'none'
+                                                position: 'relative'
                                             }}
-                                        />
-                                        {/* Tooltip on hover */}
-                                        <div
-                                            style={{
-                                                position: 'absolute',
-                                                bottom: '20px',
-                                                left: '50%',
-                                                transform: 'translateX(-50%)',
-                                                background: 'rgba(0, 0, 0, 0.85)',
-                                                color: 'white',
-                                                padding: '4px 8px',
-                                                borderRadius: '4px',
-                                                fontSize: '11px',
-                                                whiteSpace: 'nowrap',
-                                                opacity: 0,
-                                                pointerEvents: 'none',
-                                                transition: 'opacity 0.2s',
-                                                zIndex: 1000
-                                            }}
-                                            className="step-tooltip"
                                         >
-                                            {step.label}
-                                        </div>
-                                    </motion.div>
-                                    {index < PROGRESS_STEPS.length - 1 && (
-                                        <motion.div
-                                            initial={{ scaleX: 0 }}
-                                            animate={{ scaleX: 1 }}
-                                            transition={{ delay: index * 0.1 + 0.05 }}
-                                            style={{
-                                                height: '2px',
-                                                flex: 1,
-                                                backgroundColor: isCompleted
-                                                    ? '#52c41a'
-                                                    : '#f0f0f0',
-                                                transformOrigin: 'left',
-                                                transition: 'background-color 0.3s'
-                                            }}
-                                        />
-                                    )}
-                                </React.Fragment>
-                            );
-                        })}
-                    </div>
+                                            <motion.div
+                                                animate={{
+                                                    width: stepSize,
+                                                    height: stepSize,
+                                                    backgroundColor: stepColor
+                                                }}
+                                                transition={{ duration: 0.3 }}
+                                                style={{
+                                                    borderRadius: '50%',
+                                                    boxShadow: isCurrent
+                                                        ? `0 0 12px ${stepColor}`
+                                                        : 'none'
+                                                }}
+                                            />
+                                            {/* Tooltip on hover */}
+                                            <div
+                                                style={{
+                                                    position: 'absolute',
+                                                    bottom: '20px',
+                                                    left: '50%',
+                                                    transform: 'translateX(-50%)',
+                                                    background: 'rgba(0, 0, 0, 0.85)',
+                                                    color: 'white',
+                                                    padding: '4px 8px',
+                                                    borderRadius: '4px',
+                                                    fontSize: '11px',
+                                                    whiteSpace: 'nowrap',
+                                                    opacity: 0,
+                                                    pointerEvents: 'none',
+                                                    transition: 'opacity 0.2s',
+                                                    zIndex: 1000
+                                                }}
+                                                className="step-tooltip"
+                                            >
+                                                {step.label}
+                                            </div>
+                                        </motion.div>
+                                        {index < PROGRESS_STEPS.length - 1 && (
+                                            <motion.div
+                                                initial={{ scaleX: 0 }}
+                                                animate={{ scaleX: 1 }}
+                                                transition={{ delay: index * 0.1 + 0.05 }}
+                                                style={{
+                                                    height: '2px',
+                                                    flex: 1,
+                                                    backgroundColor: isCompleted
+                                                        ? '#52c41a'
+                                                        : '#f0f0f0',
+                                                    transformOrigin: 'left',
+                                                    transition: 'background-color 0.3s'
+                                                }}
+                                            />
+                                        )}
+                                    </React.Fragment>
+                                );
+                            })}
+                        </div>
+                    )}
 
                     {/* Loading indicator for processing states */}
                     {progressPercentage < 100 && (
@@ -357,14 +360,14 @@ const SubscriptionProgressOverlay: React.FC<SubscriptionProgressOverlayProps> = 
                             <Space size="small">
                                 <LoadingOutlined style={{ fontSize: '14px', color: progressColor }} />
                                 <Text type="secondary" style={{ fontSize: '13px' }}>
-                                    Please wait while we process your subscription...
+                                    Processing... Please wait.
                                 </Text>
                             </Space>
                         </motion.div>
                     )}
 
                     {/* Success message for completed */}
-                    {progressPercentage === 100 && subscription.status === SubscriptionStatus.ACTIVE && (
+                    {progressPercentage === 100 && subscription.status === SubscriptionStatus.ACTIVE && subscription.state == SubscriptionState.IDLE && (
                         <motion.div
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
@@ -380,7 +383,7 @@ const SubscriptionProgressOverlay: React.FC<SubscriptionProgressOverlayProps> = 
                             <Space>
                                 <CheckCircleOutlined style={{ fontSize: '18px', color: '#52c41a' }} />
                                 <Text strong style={{ color: '#389e0d' }}>
-                                    Subscription Successfully Activated!
+                                    Subscription activated!
                                 </Text>
                             </Space>
                         </motion.div>

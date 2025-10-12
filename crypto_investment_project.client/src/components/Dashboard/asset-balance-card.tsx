@@ -1,27 +1,24 @@
-import React from 'react';
-import { useNavigate } from "react-router-dom";
 import {
-    Card,
-    Typography,
-    Space,
+    BarChartOutlined,
+    TransactionOutlined,
+    WalletOutlined
+} from '@ant-design/icons';
+import {
     Button,
-    Progress,
-    Row,
+    Card,
     Col,
     Divider,
     Empty,
+    Flex,
+    Row,
+    Space,
     Tooltip,
-    Badge
+    Typography
 } from 'antd';
-import {
-    WalletOutlined,
-    DollarOutlined,
-    BarChartOutlined,
-    ArrowRightOutlined,
-    TransactionOutlined
-} from '@ant-design/icons';
-import { AssetHolding } from '../../types/dashboardTypes';
+import React from 'react';
+import { useNavigate } from "react-router-dom";
 import { AssetColors } from '../../types/assetTypes';
+import { AssetHolding } from '../../types/dashboardTypes';
 
 const { Title, Text } = Typography;
 
@@ -173,74 +170,61 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
                             const percentage = formatPercentage(holding.value, totalValue);
 
                             return (
-                                <div key={holding.id}>
-                                    <Card
-                                        size="small"
-                                        style={{
-                                            background: 'linear-gradient(135deg, #fafafa 0%, #f0f0f0 100%)',
-                                            border: '1px solid #e8e8e8',
-                                            borderRadius: '8px'
-                                        }}
-                                        bodyStyle={{ padding: '12px' }}
-                                    >
-                                        <Row align="middle" gutter={[16, 8]}>
-                                            {/* Asset Info */}
-                                            <Col xs={24} sm={8}>
-                                                <Space align="center">
-                                                    <div
-                                                        style={{
-                                                            width: '12px',
-                                                            height: '12px',
-                                                            backgroundColor: getAssetColor(holding.ticker),
-                                                            borderRadius: '50%',
-                                                            flexShrink: 0
-                                                        }}
-                                                    />
-                                                    <div>
-                                                        <Text strong style={{ fontSize: '14px' }}>
-                                                            {holding.ticker || 'N/A'}
-                                                        </Text>
-                                                        <br />
-                                                        <Text
-                                                            type="secondary"
-                                                            style={{ fontSize: '12px' }}
-                                                        >
-                                                            {holding.name || 'Unknown'}
-                                                        </Text>
-                                                    </div>
-                                                </Space>
-                                            </Col>
+                                <Card
+                                    key={holding.id}
+                                    size="small"
+                                >
+                                    <Flex justify="space-between">
+                                        {/* Asset Info */}
+                                        <Space>
+                                            <div
+                                                style={{
+                                                    width: '14px',
+                                                    height: '14px',
+                                                    backgroundColor: getAssetColor(holding.ticker),
+                                                    borderRadius: '50%',
+                                                    flexShrink: 0
+                                                }}
+                                            />
+                                            <Text
+                                                type="secondary"
+                                                style={{ fontSize: '12px' }}
+                                            >
+                                                {holding.name || 'Unknown'} ({holding.ticker || 'N/A'})
+                                            </Text>
+                                        </Space>
 
-                                            {/* Amount */}
-                                            <Col xs={12} sm={6}>
-                                                <div style={{ textAlign: 'center' }}>
-                                                    <Text strong style={{ fontSize: '13px', display: 'block' }}>
-                                                        {formatAmount(holding.total)}
-                                                    </Text>
-                                                    <Text type="secondary" style={{ fontSize: '11px' }}>
-                                                        Balance
-                                                    </Text>
-                                                </div>
-                                            </Col>
+                                        {/* Percentage */}
+                                        <Space direction="vertical">
+                                            <Text type="secondary" style={{ fontSize: '11px' }}>
+                                                Percent
+                                            </Text>
+                                            <Text strong style={{ fontSize: '13px', display: 'block', color: '#52c41a' }}>
+                                                {percentage}%
+                                            </Text>
+                                        </Space>
 
-                                            {/* Value */}
-                                            <Col xs={12} sm={6}>
-                                                <div style={{ textAlign: 'center' }}>
-                                                    <Text strong style={{ fontSize: '13px', display: 'block', color: '#52c41a' }}>
-                                                        {formatCurrency(holding.value)}
-                                                    </Text>
-                                                    <Text type="secondary" style={{ fontSize: '11px' }}>
-                                                        {percentage}%
-                                                    </Text>
-                                                </div>
-                                            </Col>
-                                        </Row>
-                                    </Card>
+                                        {/* Amount */}
+                                        <Space direction="vertical">
+                                            <Text type="secondary" style={{ fontSize: '11px' }}>
+                                                Balance
+                                            </Text>
+                                            <Text strong style={{ fontSize: '13px', display: 'block' }}>
+                                                {formatAmount(holding.total)}
+                                            </Text>
+                                        </Space>
 
-                                    {index < assetHoldings.length - 1 && (
-                                        <div style={{ margin: '4px 0' }} />
-                                    )}
-                                </div>
+                                        {/* Value */}
+                                        <Space direction="vertical">
+                                            <Text type="secondary" style={{ fontSize: '11px' }}>
+                                                Value
+                                            </Text>
+                                            <Text strong style={{ fontSize: '13px', display: 'block', color: '#52c41a' }}>
+                                                {formatCurrency(holding.value)}
+                                            </Text>
+                                        </Space>
+                                    </Flex>
+                                </Card>
                             );
                         })}
                     </Space>
@@ -253,6 +237,9 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
                             <Space align="center">
                                 <BarChartOutlined style={{ color: '#1890ff' }} />
                                 <Text strong>Total Portfolio</Text>
+                                <Text type="secondary" style={{ fontSize: '12px' }}>
+                                    {assetHoldings.length} {assetHoldings.length === 1 ? 'asset' : 'assets'}
+                                </Text>
                             </Space>
                         </Col>
                         <Col>
@@ -260,9 +247,7 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
                                 <Text strong style={{ fontSize: '16px', color: '#52c41a' }}>
                                     {formatCurrency(totalValue)}
                                 </Text>
-                                <Text type="secondary" style={{ fontSize: '12px' }}>
-                                    {assetHoldings.length} {assetHoldings.length === 1 ? 'asset' : 'assets'}
-                                </Text>
+                                
                             </Space>
                         </Col>
                     </Row>

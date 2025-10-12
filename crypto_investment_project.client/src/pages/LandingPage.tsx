@@ -1,34 +1,31 @@
 ﻿// LandingPage.tsx - Apple-Inspired Elegant Design
-import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
-    Layout,
-    Button,
-    Typography,
-    Space,
-    Card,
-    Row,
-    Col,
-    Statistic,
-    Avatar,
-    Divider,
-    Timeline,
-    Grid
-} from 'antd';
-import {
-    RiseOutlined,
-    SafetyOutlined,
-    ThunderboltOutlined,
-    CheckCircleOutlined,
     ArrowRightOutlined,
+    CheckCircleOutlined,
     DollarOutlined,
-    ClockCircleOutlined,
     LineChartOutlined,
     LockOutlined,
-    TeamOutlined
+    SafetyOutlined,
+    TeamOutlined,
+    ThunderboltOutlined
 } from '@ant-design/icons';
+import {
+    Avatar,
+    Button,
+    Col,
+    Divider,
+    Grid,
+    Layout,
+    Row,
+    Space,
+    Statistic,
+    Timeline,
+    Typography
+} from 'antd';
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import '../styles/LandingPage/LandingPage.css';
 import Navbar from '../components/LandingPage/Navbar';
-import '../components/LandingPage/LandingPage.css';
 
 const { Content, Footer } = Layout;
 const { Title, Text, Paragraph } = Typography;

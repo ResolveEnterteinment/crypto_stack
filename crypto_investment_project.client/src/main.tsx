@@ -1,7 +1,9 @@
 ﻿import React from 'react';
 import ReactDOM from 'react-dom/client';
+import './styles/reset.css';
+import './styles/variables.css';
+import './styles/global.css';
 import App from './App';
-import { authService } from './services/authService';
 import './index.css';
 
 // Performance monitoring
@@ -180,17 +182,6 @@ async function initializeApp() {
         showLoadingIndicator();
 
         console.log('[App Init] Starting application initialization...');
-
-        // Initialize authentication service (includes CSRF token setup)
-        try {
-            console.log('[App Init] Initializing auth services...');
-            await authService.initialize();
-            console.log('[App Init] ✓ Auth services initialized successfully');
-        } catch (error) {
-            console.warn('[App Init] ⚠ Auth initialization failed:', error);
-            // Continue with app initialization - auth interceptors will handle retries
-            // This allows the app to load even if initial auth setup fails
-        }
 
         // Check if root element exists
         const rootElement = document.getElementById('root');

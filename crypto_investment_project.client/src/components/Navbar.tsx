@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import NotificationPanel from "./Notification/NotificationPanel";
+import { ThemeToggle } from '../providers/ThemeProvider';
 
 interface NavItem {
     name: string;
@@ -132,6 +133,7 @@ const Navbar: React.FC = () => {
 
                             {/* Notification Bell & User Menu */}
                             <div className="absolute inset-y-0 right-0 flex items-center pr-2 sm:static sm:inset-auto sm:ml-6 sm:pr-0">
+                                <ThemeToggle />
                                 {/* Notifications Panel */}
                                 <NotificationPanel />
 
