@@ -9,9 +9,7 @@ import {
     Col,
     Divider,
     Empty,
-    Flex,
     Row,
-    Space,
     Tooltip,
     Typography
 } from 'antd';
@@ -19,6 +17,7 @@ import React from 'react';
 import { useNavigate } from "react-router-dom";
 import { AssetColors } from '../../types/assetTypes';
 import { AssetHolding } from '../../types/dashboardTypes';
+import styles from '../../styles/Dashboard/AssetBalanceCard.module.css';
 
 const { Title, Text } = Typography;
 
@@ -31,8 +30,8 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
 
     // Fallback color for assets not in the list
     const getAssetColor = (ticker: string | undefined): string => {
-        if (!ticker) return '#6B7280'; // Gray fallback if ticker is undefined
-        return AssetColors[ticker] || '#6B7280'; // Gray fallback
+        if (!ticker) return '#6B7280';
+        return AssetColors[ticker] || '#6B7280';
     };
 
     const formatCurrency = (amount: number): string => {
@@ -59,16 +58,11 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
 
     // Format number with appropriate precision
     const formatAmount = (amount: number): string => {
-        // For small amounts (like Bitcoin), show more decimals
         if (amount < 0.1) {
             return amount.toFixed(6);
-        }
-        // For medium amounts
-        else if (amount < 1000) {
+        } else if (amount < 1000) {
             return amount.toFixed(2);
-        }
-        // For large amounts, format with commas
-        else {
+        } else {
             return amount.toLocaleString('en-US', {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2
@@ -83,44 +77,25 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
     };
 
     return (
-        <Card
-            style={{
-                height: '100%',
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                borderRadius: '16px',
-                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-            }}
-            hoverable
-        >
+        <Card className={styles.card}>
             {/* Header */}
-            <div style={{ marginBottom: '20px' }}>
+            <div className={styles.header}>
                 <Row justify="space-between" align="middle">
                     <Col>
-                        <Space align="center">
-                            <div style={{
-                                background: 'linear-gradient(135deg, #4caf50 0%, #00bcd4 100%)',
-                                padding: '8px',
-                                borderRadius: '8px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                            }}>
-                                <WalletOutlined style={{color: 'white' }} />
-                                
+                        <div className={styles.headerLeft}>
+                            <div className={styles.icon}>
+                                <WalletOutlined />
                             </div>
-                            <Title level={4} style={{ margin: 0 }}>
+                            <Title level={4} className={styles.title}>
                                 Asset Holdings
                             </Title>
-                        </Space>
+                        </div>
                     </Col>
-                    {/* Action */}
                     <Col>
                         <Button
-                            size="large"
                             onClick={handleWithdraw}
                             icon={<TransactionOutlined />}
+                            className={"btn-ghost"}
                         >
                             Withdraw
                         </Button>
@@ -131,18 +106,11 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
             {assetHoldings && assetHoldings.length > 0 ? (
                 <>
                     {/* Portfolio Distribution Visualization */}
-                    <div style={{ marginBottom: '24px' }}>
-                        <Text type="secondary" style={{ fontSize: '12px', marginBottom: '8px', display: 'block' }}>
+                    <div className={styles.distribution}>
+                        <Text className={styles.distributionLabel}>
                             Portfolio Distribution
                         </Text>
-                        <div style={{
-                            height: '8px',
-                            background: '#f5f5f5',
-                            borderRadius: '4px',
-                            overflow: 'hidden',
-                            display: 'flex',
-                            marginBottom: '8px'
-                        }}>
+                        <div className={styles.distributionBar}>
                             {assetHoldings.map((holding) => {
                                 const percentage = (holding.value / totalValue) * 100;
                                 return (
@@ -151,11 +119,10 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
                                         title={`${holding.ticker}: ${percentage.toFixed(1)}% ($${holding.value.toFixed(2)})`}
                                     >
                                         <div
+                                            className={styles.distributionSegment}
                                             style={{
                                                 width: `${percentage}%`,
-                                                backgroundColor: getAssetColor(holding.ticker),
-                                                height: '100%',
-                                                cursor: 'pointer'
+                                                backgroundColor: getAssetColor(holding.ticker)
                                             }}
                                         />
                                     </Tooltip>
@@ -165,108 +132,100 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
                     </div>
 
                     {/* Asset List */}
-                    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                        {assetHoldings.map((holding, index) => {
+                    <div className={styles.assetList}>
+                        {assetHoldings.map((holding) => {
                             const percentage = formatPercentage(holding.value, totalValue);
 
                             return (
                                 <Card
                                     key={holding.id}
                                     size="small"
+                                    className={styles.assetCard}
                                 >
-                                    <Flex justify="space-between">
+                                    <div className={styles.assetRow}>
                                         {/* Asset Info */}
-                                        <Space>
+                                        <div className={styles.assetInfo}>
                                             <div
+                                                className={styles.assetDot}
                                                 style={{
-                                                    width: '14px',
-                                                    height: '14px',
-                                                    backgroundColor: getAssetColor(holding.ticker),
-                                                    borderRadius: '50%',
-                                                    flexShrink: 0
+                                                    backgroundColor: getAssetColor(holding.ticker)
                                                 }}
                                             />
-                                            <Text
-                                                type="secondary"
-                                                style={{ fontSize: '12px' }}
-                                            >
-                                                {holding.name || 'Unknown'} ({holding.ticker || 'N/A'})
-                                            </Text>
-                                        </Space>
+                                            <div className={styles.assetMetric}>
+                                                <Text>{holding.name || 'Unknown'}</Text>
+                                                <Text type="secondary">{holding.ticker || 'N/A'}</Text>
+                                            </div>
+                                        </div>
 
                                         {/* Percentage */}
-                                        <Space direction="vertical">
-                                            <Text type="secondary" style={{ fontSize: '11px' }}>
+                                        <div className={styles.assetMetric}>
+                                            <Text className={styles.metricLabel}>
                                                 Percent
                                             </Text>
-                                            <Text strong style={{ fontSize: '13px', display: 'block', color: '#52c41a' }}>
+                                            <Text className={`${styles.metricValue} ${styles.metricValueSuccess}`}>
                                                 {percentage}%
                                             </Text>
-                                        </Space>
+                                        </div>
 
                                         {/* Amount */}
-                                        <Space direction="vertical">
-                                            <Text type="secondary" style={{ fontSize: '11px' }}>
+                                        <div className={styles.assetMetric}>
+                                            <Text className={styles.metricLabel}>
                                                 Balance
                                             </Text>
-                                            <Text strong style={{ fontSize: '13px', display: 'block' }}>
+                                            <Text className={styles.metricValue}>
                                                 {formatAmount(holding.total)}
                                             </Text>
-                                        </Space>
+                                        </div>
 
                                         {/* Value */}
-                                        <Space direction="vertical">
-                                            <Text type="secondary" style={{ fontSize: '11px' }}>
+                                        <Col className={styles.assetMetric}>
+                                            <Text className={styles.metricLabel}>
                                                 Value
                                             </Text>
-                                            <Text strong style={{ fontSize: '13px', display: 'block', color: '#52c41a' }}>
+                                            <Text className={`${styles.metricValue} ${styles.metricValueSuccess}`}>
                                                 {formatCurrency(holding.value)}
                                             </Text>
-                                        </Space>
-                                    </Flex>
+                                        </Col>
+                                    </div>
                                 </Card>
                             );
                         })}
-                    </Space>
+                    </div>
 
-                    <Divider style={{ margin: '20px 0' }} />
+                    <Divider className={styles.divider} />
 
                     {/* Summary Footer */}
-                    <Row justify="space-between" align="middle">
-                        <Col>
-                            <Space align="center">
-                                <BarChartOutlined style={{ color: '#1890ff' }} />
-                                <Text strong>Total Portfolio</Text>
-                                <Text type="secondary" style={{ fontSize: '12px' }}>
-                                    {assetHoldings.length} {assetHoldings.length === 1 ? 'asset' : 'assets'}
-                                </Text>
-                            </Space>
-                        </Col>
-                        <Col>
-                            <Space direction="vertical" size={0} style={{ textAlign: 'right' }}>
-                                <Text strong style={{ fontSize: '16px', color: '#52c41a' }}>
-                                    {formatCurrency(totalValue)}
-                                </Text>
-                                
-                            </Space>
-                        </Col>
-                    </Row>
-                </>
-            ) : (
-                <Empty
-                    image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description={
-                        <div style={{ textAlign: 'center' }}>
-                            <Title level={5} style={{ color: '#8c8c8c', marginBottom: '8px' }}>
-                                No Assets Found
-                            </Title>
-                            <Text type="secondary" style={{ fontSize: '14px' }}>
-                                Start investing to see your asset holdings here
+                    <div className={styles.summary}>
+                        <div className={styles.summaryLeft}>
+                            <BarChartOutlined className={styles.summaryIcon} />
+                            <Text className={styles.summaryLabel}>Total Portfolio</Text>
+                            <Text className={styles.summaryCount}>
+                                {assetHoldings.length} {assetHoldings.length === 1 ? 'asset' : 'assets'}
                             </Text>
                         </div>
-                    }
-                    style={{ padding: '40px 20px' }}
-                />
+                        <div className={styles.summaryRight}>
+                            <Text className={styles.totalValue}>
+                                {formatCurrency(totalValue)}
+                            </Text>
+                        </div>
+                    </div>
+                </>
+            ) : (
+                <div className={styles.empty}>
+                    <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description={
+                            <div>
+                                <Title level={5} className={styles.emptyTitle}>
+                                    No Assets Found
+                                </Title>
+                                <Text className={styles.emptyDescription}>
+                                    Start investing to see your asset holdings here
+                                </Text>
+                            </div>
+                        }
+                    />
+                </div>
             )}
         </Card>
     );

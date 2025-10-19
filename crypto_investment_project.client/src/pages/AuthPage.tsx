@@ -1,119 +1,149 @@
-﻿import React, { useEffect, useState } from "react";
+﻿/**
+ * AUTHENTICATION PAGE COMPONENT
+ * 
+ * Professional authentication interface using Ant Design
+ * Integrated with global styling system and theme provider
+ * 
+ * Features:
+ * - Apple-inspired minimalist design
+ * - Login & Registration forms
+ * - Email confirmation workflow
+ * - Form validation with visual feedback
+ * - Loading states and error handling
+ * - Responsive layout
+ * - Dark mode support
+ * - Accessibility compliant
+ */
+
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import {
+    Alert,
+    Button,
+    Card,
+    Divider,
+    Form,
+    Input,
+    Space,
+    Tabs,
+    Typography,
+    message
+} from "antd";
+import {
+    CheckCircleOutlined,
+    EyeInvisibleOutlined,
+    EyeTwoTone,
+    InfoCircleOutlined,
+    LockOutlined,
+    MailOutlined,
+    UserOutlined,
+    WarningOutlined
+} from "@ant-design/icons";
 import { useAuth } from "../context/AuthContext";
 import authService from "../services/authService";
+import "../styles/Auth/AuthPage.css";
+
+const { Title, Text, Paragraph } = Typography;
+
+/* ========================================
+   TYPE DEFINITIONS
+   ======================================== */
+
+interface LoginFormValues {
+    email: string;
+    password: string;
+}
+
+interface RegisterFormValues {
+    fullName: string;
+    email: string;
+    password: string;
+}
+
+/* ========================================
+   MAIN COMPONENT
+   ======================================== */
 
 const AuthPage: React.FC = () => {
     const { user, login } = useAuth();
-    const [isLogin, setIsLogin] = useState(true);
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [fullName, setFullName] = useState("");
-    const [error, setError] = useState("");
-    const [isLoading, setIsLoading] = useState(false);
-    const [showPassword, setShowPassword] = useState(false);
     const navigate = useNavigate();
+    const [form] = Form.useForm();
 
-    // Registration states
+    // UI States
+    const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
+    const [isLoading, setIsLoading] = useState(false);
     const [registrationSuccess, setRegistrationSuccess] = useState(false);
-    const [resendingEmail, setResendingEmail] = useState(false);
-    const [resendStatus, setResendStatus] = useState<{ success?: boolean; message?: string } | null>(null);
     const [unconfirmedEmailLogin, setUnconfirmedEmailLogin] = useState(false);
+    const [resendingEmail, setResendingEmail] = useState(false);
+    const [userEmail, setUserEmail] = useState("");
 
-    // Validation states
-    const [emailError, setEmailError] = useState("");
-    const [passwordError, setPasswordError] = useState("");
-    const [fullNameError, setFullNameError] = useState("");
-
+    // Redirect if already authenticated
     useEffect(() => {
         if (user) {
             navigate("/dashboard");
         }
     }, [user, navigate]);
 
-    const validateEmail = (email: string): boolean => {
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        const isValid = emailRegex.test(email);
-        setEmailError(isValid ? "" : "Please enter a valid email address");
-        return isValid;
-    };
+    /* ========================================
+       FORM HANDLERS
+       ======================================== */
 
-    const validatePassword = (password: string): boolean => {
-        const isValid = password.length >= 8;
-        setPasswordError(isValid ? "" : "Password must be at least 8 characters long");
-        return isValid;
-    };
-
-    const validateFullName = (name: string): boolean => {
-        const isValid = name.trim().length > 0;
-        setFullNameError(isValid ? "" : "Please enter your full name");
-        return isValid;
-    };
-
-    // ✅ SIMPLIFIED: Use AuthService for login
-    const handleLogin = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setUnconfirmedEmailLogin(false);
-
-        if (!validateEmail(email) || !validatePassword(password)) {
-            return;
-        }
-
+    /**
+     * Handle login form submission
+     */
+    const handleLogin = async (values: LoginFormValues) => {
         setIsLoading(true);
+        setUnconfirmedEmailLogin(false);
+        setUserEmail(values.email);
 
         try {
-            // ✅ Use AuthService instead of direct API call
-            const response = await authService.login({ email, password });
+            const response = await authService.login({
+                email: values.email,
+                password: values.password
+            });
 
-            // ✅ AuthContext.login handles state management
             await login(response);
+            message.success('Successfully logged in!');
             navigate("/dashboard");
 
         } catch (err: any) {
             console.error("Login error:", err);
 
-            // Check for email confirmation error
+            // Handle specific error cases
             if (err.message?.includes("Email is not confirmed") ||
                 err.message?.includes("EMAIL_NOT_CONFIRMED")) {
                 setUnconfirmedEmailLogin(true);
             } else if (err.message?.includes("Invalid credentials") ||
                 err.message?.includes("INVALID_CREDENTIALS")) {
-                setError("Invalid email or password. Please try again.");
+                message.error("Invalid email or password. Please try again.");
             } else if (err.message?.includes("Account is temporarily locked") ||
                 err.message?.includes("ACCOUNT_LOCKED")) {
-                setError("Your account is temporarily locked. Please try again later or reset your password.");
+                message.error("Your account is temporarily locked. Please try again later or reset your password.");
             } else {
-                setError(err.message || "An error occurred during login. Please try again later.");
+                message.error(err.message || "An error occurred during login. Please try again later.");
             }
         } finally {
             setIsLoading(false);
         }
     };
 
-    // ✅ SIMPLIFIED: Use AuthService for registration
-    const handleRegister = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-
-        if (!validateEmail(email) || !validatePassword(password) || !validateFullName(fullName)) {
-            return;
-        }
-
+    /**
+     * Handle registration form submission
+     */
+    const handleRegister = async (values: RegisterFormValues) => {
         setIsLoading(true);
+        setUserEmail(values.email);
 
         try {
-            // ✅ Use AuthService instead of direct API call
             await authService.register({
-                fullName,
-                email,
-                password
+                fullName: values.fullName,
+                email: values.email,
+                password: values.password
             });
 
-            // Show success view
             setRegistrationSuccess(true);
-            setError("");
-            setPassword("");
+            form.resetFields();
+            message.success('Registration successful! Please check your email.');
 
         } catch (err: any) {
             console.error("Registration error:", err);
@@ -121,354 +151,389 @@ const AuthPage: React.FC = () => {
             // Handle validation errors
             if (err.response?.data?.validationErrors) {
                 const validationErrors = err.response.data.validationErrors;
-                if (validationErrors.Email) setEmailError(validationErrors.Email[0]);
-                if (validationErrors.Password) setPasswordError(validationErrors.Password[0]);
-                if (validationErrors.FullName) setFullNameError(validationErrors.FullName[0]);
-                setError("Please correct the errors below.");
+                const formErrors: any = {};
+
+                if (validationErrors.Email) {
+                    formErrors.email = validationErrors.Email[0];
+                }
+                if (validationErrors.Password) {
+                    formErrors.password = validationErrors.Password[0];
+                }
+                if (validationErrors.FullName) {
+                    formErrors.fullName = validationErrors.FullName[0];
+                }
+
+                form.setFields(Object.keys(formErrors).map(key => ({
+                    name: key,
+                    errors: [formErrors[key]]
+                })));
+
+                message.error("Please correct the errors in the form.");
             } else if (err.message?.includes("Email already registered") ||
                 err.message?.includes("EMAIL_ALREADY_REGISTERED")) {
-                setEmailError("This email is already registered. Please login instead.");
-                setError("Email already registered.");
+                form.setFields([{
+                    name: 'email',
+                    errors: ['This email is already registered. Please login instead.']
+                }]);
+                message.error("Email already registered.");
             } else {
-                setError(err.message || "An error occurred during registration. Please try again later.");
+                message.error(err.message || "An error occurred during registration. Please try again later.");
             }
         } finally {
             setIsLoading(false);
         }
     };
 
-    // ✅ SIMPLIFIED: Use AuthService for resend confirmation
+    /**
+     * Handle resend confirmation email
+     */
     const handleResendConfirmation = async () => {
+        if (!userEmail) {
+            message.error('Email address not found. Please try again.');
+            return;
+        }
+
         setResendingEmail(true);
-        setResendStatus(null);
 
         try {
-            // ✅ Use AuthService instead of direct API call
-            await authService.resendConfirmation({ email });
-
-            setResendStatus({
-                success: true,
-                message: "Confirmation email sent successfully! Please check your inbox."
-            });
-
+            await authService.resendConfirmation({ email: userEmail });
+            message.success('Confirmation email sent successfully! Please check your inbox.');
         } catch (err: any) {
             console.error("Resend confirmation error:", err);
-
-            setResendStatus({
-                success: false,
-                message: err.message || "An error occurred. Please try again later."
-            });
+            message.error(err.message || "Failed to resend confirmation email. Please try again.");
         } finally {
             setResendingEmail(false);
         }
     };
 
-    // View for successful registration
+    /* ========================================
+       VIEW COMPONENTS
+       ======================================== */
+
+    /**
+     * Render login form
+     */
+    const renderLoginForm = () => (
+        <Form
+            form={form}
+            name="login"
+            onFinish={handleLogin}
+            layout="vertical"
+            size="large"
+            requiredMark={false}
+            autoComplete="off"
+        >
+            <Form.Item
+                name="email"
+                label="Email Address"
+                rules={[
+                    { required: true, message: 'Please enter your email' },
+                    { type: 'email', message: 'Please enter a valid email address' }
+                ]}
+            >
+                <Input
+                    prefix={<MailOutlined className="input-icon" />}
+                    placeholder="your@email.com"
+                    autoComplete="email"
+                />
+            </Form.Item>
+
+            <Form.Item
+                name="password"
+                label="Password"
+                rules={[
+                    { required: true, message: 'Please enter your password' },
+                    { min: 8, message: 'Password must be at least 8 characters' }
+                ]}
+            >
+                <Input.Password
+                    prefix={<LockOutlined className="input-icon" />}
+                    placeholder="Enter your password"
+                    iconRender={(visible) => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
+                    autoComplete="current-password"
+                />
+            </Form.Item>
+
+            <div className="form-footer">
+                <Link to="/forgot-password" className="forgot-password-link">
+                    Forgot password?
+                </Link>
+            </div>
+
+            <Form.Item className="submit-button-wrapper">
+                <Button
+                    type="primary"
+                    htmlType="submit"
+                    loading={isLoading}
+                    block
+                    className="submit-button"
+                >
+                    {isLoading ? 'Signing in...' : 'Sign In'}
+                </Button>
+            </Form.Item>
+
+            <Divider plain className="divider-text">
+                Don't have an account?
+            </Divider>
+
+            <Button
+                type="link"
+                onClick={() => setActiveTab('register')}
+                block
+                className="switch-form-button"
+            >
+                Create a new account
+            </Button>
+        </Form>
+    );
+
+    /**
+     * Render registration form
+     */
+    const renderRegisterForm = () => (
+        <Form
+            form={form}
+            name="register"
+            onFinish={handleRegister}
+            layout="vertical"
+            size="large"
+            requiredMark={false}
+            autoComplete="off"
+        >
+            <Form.Item
+                name="fullName"
+                label="Full Name"
+                rules={[
+                    { required: true, message: 'Please enter your full name' },
+                    { min: 2, message: 'Name must be at least 2 characters' }
+                ]}
+            >
+                <Input
+                    prefix={<UserOutlined className="input-icon" />}
+                    placeholder="John Doe"
+                    autoComplete="name"
+                />
+            </Form.Item>
+
+            <Form.Item
+                name="email"
+                label="Email Address"
+                rules={[
+                    { required: true, message: 'Please enter your email' },
+                    { type: 'email', message: 'Please enter a valid email address' }
+                ]}
+            >
+                <Input
+                    prefix={<MailOutlined className="input-icon" />}
+                    placeholder="your@email.com"
+                    autoComplete="email"
+                />
+            </Form.Item>
+
+            <Form.Item
+                name="password"
+                label="Password"
+                rules={[
+                    { required: true, message: 'Please enter a password' },
+                    { min: 8, message: 'Password must be at least 8 characters' }
+                ]}
+                extra={
+                    <Text type="secondary" className="password-hint">
+                        Password must be at least 8 characters long and contain a mix of letters, numbers, and special characters.
+                    </Text>
+                }
+            >
+                <Input.Password
+                    prefix={<LockOutlined className="input-icon" />}
+                    placeholder="Create a strong password"
+                    iconRender={(visible) => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
+                    autoComplete="new-password"
+                />
+            </Form.Item>
+
+            <Form.Item className="submit-button-wrapper">
+                <Button
+                    type="primary"
+                    htmlType="submit"
+                    loading={isLoading}
+                    block
+                    className="submit-button"
+                >
+                    {isLoading ? 'Creating account...' : 'Create Account'}
+                </Button>
+            </Form.Item>
+
+            <Divider plain className="divider-text">
+                Already have an account?
+            </Divider>
+
+            <Button
+                type="link"
+                onClick={() => setActiveTab('login')}
+                block
+                className="switch-form-button"
+            >
+                Sign in to your account
+            </Button>
+        </Form>
+    );
+
+    /**
+     * Render registration success view
+     */
     const renderRegistrationSuccessView = () => (
-        <div className="text-center py-8 px-4">
-            <div className="mx-auto w-16 h-16 mb-4 bg-green-100 rounded-full flex items-center justify-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
+        <div className="success-view">
+            <div className="success-icon-wrapper">
+                <CheckCircleOutlined className="success-icon" />
             </div>
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">Registration Successful!</h2>
-            <p className="text-gray-600 mb-6">
-                We've sent a confirmation link to <span className="font-medium text-gray-800">{email}</span>.
+
+            <Title level={2} className="success-title">
+                Registration Successful!
+            </Title>
+
+            <Paragraph className="success-description">
+                We've sent a confirmation link to <Text strong>{userEmail}</Text>.
                 Please check your email to verify your account before logging in.
-            </p>
+            </Paragraph>
 
-            {/* Resend status message */}
-            {resendStatus && (
-                <div className={`p-4 rounded-lg mb-6 text-sm ${resendStatus.success
-                    ? "bg-green-50 text-green-800 border border-green-200"
-                    : "bg-red-50 text-red-800 border border-red-200"}`}>
-                    <p>
-                        {resendStatus.success ? (
-                            <svg className="inline-block w-5 h-5 mr-1 -mt-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                            </svg>
-                        ) : (
-                            <svg className="inline-block w-5 h-5 mr-1 -mt-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                            </svg>
-                        )}
-                        {resendStatus.message}
-                    </p>
-                </div>
-            )}
+            <Alert
+                message="Don't see the email?"
+                description="If you don't see the email in your inbox, please check your spam folder."
+                type="info"
+                icon={<InfoCircleOutlined />}
+                showIcon
+                className="info-alert"
+            />
 
-            <div className="bg-blue-50 p-4 rounded-lg mb-6 text-sm text-blue-800">
-                <p>
-                    <svg className="inline-block w-5 h-5 mr-1 -mt-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                    </svg>
-                    If you don't see the email in your inbox, please check your spam folder.
-                </p>
-            </div>
+            <Space direction="vertical" size="middle" className="button-group">
+                <Button
+                    onClick={handleResendConfirmation}
+                    loading={resendingEmail}
+                    block
+                    size="large"
+                    className="secondary-button"
+                >
+                    {resendingEmail ? 'Sending...' : 'Resend Confirmation Email'}
+                </Button>
 
-            {/* Resend confirmation button */}
-            <button
-                onClick={handleResendConfirmation}
-                disabled={resendingEmail}
-                className="w-full mb-4 bg-white border border-blue-600 text-blue-600 hover:bg-blue-50 py-3 rounded-lg transition-colors duration-200 font-medium flex justify-center items-center"
-            >
-                {resendingEmail ? (
-                    <>
-                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Sending...
-                    </>
-                ) : (
-                    "Resend Confirmation Email"
-                )}
-            </button>
-
-            <button
-                onClick={() => {
-                    setIsLogin(true);
-                    setRegistrationSuccess(false);
-                    setResendStatus(null);
-                }}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg transition-colors duration-200 font-medium"
-            >
-                Go to Login
-            </button>
+                <Button
+                    type="primary"
+                    onClick={() => {
+                        setActiveTab('login');
+                        setRegistrationSuccess(false);
+                    }}
+                    block
+                    size="large"
+                    className="primary-button"
+                >
+                    Go to Login
+                </Button>
+            </Space>
         </div>
     );
 
-    // New view for unconfirmed email during login
+    /**
+     * Render unconfirmed email view
+     */
     const renderUnconfirmedEmailView = () => (
-        <div className="text-center py-8 px-4">
-            <div className="mx-auto w-16 h-16 mb-4 bg-yellow-100 rounded-full flex items-center justify-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
+        <div className="warning-view">
+            <div className="warning-icon-wrapper">
+                <WarningOutlined className="warning-icon" />
             </div>
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">Email Not Verified</h2>
-            <p className="text-gray-600 mb-6">
-                Your account exists, but your email <span className="font-medium text-gray-800">{email}</span> hasn't been verified yet.
+
+            <Title level={2} className="warning-title">
+                Email Not Verified
+            </Title>
+
+            <Paragraph className="warning-description">
+                Your account exists, but your email <Text strong>{userEmail}</Text> hasn't been verified yet.
                 Please check your email for the verification link we sent when you registered.
-            </p>
+            </Paragraph>
 
-            {/* Resend status message */}
-            {resendStatus && (
-                <div className={`p-4 rounded-lg mb-6 text-sm ${resendStatus.success
-                    ? "bg-green-50 text-green-800 border border-green-200"
-                    : "bg-red-50 text-red-800 border border-red-200"}`}>
-                    <p>
-                        {resendStatus.success ? (
-                            <svg className="inline-block w-5 h-5 mr-1 -mt-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                            </svg>
-                        ) : (
-                            <svg className="inline-block w-5 h-5 mr-1 -mt-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                            </svg>
-                        )}
-                        {resendStatus.message}
-                    </p>
-                </div>
-            )}
+            <Alert
+                message="Check your spam folder"
+                description="If you don't see the verification email in your inbox, please check your spam folder or request a new verification email."
+                type="warning"
+                icon={<InfoCircleOutlined />}
+                showIcon
+                className="warning-alert"
+            />
 
-            <div className="bg-blue-50 p-4 rounded-lg mb-6 text-sm text-blue-800">
-                <p>
-                    <svg className="inline-block w-5 h-5 mr-1 -mt-1" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                    </svg>
-                    If you don't see the verification email in your inbox, please check your spam folder or request a new verification email.
-                </p>
-            </div>
+            <Space direction="vertical" size="middle" className="button-group">
+                <Button
+                    onClick={handleResendConfirmation}
+                    loading={resendingEmail}
+                    block
+                    size="large"
+                    className="secondary-button"
+                >
+                    {resendingEmail ? 'Sending...' : 'Resend Verification Email'}
+                </Button>
 
-            {/* Resend confirmation button */}
-            <button
-                onClick={handleResendConfirmation}
-                disabled={resendingEmail}
-                className="w-full mb-4 bg-white border border-blue-600 text-blue-600 hover:bg-blue-50 py-3 rounded-lg transition-colors duration-200 font-medium flex justify-center items-center"
-            >
-                {resendingEmail ? (
-                    <>
-                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Sending...
-                    </>
-                ) : (
-                    "Resend Verification Email"
-                )}
-            </button>
-
-            <button
-                onClick={() => {
-                    setUnconfirmedEmailLogin(false);
-                    setResendStatus(null);
-                }}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg transition-colors duration-200 font-medium"
-            >
-                Back to Login
-            </button>
+                <Button
+                    type="primary"
+                    onClick={() => {
+                        setUnconfirmedEmailLogin(false);
+                    }}
+                    block
+                    size="large"
+                    className="primary-button"
+                >
+                    Back to Login
+                </Button>
+            </Space>
         </div>
     );
+
+    /* ========================================
+       RENDER MAIN VIEW
+       ======================================== */
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 to-gray-800">
-            <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-md">
-                {/* Show appropriate view based on state */}
-                {registrationSuccess ? (
-                    renderRegistrationSuccessView()
-                ) : unconfirmedEmailLogin ? (
-                    renderUnconfirmedEmailView()
-                ) : (
-                    <>
-                        <h1 className="text-2xl font-bold text-center mb-6">
-                            {isLogin ? "Sign In to Your Account" : "Create Your Account"}
-                        </h1>
-
-                        {/* Tabs */}
-                        <div className="flex mb-6">
-                            <button
-                                className={`flex-1 py-2 text-lg font-medium transition-colors duration-200 ${isLogin
-                                    ? "border-b-2 border-blue-600 text-blue-600"
-                                    : "text-gray-500 hover:text-gray-700"
-                                    }`}
-                                onClick={() => setIsLogin(true)}
-                            >
-                                Login
-                            </button>
-                            <button
-                                className={`flex-1 py-2 text-lg font-medium transition-colors duration-200 ${!isLogin
-                                    ? "border-b-2 border-blue-600 text-blue-600"
-                                    : "text-gray-500 hover:text-gray-700"
-                                    }`}
-                                onClick={() => setIsLogin(false)}
-                            >
-                                Sign Up
-                            </button>
-                        </div>
-
-                        {/* Error Alert */}
-                        {error && (
-                            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-                                <span>{error}</span>
-                            </div>
-                        )}
-
-                        {/* Form */}
-                        <form onSubmit={isLogin ? handleLogin : handleRegister} className="space-y-6">
-                            {!isLogin && (
-                                <div>
-                                    <label className="block text-gray-700 font-medium mb-1">Full Name</label>
-                                    <input
-                                        type="text"
-                                        value={fullName}
-                                        onChange={(e) => {
-                                            setFullName(e.target.value);
-                                            if (fullNameError) validateFullName(e.target.value);
-                                        }}
-                                        onBlur={() => validateFullName(fullName)}
-                                        className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition ${fullNameError ? "border-red-500" : "border-gray-300"
-                                            }`}
-                                        required
-                                    />
-                                    {fullNameError && <p className="text-red-500 text-sm mt-1">{fullNameError}</p>}
-                                </div>
-                            )}
-
-                            <div>
-                                <label className="block text-gray-700 font-medium mb-1">Email Address</label>
-                                <input
-                                    type="email"
-                                    value={email}
-                                    onChange={(e) => {
-                                        setEmail(e.target.value);
-                                        if (emailError) validateEmail(e.target.value);
-                                    }}
-                                    onBlur={() => validateEmail(email)}
-                                    className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none transition ${emailError ? "border-red-500" : "border-gray-300"
-                                        }`}
-                                    required
-                                />
-                                {emailError && <p className="text-red-500 text-sm mt-1">{emailError}</p>}
+        <div className="auth-page">
+            <div className="auth-container">
+                <Card className="auth-card" bordered={false}>
+                    {registrationSuccess ? (
+                        renderRegistrationSuccessView()
+                    ) : unconfirmedEmailLogin ? (
+                        renderUnconfirmedEmailView()
+                    ) : (
+                        <>
+                            <div className="auth-header">
+                                <Title level={1} className="auth-title">
+                                    {activeTab === 'login' ? 'Welcome Back' : 'Get Started'}
+                                </Title>
+                                <Text type="secondary" className="auth-subtitle">
+                                    {activeTab === 'login'
+                                        ? 'Sign in to your account to continue'
+                                        : 'Create your account to get started'}
+                                </Text>
                             </div>
 
-                            <div>
-                                <label className="block text-gray-700 font-medium mb-1">Password</label>
-                                <div className="relative">
-                                    <input
-                                        type={showPassword ? "text" : "password"}
-                                        value={password}
-                                        onChange={(e) => {
-                                            setPassword(e.target.value);
-                                            if (passwordError) validatePassword(e.target.value);
-                                        }}
-                                        onBlur={() => validatePassword(password)}
-                                        className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none pr-10 transition ${passwordError ? "border-red-500" : "border-gray-300"
-                                            }`}
-                                        required
-                                    />
-                                    <button
-                                        type="button"
-                                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-600"
-                                        onClick={() => setShowPassword(!showPassword)}
-                                    >
-                                        {showPassword ? (
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-                                                <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
-                                            </svg>
-                                        ) : (
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                                <path fillRule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clipRule="evenodd" />
-                                                <path d="M12.454 16.697L9.75 13.992a4 4 0 01-3.742-3.741L2.335 6.578A9.98 9.98 0 00.458 10c1.274 4.057 5.065 7 9.542 7 .847 0 1.669-.105 2.454-.303z" />
-                                            </svg>
-                                        )}
-                                    </button>
-                                </div>
-                                {passwordError && <p className="text-red-500 text-sm mt-1">{passwordError}</p>}
-
-                                {!isLogin && (
-                                    <div className="mt-2 text-xs text-gray-500">
-                                        Password must be at least 8 characters long and contain a mix of letters, numbers, and special characters.
-                                    </div>
-                                )}
-
-                                        {isLogin && (
-                                    <div className="mt-2 text-right">
-                                        <Link to="/forgot-password" className="text-sm text-blue-600 hover:text-blue-800">Forgot password?</Link>
-                                    </div>
-                                )}
-                            </div>
-
-                            <button
-                                type="submit"
-                                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg transition-colors duration-200 font-medium flex justify-center items-center"
-                                disabled={isLoading}
-                            >
-                                {isLoading ? (
-                                    <>
-                                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                        </svg>
-                                        {isLogin ? "Signing in..." : "Creating account..."}
-                                    </>
-                                ) : (
-                                    isLogin ? "Sign In" : "Create Account"
-                                )}
-                            </button>
-                        </form>
-
-                        <div className="mt-6 text-center text-sm text-gray-600">
-                            {isLogin ? (
-                                <>Don't have an account? <button onClick={() => setIsLogin(false)} className="text-blue-600 hover:text-blue-800 font-medium">Sign up now</button></>
-                            ) : (
-                                <>Already have an account? <button onClick={() => setIsLogin(true)} className="text-blue-600 hover:text-blue-800 font-medium">Sign in</button></>
-                            )}
-                        </div>
-                    </>
-                )}
+                            <Tabs
+                                activeKey={activeTab}
+                                onChange={(key) => {
+                                    setActiveTab(key as 'login' | 'register');
+                                    form.resetFields();
+                                }}
+                                centered
+                                className="auth-tabs"
+                                items={[
+                                    {
+                                        key: 'login',
+                                        label: 'Sign In',
+                                        children: renderLoginForm()
+                                    },
+                                    {
+                                        key: 'register',
+                                        label: 'Sign Up',
+                                        children: renderRegisterForm()
+                                    }
+                                ]}
+                            />
+                        </>
+                    )}
+                </Card>
             </div>
         </div>
     );

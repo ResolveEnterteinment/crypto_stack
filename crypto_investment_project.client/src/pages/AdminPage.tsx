@@ -1,14 +1,12 @@
 ﻿import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AdminLogsPanel from "../components/Admin/AdminLogsPanel";
-import WithdrawalManagementPanel from "../components/Admin/WithdrawalManagement";
 import FlowEngineAdminPanel from "../components/Admin/Flow/FlowEngineAdminPanel";
-import AdminPaymentDashboard from "../components/Admin/AdminPaymentDashboard";
-import KycAdminPanel from "../components/KYC/KycAdminPanel";
 import KycAdminDashboard from "../components/Admin/KycAdminDashboard";
-import KycVerificationReports from "../components/KYC/KycVerificationReports";
-import { useAuth } from '../context/AuthContext';
+import WithdrawalManagementPanel from "../components/Admin/WithdrawalManagement";
 import Navbar from '../components/Navbar';
+import TreasuryDashboard from '../components/Treasury/TreasuryDashboard';
+import { useAuth } from '../context/AuthContext';
 
 /**
  * AdminPage Component
@@ -75,15 +73,6 @@ const AdminPageContent: React.FC = () => {
                             >
                                 User Management
                         </button>
-                        <button
-                            onClick={() => setActiveTab('payments')}
-                            className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'payments'
-                                ? 'border-blue-500 text-blue-600'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                }`}
-                        >
-                            Payments
-                        </button>
                             <button
                                 onClick={() => setActiveTab('flows')}
                                 className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'payments'
@@ -95,7 +84,7 @@ const AdminPageContent: React.FC = () => {
                             </button>
                             <button
                                 onClick={() => setActiveTab('kyc')}
-                                className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'kyc'
+                                className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'kyc-dashboard'
                                     ? 'border-blue-500 text-blue-600'
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                                     }`}
@@ -103,34 +92,16 @@ const AdminPageContent: React.FC = () => {
                                 KYC
                             </button>
                             <button
-                                onClick={() => setActiveTab('kyc-dashboard')}
+                            onClick={() => setActiveTab('treasury')}
                                 className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'kyc-dashboard'
                                     ? 'border-blue-500 text-blue-600'
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                                     }`}
                             >
-                                KYC Admin Dashboard
+                                Treasury
                             </button>
                             <button
-                                onClick={() => setActiveTab('kyc-providers')}
-                                className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'kyc-providers'
-                                    ? 'border-blue-500 text-blue-600'
-                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
-                            >
-                                KYC Providers
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('kyc-reports')}
-                                className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'kyc-reports'
-                                    ? 'border-blue-500 text-blue-600'
-                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                    }`}
-                            >
-                                KYC Reports
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('withdrawal')}
+                                onClick={() => setActiveTab('withdrawals')}
                                 className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'withdrawal'
                                     ? 'border-blue-500 text-blue-600'
                                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -160,11 +131,9 @@ const AdminPageContent: React.FC = () => {
                             </div>
                         )}
                         {activeTab === 'flows' && <FlowEngineAdminPanel />}
-                        {activeTab === 'payments' && <AdminPaymentDashboard />}
-                        {activeTab === 'kyc' && <KycAdminPanel />}
-                        {activeTab === 'kyc-dashboard' && <KycAdminDashboard />}
-                        {activeTab === 'kyc-reports' && <KycVerificationReports />}
-                        {activeTab === 'withdrawal' && <WithdrawalManagementPanel />}
+                        {activeTab === 'kyc' && <KycAdminDashboard />}
+                        {activeTab === 'treasury' && <TreasuryDashboard />}
+                        {activeTab === 'withdrawals' && <WithdrawalManagementPanel />}
                         {activeTab === 'settings' && (
                             <div className="bg-white shadow rounded-lg p-6">
                                 <h2 className="text-xl font-semibold mb-4">System Settings</h2>

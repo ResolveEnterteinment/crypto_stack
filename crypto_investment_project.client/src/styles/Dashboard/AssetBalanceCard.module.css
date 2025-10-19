@@ -1,0 +1,469 @@
+﻿/* ============================================
+   CARD CONTAINER
+   ============================================ */
+
+.card {
+    height: 100%;
+    background: var(--color-bg-elevated);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    transition: all var(--transition-smooth);
+}
+
+    .card:hover {
+        box-shadow: var(--shadow-lg);
+        transform: translateY(-2px);
+    }
+
+/* ============================================
+   HEADER
+   ============================================ */
+
+.header {
+    margin-bottom: var(--spacing-lg);
+}
+
+.headerRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.headerLeft {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    min-width: 0;
+}
+
+.icon {
+    background: linear-gradient(135deg, #4caf50 0%, #00bcd4 100%);
+    padding: var(--spacing-sm);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.title {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+    color: var(--color-text-base);
+}
+
+/* ============================================
+   PORTFOLIO DISTRIBUTION
+   ============================================ */
+
+.distribution {
+    margin-bottom: var(--spacing-lg);
+}
+
+.distributionLabel {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+    margin-bottom: var(--spacing-xs);
+    display: block;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.distributionBar {
+    height: 8px;
+    background: var(--color-bg-container);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    display: flex;
+    margin-bottom: var(--spacing-xs);
+}
+
+.distributionSegment {
+    height: 100%;
+    cursor: pointer;
+    transition: opacity var(--transition-quick);
+}
+
+    .distributionSegment:hover {
+        opacity: 0.8;
+    }
+
+/* ============================================
+   ASSET LIST - RESPONSIVE GRID LAYOUT
+   ============================================ */
+
+.assetList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    width: 100%;
+}
+
+.assetCard {
+    background: var(--color-bg-base);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-quick);
+    overflow: hidden;
+}
+
+    .assetCard:hover {
+        background: var(--color-bg-container);
+        box-shadow: var(--shadow-sm);
+        border-color: var(--color-primary);
+    }
+
+/* Desktop & Tablet Layout (> 768px) */
+.assetRow {
+    display: grid;
+    grid-template-columns: minmax(120px, 2fr) minmax(70px, 1fr) minmax(80px, 1.2fr) minmax(90px, 1fr);
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md);
+    min-height: 60px;
+}
+
+.assetInfo {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.assetDot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.assetName {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-base);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.assetMetric {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    min-width: 0;
+}
+
+.metricLabel {
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.metricValue {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--color-text-base);
+    white-space: nowrap;
+}
+
+.metricValueSuccess {
+    color: var(--color-success);
+}
+
+/* ============================================
+   DIVIDER
+   ============================================ */
+
+.divider {
+    margin: var(--spacing-lg) 0;
+    border: none;
+    border-top: 1px solid var(--color-border);
+}
+
+/* ============================================
+   SUMMARY FOOTER
+   ============================================ */
+
+.summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md);
+    background: linear-gradient(135deg, var(--color-bg-container) 0%, var(--color-bg-base) 100%);
+    border-radius: var(--radius-md);
+    gap: var(--spacing-md);
+}
+
+.summaryLeft {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.summaryIcon {
+    color: var(--color-primary);
+    font-size: 20px;
+}
+
+.summaryLabel {
+    font-weight: 600;
+    color: var(--color-text-base);
+    font-size: var(--font-size-sm);
+}
+
+.summaryCount {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-tertiary);
+    background: var(--color-bg-elevated);
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    font-weight: 600;
+}
+
+.summaryRight {
+    text-align: right;
+}
+
+.totalValue {
+    font-weight: 700;
+    font-size: clamp(18px, 3vw, 24px);
+    color: var(--color-success);
+    letter-spacing: -0.5px;
+}
+
+/* ============================================
+   EMPTY STATE
+   ============================================ */
+
+.empty {
+    padding: var(--spacing-3xl) var(--spacing-lg);
+    text-align: center;
+}
+
+.emptyTitle {
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-xs);
+    font-size: var(--font-size-base);
+}
+
+.emptyDescription {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-tertiary);
+}
+
+/* ============================================
+   RESPONSIVE BREAKPOINTS
+   ============================================ */
+
+/* Narrow Desktop / Large Tablet (769px - 1024px) */
+@media (max-width: 1024px) and (min-width: 769px) {
+    .assetRow {
+        grid-template-columns: minmax(100px, 2fr) 80px 100px 90px;
+        gap: var(--spacing-md);
+    }
+
+    .assetName {
+        font-size: 13px;
+    }
+
+    .metricValue {
+        font-size: 12px;
+    }
+}
+
+/* Tablet Portrait (481px - 768px) */
+@media (max-width: 768px) and (min-width: 481px) {
+    .headerRow {
+        gap: var(--spacing-sm);
+    }
+
+    .assetInfo {
+        font-size: var(--font-size-base);
+        font-weight: 600;
+    }
+}
+
+/* Mobile (max-width: 480px) */
+@media (max-width: 480px) {
+    .header {
+        margin-bottom: var(--spacing-xs);
+    }
+
+    .icon {
+        width: 36px;
+        height: 36px;
+        padding: var(--spacing-xs);
+        font-size: 18px;
+    }
+
+    .title {
+        font-size: var(--font-size-base);
+    }
+
+    .distribution {
+        margin-bottom: var(--spacing-md);
+    }
+
+    .assetList {
+        gap: var(--spacing-xs);
+    }
+
+    /* Mobile: Stacked layout with horizontal metrics */
+    .assetRow {
+        gap: 0;
+        padding: var(--spacing-md);
+    }
+
+    /* Summary adjustments */
+    .totalValue {
+        font-size: 20px;
+    }
+}
+
+/* Extra Small Mobile (max-width: 360px) */
+@media (max-width: 360px) {
+    .assetRow {
+        padding: var(--spacing-xs);
+    }
+
+    .assetName {
+        font-size: 12px;
+        text-align: center;
+    }
+
+    .metricLabel {
+        font-size: 10px;
+    }
+
+    .metricValue {
+        font-size: 13px;
+    }
+}
+
+/* ============================================
+   LANDSCAPE MOBILE OPTIMIZATION
+   ============================================ */
+
+@media (max-height: 500px) and (orientation: landscape) {
+    .assetList {
+        gap: 4px;
+    }
+
+    .assetRow {
+        padding: var(--spacing-sm);
+        min-height: auto;
+    }
+
+    .assetMetric {
+        gap: 0;
+    }
+}
+
+/* ============================================
+   PRINT STYLES
+   ============================================ */
+
+@media print {
+    .card {
+        box-shadow: none;
+        page-break-inside: avoid;
+        border: 1px solid #ddd;
+    }
+
+        .card:hover {
+            transform: none;
+        }
+
+    .assetCard:hover {
+        background: var(--color-bg-base);
+        box-shadow: none;
+    }
+
+    .assetRow {
+        page-break-inside: avoid;
+    }
+}
+
+/* ============================================
+   ACCESSIBILITY
+   ============================================ */
+
+/* Focus visible states */
+.assetCard:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .card:hover,
+    .assetCard:hover,
+    .distributionSegment {
+        transform: none;
+        transition: none;
+    }
+
+        .distributionSegment:hover {
+            opacity: 1;
+        }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+    .card,
+    .assetCard {
+        border-width: 2px;
+    }
+
+    .assetDot {
+        border: 2px solid currentColor;
+    }
+
+    .metricValue {
+        font-weight: 700;
+    }
+
+    .assetCard:hover {
+        border-width: 3px;
+    }
+}
+
+/* ============================================
+   DARK MODE ENHANCEMENTS
+   ============================================ */
+
+html.dark .assetCard:hover {
+    border-color: var(--color-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+html.dark .assetDot {
+    box-shadow: 0 0 8px currentColor;
+}
+
+html.dark .summary {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+}
+
+html.dark .assetInfo {
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+html.dark .assetMetric {
+    border-color: rgba(255, 255, 255, 0.05);
+}

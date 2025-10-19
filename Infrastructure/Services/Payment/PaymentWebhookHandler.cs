@@ -269,7 +269,6 @@ namespace Infrastructure.Services.Payment
                     .ExecuteAsync();
 
                     await _flowEngineService.PublishEventAsync("InvoicePaid", invoice, parentCorrelationId ?? correlationId);
-                    
                 });
         }
 

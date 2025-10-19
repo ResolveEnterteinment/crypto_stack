@@ -43,7 +43,7 @@ namespace Domain.DTOs.Subscription
         /// <summary>
         /// The decimal precision for this asset
         /// </summary>
-        public uint Precision { get; set; }
+        public int Precision { get; set; }
 
         /// <summary>
         /// The subunit name (e.g., "satoshi" for Bitcoin)

@@ -152,6 +152,67 @@ namespace Infrastructure.Services.Base
             }
         }
 
+        public async Task<CrudResult<T>> ReplaceAsync(FilterDefinition<T> filter, T entity, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var replaceResult = await Collection.ReplaceOneAsync(
+                    filter, 
+                    entity, 
+                    new ReplaceOptions { IsUpsert = true }, 
+                    cancellationToken: cancellationToken);
+
+                return new CrudResult<T>
+                {
+                    IsSuccess = replaceResult.IsAcknowledged,
+                    MatchedCount = replaceResult.MatchedCount,
+                    ModifiedCount = replaceResult.ModifiedCount,
+                    AffectedIds = [entity.Id],
+                    Documents = [entity]
+                };
+            }
+            catch (Exception ex)
+            {
+                return new CrudResult<T>
+                {
+                    IsSuccess = false,
+                    ErrorMessage = ex.Message
+                };
+            }
+        }
+
+        public async Task<CrudResult<T>> ReplaceManyAsync(List<T> entities, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var bulkOps = new List<WriteModel<T>>();
+                foreach (var entity in entities)
+                {
+                    var filter = Builders<T>.Filter.Eq(e => e.Id, entity.Id);
+                    var replaceOne = new ReplaceOneModel<T>(filter, entity);
+                    bulkOps.Add(replaceOne);
+                }
+
+                var bulkResult = await Collection.BulkWriteAsync(bulkOps, cancellationToken: cancellationToken);
+
+                return new CrudResult<T>
+                {
+                    IsSuccess = bulkResult.IsAcknowledged,
+                    MatchedCount = bulkResult.MatchedCount,
+                    ModifiedCount = bulkResult.ModifiedCount,
+                    AffectedIds = entities.Select(e => e.Id),
+                    Documents = entities
+                };
+            }
+            catch (Exception ex)
+            {
+                return new CrudResult<T>
+                {
+                    IsSuccess = false,
+                    ErrorMessage = ex.Message
+                };
+            }
+        }
         public async Task<CrudResult<T>> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
         {
             try

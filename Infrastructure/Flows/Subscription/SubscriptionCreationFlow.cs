@@ -6,16 +6,11 @@ using Application.Interfaces.Subscription;
 using Domain.Constants.Subscription;
 using Domain.DTOs.Payment;
 using Domain.Exceptions;
-using Domain.Models.Dashboard;
-using Domain.Models.Payment;
 using Domain.Models.Subscription;
 using FluentValidation;
-using Infrastructure.Hubs;
-using Infrastructure.Services;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 
@@ -29,7 +24,6 @@ namespace Infrastructure.Flows.Subscription
         private readonly ISubscriptionService _subscriptionService;
         private readonly IPaymentService _paymentService;
         private readonly IValidator<SubscriptionCreateRequest> _subscriptionValidator;
-        private readonly IValidator<CheckoutSessionRequest> _checkoutValidator;
         private readonly INotificationService _notificationService;
         private readonly IIdempotencyService _idempotencyService;
         private readonly ILogger<SubscriptionCreationFlow> _logger;

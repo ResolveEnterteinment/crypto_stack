@@ -1,0 +1,583 @@
+/**
+ * WITHDRAWAL FORM STYLES
+ * Leverages global styling system - removes duplication and uses CSS variables
+ */
+
+/* ============================================
+   LAYOUT & CONTAINER
+   ============================================ */
+
+.withdrawal-container {
+    width: 100%;
+    min-height: 400px;
+}
+
+.withdrawal-form-wrapper {
+    max-width: 540px;
+    margin: 0 auto;
+}
+
+/* ============================================
+   CARD STYLING
+   ============================================ */
+
+.withdrawal-card {
+    background: var(--color-bg-elevated) !important;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: var(--shadow-md) !important;
+    padding: var(--spacing-xl) !important;
+    transition: box-shadow var(--transition-smooth) !important;
+    border: none !important;
+}
+
+.withdrawal-card .ant-card-body {
+    padding: 0 !important;
+}
+
+.withdrawal-card:hover {
+    box-shadow: var(--shadow-lg) !important;
+}
+
+/* ============================================
+   LOADING STATE
+   ============================================ */
+
+.withdrawal-loading {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 400px;
+    background: var(--color-bg-elevated);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-2xl);
+}
+
+.withdrawal-loading .ant-spin {
+    margin-bottom: var(--spacing-md);
+}
+
+/* ============================================
+   KYC REQUIRED STATE
+   ============================================ */
+
+.withdrawal-kyc-required {
+    max-width: 540px;
+    margin: var(--spacing-2xl) auto;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: var(--shadow-md) !important;
+}
+
+.kyc-content {
+    text-align: center;
+    padding: var(--spacing-2xl);
+}
+
+.kyc-icon {
+    font-size: 64px;
+    color: var(--color-primary) !important;
+    margin-bottom: var(--spacing-lg);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.kyc-content button {
+    margin-top: var(--spacing-lg);
+    border-radius: var(--radius-md);
+    height: 44px;
+    font-weight: var(--font-weight-medium);
+}
+
+/* ============================================
+   FORM ELEMENTS
+   ============================================ */
+
+.withdrawal-card .ant-form-item {
+    margin-bottom: var(--spacing-lg);
+}
+
+.withdrawal-card .ant-form-item-label {
+    padding-bottom: var(--spacing-xs);
+}
+
+.withdrawal-card .ant-form-item-label > label {
+    font-size: var(--font-size-sm) !important;
+    font-weight: var(--font-weight-semibold) !important;
+    color: var(--color-text-base) !important;
+}
+
+/* ============================================
+   INPUTS - Using Global Variables
+   ============================================ */
+
+.withdrawal-card .ant-select,
+.withdrawal-card .ant-select-selector,
+.withdrawal-card .ant-input,
+.withdrawal-card .ant-input-number,
+.withdrawal-card .ant-input-affix-wrapper {
+    background: var(--color-bg-elevated) !important;
+    border-radius: var(--radius-sm) !important;
+    border: 1px solid var(--color-border) !important;
+    transition: all var(--transition-base) !important;
+    color: var(--color-text-base) !important;
+    min-height: 44px;
+}
+
+.withdrawal-card .ant-input-number {
+    width: 100%;
+}
+
+.withdrawal-card .ant-input::placeholder,
+.withdrawal-card .ant-input-number-input::placeholder {
+    color: var(--color-text-tertiary) !important;
+    font-size: var(--font-size-sm);
+}
+
+/* Focus States */
+.withdrawal-card .ant-input:focus,
+.withdrawal-card .ant-input-focused,
+.withdrawal-card .ant-input-number:focus,
+.withdrawal-card .ant-input-number-focused,
+.withdrawal-card .ant-input-affix-wrapper:focus,
+.withdrawal-card .ant-input-affix-wrapper-focused,
+.withdrawal-card .ant-select-focused .ant-select-selector {
+    border-color: var(--color-primary) !important;
+    box-shadow: 0 0 0 3px rgba(24, 144, 255, 0.08) !important;
+}
+
+/* Disabled States */
+.withdrawal-card .ant-input:disabled,
+.withdrawal-card .ant-input-number:disabled,
+.withdrawal-card .ant-input-affix-wrapper-disabled,
+.withdrawal-card .ant-select-disabled .ant-select-selector {
+    background: var(--color-bg-container) !important;
+    color: var(--color-text-tertiary) !important;
+    cursor: not-allowed;
+}
+
+/* Input Addons */
+.withdrawal-card .ant-input-number-group-addon {
+    background: var(--color-bg-container) !important;
+    color: var(--color-text-secondary) !important;
+    border-color: var(--color-border) !important;
+    font-weight: var(--font-weight-medium);
+    padding: 0 var(--spacing-md);
+}
+
+.withdrawal-card .ant-input-prefix,
+.withdrawal-card .ant-input-suffix {
+    color: var(--color-text-secondary) !important;
+}
+
+/* ============================================
+   BALANCE SECTION
+   ============================================ */
+
+.balance-section {
+    background: linear-gradient(135deg, #f6f8fa 0%, #f0f4f8 100%) !important;
+    border-radius: var(--radius-md) !important;
+    padding: var(--spacing-lg) !important;
+    margin-bottom: var(--spacing-lg) !important;
+    border: 1px solid rgba(24, 144, 255, 0.08);
+    transition: all var(--transition-smooth);
+}
+
+.balance-section:hover {
+    border-color: rgba(24, 144, 255, 0.15);
+    transform: translateY(-1px);
+}
+
+.balance-label {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    display: block;
+    margin-bottom: var(--spacing-xs);
+    color: var(--color-text-secondary) !important;
+    font-weight: var(--font-weight-semibold);
+}
+
+.balance-amount {
+    display: flex;
+    align-items: baseline;
+    gap: var(--spacing-xs);
+}
+
+.balance-value {
+    font-size: 28px !important;
+    font-weight: var(--font-weight-bold) !important;
+    color: var(--color-text-base) !important;
+    letter-spacing: -0.5px;
+}
+
+.balance-currency {
+    font-size: var(--font-size-lg) !important;
+    font-weight: var(--font-weight-semibold) !important;
+    color: var(--color-text-secondary) !important;
+}
+
+.use-max-button {
+    color: var(--color-primary) !important;
+    font-weight: var(--font-weight-semibold) !important;
+    padding: var(--spacing-xs) var(--spacing-md) !important;
+    height: auto !important;
+    border-radius: var(--radius-md);
+    transition: all var(--transition-base);
+}
+
+.use-max-button:hover {
+    color: var(--color-primary-hover) !important;
+    background: rgba(24, 144, 255, 0.08);
+}
+
+.use-max-button:active {
+    transform: scale(0.95);
+}
+
+/* ============================================
+   LIMITS INFO
+   ============================================ */
+
+.limits-info {
+    background: var(--color-bg-container) !important;
+    border-radius: var(--radius-sm) !important;
+    padding: var(--spacing-lg) !important;
+    margin-bottom: var(--spacing-lg) !important;
+    border: 1px solid var(--color-border-secondary);
+}
+
+.limit-label {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    display: block;
+    margin-bottom: 6px;
+    color: var(--color-text-secondary) !important;
+    font-weight: var(--font-weight-semibold);
+}
+
+.limit-value {
+    font-size: var(--font-size-lg) !important;
+    font-weight: var(--font-weight-bold) !important;
+    color: var(--color-text-base) !important;
+}
+
+/* ============================================
+   VALIDATION FEEDBACK
+   ============================================ */
+
+.validation-icon {
+    font-size: var(--font-size-lg);
+    transition: all var(--transition-base);
+}
+
+.validation-icon.success {
+    color: var(--color-success) !important;
+}
+
+.validation-icon.error {
+    color: var(--color-error) !important;
+    animation: shake 0.3s ease;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+}
+
+.validation-help {
+    font-size: var(--font-size-xs);
+    color: var(--color-error) !important;
+    margin-top: var(--spacing-xs);
+    animation: fadeInDown var(--transition-base) ease;
+}
+
+.ant-form-item-explain-success {
+    color: var(--color-success) !important;
+    font-size: var(--font-size-xs);
+}
+
+/* ============================================
+   SUBMIT SECTION
+   ============================================ */
+
+.submit-section {
+    margin-top: var(--spacing-xl);
+    margin-bottom: var(--spacing-md);
+}
+
+.submit-button {
+    height: 52px !important;
+    border-radius: var(--radius-sm) !important;
+    font-weight: var(--font-weight-bold) !important;
+    font-size: var(--font-size-lg) !important;
+    border: none !important;
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%) !important;
+    transition: all var(--transition-smooth) !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.2);
+    letter-spacing: 0.3px;
+}
+
+.submit-button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(24, 144, 255, 0.35) !important;
+}
+
+.submit-button:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.2);
+}
+
+.submit-button:disabled {
+    background: var(--color-bg-container) !important;
+    color: var(--color-text-tertiary) !important;
+    box-shadow: none !important;
+    cursor: not-allowed;
+}
+
+/* ============================================
+   SECURITY NOTICE
+   ============================================ */
+
+.security-notice {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    justify-content: center;
+    padding: var(--spacing-md) var(--spacing-lg) !important;
+    background: #f6ffed !important;
+    border-radius: var(--radius-sm) !important;
+    border: 1px solid #d9f7be !important;
+    transition: all var(--transition-base);
+}
+
+.security-notice:hover {
+    background: #f0ffe5 !important;
+}
+
+.security-notice .anticon {
+    color: var(--color-success) !important;
+    font-size: 18px;
+}
+
+.security-notice .ant-typography {
+    font-size: var(--font-size-sm);
+    margin: 0;
+    color: #3f6600 !important;
+    line-height: var(--line-height-normal);
+}
+
+/* ============================================
+   SLIDER STYLING
+   ============================================ */
+
+.withdrawal-card .ant-slider {
+    margin: var(--spacing-xs) 0;
+}
+
+.withdrawal-card .ant-slider-rail {
+    background-color: var(--color-border-secondary) !important;
+    height: 6px;
+}
+
+.withdrawal-card .ant-slider-track {
+    background: linear-gradient(90deg, var(--color-primary) 0%, #40a9ff 100%) !important;
+    height: 6px;
+}
+
+.withdrawal-card .ant-slider-handle {
+    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3) !important;
+}
+
+.withdrawal-card .ant-slider-handle:hover,
+.withdrawal-card .ant-slider-handle:focus {
+    box-shadow: 0 2px 12px rgba(24, 144, 255, 0.5) !important;
+}
+
+.withdrawal-card .ant-slider-mark-text {
+    font-size: var(--font-size-xs) !important;
+    color: var(--color-text-secondary) !important;
+}
+
+.withdrawal-card .ant-slider-mark-text-active {
+    color: var(--color-primary) !important;
+}
+
+/* ============================================
+   MODAL STYLING
+   ============================================ */
+
+.ant-modal-content {
+    border-radius: var(--radius-md) !important;
+}
+
+.ant-modal-header {
+    background: var(--color-bg-container) !important;
+    border-bottom: 1px solid var(--color-border) !important;
+    padding: var(--spacing-lg) var(--spacing-xl) !important;
+}
+
+.ant-modal-title {
+    font-size: var(--font-size-lg) !important;
+    font-weight: var(--font-weight-semibold) !important;
+    color: var(--color-text-base) !important;
+}
+
+.ant-modal-body {
+    padding: var(--spacing-xl) !important;
+}
+
+.ant-modal-footer {
+    border-top: 1px solid var(--color-border) !important;
+    padding: var(--spacing-md) var(--spacing-xl) !important;
+}
+
+.ant-modal-footer .ant-btn {
+    height: 40px !important;
+    border-radius: var(--radius-md) !important;
+    font-weight: var(--font-weight-medium) !important;
+}
+
+.ant-modal-footer .ant-btn-primary {
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%) !important;
+}
+
+.ant-modal-footer .ant-btn-primary:hover {
+    opacity: 0.9;
+}
+
+/* ============================================
+   DROPDOWN MENU
+   ============================================ */
+
+.ant-select-dropdown {
+    background: var(--color-bg-elevated) !important;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: var(--spacing-xs);
+}
+
+.ant-select-item {
+    color: var(--color-text-base) !important;
+    border-radius: 6px;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    transition: all var(--transition-base);
+}
+
+.ant-select-item-option-selected {
+    background-color: rgba(24, 144, 255, 0.1) !important;
+    font-weight: var(--font-weight-semibold);
+}
+
+.ant-select-item-option-active {
+    background-color: var(--color-bg-container) !important;
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+
+@media (max-width: 768px) {
+    .withdrawal-card {
+        padding: var(--spacing-lg) !important;
+        border-radius: var(--radius-md) !important;
+    }
+
+    .balance-value {
+        font-size: 24px !important;
+    }
+
+    .submit-button {
+        height: 48px !important;
+        font-size: var(--font-size-base) !important;
+    }
+
+    .limits-info {
+        padding: var(--spacing-md) !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .withdrawal-card {
+        padding: var(--spacing-md) !important;
+    }
+
+    .balance-section {
+        padding: var(--spacing-md) !important;
+    }
+
+    .balance-value {
+        font-size: 20px !important;
+    }
+
+    .kyc-content {
+        padding: var(--spacing-xl);
+    }
+
+    .kyc-icon {
+        font-size: 48px;
+    }
+}
+
+/* ============================================
+   ACCESSIBILITY
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+@keyframes fadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.8;
+        transform: scale(1.05);
+    }
+}
+
+.withdrawal-card .ant-form-item {
+    animation: fadeIn var(--transition-smooth) ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================
+   DARK MODE SUPPORT
+   ============================================ */
+
+html.dark .balance-section {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.05) 100%) !important;
+    border-color: rgba(24, 144, 255, 0.2);
+}
+
+html.dark .security-notice {
+    background: rgba(82, 196, 26, 0.1) !important;
+    border-color: rgba(82, 196, 26, 0.3) !important;
+}

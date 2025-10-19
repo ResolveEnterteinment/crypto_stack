@@ -3,6 +3,7 @@ using Application.Contracts.Responses.Payment;
 using Application.Interfaces;
 using Application.Interfaces.Asset;
 using Application.Interfaces.Payment;
+using Application.Interfaces.Treasury;
 using Domain.Constants.Logging;
 using Domain.Constants.Payment;
 using Domain.DTOs;
@@ -25,6 +26,7 @@ namespace Infrastructure.Services
 {
     public class PaymentService : BaseService<PaymentData>, IPaymentService
     {
+        private readonly PaymentServiceSettings _settings;
         private readonly Dictionary<string, IPaymentProvider> _providers = new(StringComparer.OrdinalIgnoreCase);
         private readonly IPaymentProvider _defaultProvider;
         private readonly StripeService _stripeService;
@@ -52,8 +54,9 @@ namespace Infrastructure.Services
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
             _stripeService = new StripeService(stripeSettings);
             _providers.Add("Stripe", _stripeService as IPaymentProvider);
+            _settings = paymentSettings.Value ?? throw new ArgumentNullException(nameof(paymentSettings));
             _defaultProvider = _providers[
-                paymentSettings.Value.DefaultProvider
+                _settings.DefaultProvider
                     ?? throw new InvalidOperationException("DefaultProvider not configured")];
         }
 
@@ -1373,17 +1376,33 @@ namespace Infrastructure.Services
             list.Add(msg);
         }
 
-        public async Task<(decimal total, decimal fee, decimal platform, decimal net)> CalculatePaymentFees(InvoiceRequest i)
+        public async Task<(decimal total, decimal fee, decimal platform, decimal net)> CalculatePaymentFees(InvoiceRequest invoice)
         {
-            var total = i.Amount / 100m;
-            var fee = await Providers["stripe"].GetFeeAsync(i.PaymentIntentId);
-            var platformFee = total * 0.01m;
+            var total = invoice.Amount / 100m; // Convert cents to dollars
+
+            var fee = await Providers["stripe"].GetFeeAsync(invoice.PaymentIntentId);
+
+            var platformFeePercent = _settings.PlatformFeePercent / 100m; // Convert percentage to decimal
+            var platformFee = Math.Round(total * platformFeePercent, 2, MidpointRounding.AwayFromZero);
+
             var net = total - fee - platformFee;
+
             if (net <= 0)
             {
                 await _loggingService.LogTraceAsync("Invalid net amount. Amount must be > 0", "CalculatePaymentAmounts");
                 throw new ValidationException("Net<=0", new Dictionary<string, string[]> { { "NetAmount", new[] { "Must>0" } } });
             }
+
+            var roundedNet = Math.Round(net, 2, MidpointRounding.ToZero);
+
+            var roundingAdjustment = net - roundedNet;
+
+            if (roundingAdjustment >= 0.01m)
+            {
+                platformFee += roundingAdjustment;
+                net = roundedNet;
+            }
+
             return (total, fee, platformFee, net);
         }
 

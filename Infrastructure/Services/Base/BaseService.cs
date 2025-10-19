@@ -2,14 +2,12 @@
 using Application.Interfaces.Logging;
 using Domain.Constants.Logging;
 using Domain.DTOs;
-using Domain.DTOs.Base;
 using Domain.DTOs.Logging;
 using Domain.DTOs.Settings;
 using Domain.Events;
 using Domain.Events.Entity;
 using Domain.Exceptions;
 using Domain.Models;
-using Microsoft.AspNetCore.JsonPatch.Operations;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
@@ -95,6 +93,17 @@ namespace Infrastructure.Services.Base
             return _resilienceService.CreateBuilder<List<T>>(
                 CreateScope("GetManyAsync", new { Filter = filter?.ToString() }),
                 () => _repository.GetAllAsync(filter, ct)
+            )
+            .WithMongoDbReadResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5))
+            .ExecuteAsync();
+        }
+
+        public virtual Task<ResultWrapper<List<T>>> GetManySortedAsync(FilterDefinition<T> filter, SortDefinition<T> sort, CancellationToken ct = default)
+        {
+            return _resilienceService.CreateBuilder<List<T>>(
+                CreateScope("GetManyAsync", new { Filter = filter?.ToString() }),
+                () => _repository.GetAllAsync(filter, sort, ct)
             )
             .WithMongoDbReadResilience()
             .WithPerformanceMonitoring(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5))
@@ -224,7 +233,7 @@ namespace Infrastructure.Services.Base
 
         public virtual Task<ResultWrapper<CrudResult<T>>> UpdateAsync(Guid id, object fields, CancellationToken ct = default)
         {
-            return _resilienceService.CreateBuilder<CrudResult<T>>(
+            return _resilienceService.CreateBuilder(
                 CreateScope("UpdateAsync", new { EntityId = id, Fields = fields }),
                 async () =>
                 {
@@ -257,6 +266,90 @@ namespace Infrastructure.Services.Base
                     "UpdateAsync",
                     LogLevel.Error,
                     requiresResolution: true);
+            })
+            .ExecuteAsync();
+        }
+
+        public virtual Task<ResultWrapper<CrudResult<T>>> UpdateManyAsync(FilterDefinition<T> filter, UpdateDefinition<T> update, CancellationToken ct = default)
+        {
+            return _resilienceService.CreateBuilder(
+                CreateScope("UpdateManyAsync", new { Filter = filter, Update = update }),
+                async () =>
+                {
+                    var crudResult = await _repository.UpdateManyAsync(filter, update, ct);
+
+                    if (!crudResult.IsSuccess)
+                    {
+                        throw new DatabaseException(crudResult.ErrorMessage!);
+                    }
+
+                    return crudResult;
+                }
+            )
+            .WithMongoDbWriteResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
+            .OnSuccess(async result =>
+            {
+                if (_options.PublishCRUDEvents && result.Documents.Count > 0)
+                {
+                    result.Documents.ForEach(async (document) => await _eventService.PublishAsync(new EntityUpdatedEvent<T>(document.Id, document, _loggingService.Context)));
+                }
+            })
+            .ExecuteAsync();
+        }
+
+        public virtual Task<ResultWrapper<CrudResult<T>>> ReplaceAsync(FilterDefinition<T> filter, T entity, CancellationToken cancellationToken)
+        {
+            return _resilienceService.CreateBuilder(
+                CreateScope("ReplaceAsync", new { Filter = filter, Entity = entity }),
+                async () =>
+                {
+                    var crudResult = await _repository.ReplaceAsync(filter, entity, cancellationToken);
+
+                    if (!crudResult.IsSuccess)
+                    {
+                        throw new DatabaseException(crudResult.ErrorMessage!);
+                    }
+
+                    return crudResult;
+                }
+            )
+            .WithMongoDbWriteResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
+            .OnSuccess(async result =>
+            {
+                if (_options.PublishCRUDEvents && result.Documents.Count > 0)
+                {
+                    result.Documents.ForEach(async (document) => await _eventService.PublishAsync(new EntityUpdatedEvent<T>(document.Id, document, _loggingService.Context)));
+                }
+            })
+            .ExecuteAsync();
+        }
+
+        public virtual Task<ResultWrapper<CrudResult<T>>> ReplaceManyAsync(List<T> entities, CancellationToken cancellationToken)
+        {
+            return _resilienceService.CreateBuilder(
+                CreateScope("ReplaceManyAsync", new { Entities = entities }),
+                async () =>
+                {
+                    var crudResult = await _repository.ReplaceManyAsync(entities, cancellationToken);
+
+                    if (!crudResult.IsSuccess)
+                    {
+                        throw new DatabaseException(crudResult.ErrorMessage!);
+                    }
+
+                    return crudResult;
+                }
+            )
+            .WithMongoDbWriteResilience()
+            .WithPerformanceMonitoring(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5))
+            .OnSuccess(async result =>
+            {
+                if (_options.PublishCRUDEvents && result.Documents.Count > 0)
+                {
+                    result.Documents.ForEach(async (document) => await _eventService.PublishAsync(new EntityUpdatedEvent<T>(document.Id, document, _loggingService.Context)));
+                }
             })
             .ExecuteAsync();
         }

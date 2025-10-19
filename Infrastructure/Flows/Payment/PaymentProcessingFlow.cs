@@ -1,8 +1,10 @@
 ﻿using Application.Contracts.Requests.Payment;
 using Application.Interfaces;
+using Application.Interfaces.Asset;
 using Application.Interfaces.Base;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
+using Application.Interfaces.Treasury;
 using Domain.Constants.Subscription;
 using Domain.DTOs.Subscription;
 using Domain.Events.Payment;
@@ -21,6 +23,8 @@ namespace Infrastructure.Flows.Payment
     {
         private readonly ISubscriptionService _subscriptionService;
         private readonly IPaymentService _paymentService;
+        private readonly ITreasuryService _treasuryService;
+        private readonly IAssetService _assetService;
         private readonly IDashboardService _dashboardService;
         private readonly IEventService _eventService;
         private readonly ILogger<PaymentProcessingFlow> _logger;
@@ -29,11 +33,15 @@ namespace Infrastructure.Flows.Payment
             ILogger<PaymentProcessingFlow> logger,
             ISubscriptionService subscriptionService,
             IPaymentService paymentService,
+            ITreasuryService treasuryService,
+            IAssetService assetService,
             IDashboardService dashboardService,
             IEventService eventService)
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _paymentService = paymentService ?? throw new ArgumentNullException(nameof(paymentService));
+            _treasuryService = treasuryService ?? throw new ArgumentNullException(nameof(treasuryService));
+            _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _dashboardService = dashboardService ?? throw new ArgumentNullException(nameof(dashboardService));
             _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -46,7 +54,15 @@ namespace Infrastructure.Flows.Payment
                 {
                     var invoice = context.GetData<InvoiceRequest>("InvoiceRequest");
 
-                    ValidateInvoiceRequest(invoice);
+                    ValidateInvoiceRequest(invoice!);
+
+                    // Validate incoice currency support
+                    var assetResult = await _assetService.GetByTickerAsync(invoice!.Currency);
+
+                    if (!assetResult.IsSuccess || assetResult.Data == null)
+                    {
+                        throw new AssetFetchException($"Unsupported invoice currency {invoice.Currency}: {assetResult.ErrorMessage}");
+                    }
 
                     return StepResult.Success($"Invoice {invoice.Id} validated.");
                 })
@@ -110,8 +126,11 @@ namespace Infrastructure.Flows.Payment
                     // Calculate amounts
                     var (total, fee, platformFee, net) = await _paymentService.CalculatePaymentFees(invoice);
 
+                    var roundedNet = Math.Round(net, 2, MidpointRounding.ToZero);
+
                     var paymentData = new PaymentData
                     {
+                        Id = Guid.NewGuid(),
                         UserId = Guid.Parse(invoice.UserId),
                         SubscriptionId = Guid.Parse(invoice.SubscriptionId),
                         ProviderSubscriptionId = invoice.ProviderSubscripitonId,
@@ -131,6 +150,36 @@ namespace Infrastructure.Flows.Payment
                 })
                 .WithIdempotency()
                 .InParallel()
+                .Build();
+
+            _builder.Step("RecordPlatformFee")
+                .RequiresData<PaymentData>("Payment")
+                .After("PreparePayment")
+                .Execute(async context =>
+                {
+                    var payment = context.GetData<PaymentData>("Payment");
+                    var platformFee = payment.PlatformFee;
+
+                    var platformFeeAssetResult = await _assetService.GetByTickerAsync(payment.Currency);
+                    if (!platformFeeAssetResult.IsSuccess || platformFeeAssetResult.Data == null)
+                    {
+                        throw new AssetFetchException($"Failed to fetch asset for currency {payment.Currency}: {platformFeeAssetResult.ErrorMessage}");
+                    }
+
+                    var platformFeeAsset = platformFeeAssetResult.Data;
+
+                    await _treasuryService.RecordPlatformFeeAsync(
+                        platformFee, 
+                        payment.Currency, 
+                        platformFeeAsset.Id, 
+                        payment.UserId, 
+                        payment.SubscriptionId, 
+                        payment.Id.ToString(), 
+                        context.CancellationToken);
+
+                    return StepResult.Success($"Platform fee of {platformFee} {payment.Currency} recorded.");
+                })
+                .AllowFailure()
                 .Build();
 
             _builder.Step("CreatePaymentRecord")
@@ -262,30 +311,35 @@ namespace Infrastructure.Flows.Payment
                 })
                 .AllowFailure()
                 .Build();
-
-            _builder.Step("HandleDust")
-                .After("FetchAllocations")
-                .Triggers<HandleDustFlow>()
-                .Build();
         }
 
-        private void AddValidationError(Dictionary<string, List<string>> errs, string key, string msg)
+        private static void AddValidationError(Dictionary<string, List<string>> errs, string key, string msg)
         {
-            if (!errs.TryGetValue(key, out var list)) { list = new(); errs[key] = list; }
+            if (!errs.TryGetValue(key, out var list)) { 
+                list = []; 
+                errs[key] = list;
+            }
+
             list.Add(msg);
         }
-        private void ValidateInvoiceRequest(InvoiceRequest r)
+        private static void ValidateInvoiceRequest(InvoiceRequest r)
         {
             var errors = new Dictionary<string, List<string>>();
+
             if (string.IsNullOrWhiteSpace(r.UserId) || !Guid.TryParse(r.UserId, out _))
                 AddValidationError(errors, "UserId", "Invalid");
+
             if (string.IsNullOrWhiteSpace(r.SubscriptionId) || !Guid.TryParse(r.SubscriptionId, out _))
                 AddValidationError(errors, "SubscriptionId", "Invalid");
+
             if (string.IsNullOrWhiteSpace(r.Id))
                 AddValidationError(errors, "InvoiceId", "Invalid");
+
             if (r.Amount <= 0)
                 AddValidationError(errors, "Amount", "Must be greater than 0");
-            if (errors.Any()) throw new ValidationException("Invoice validation failed", errors.ToDictionary(k => k.Key, k => k.Value.ToArray()));
+
+            if (errors.Count != 0)
+                throw new ValidationException("Invoice validation failed", errors.ToDictionary(k => k.Key, k => k.Value.ToArray()));
         }
     }
 }

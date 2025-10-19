@@ -1,0 +1,273 @@
+/**
+ * WITHDRAWAL PAGE STYLES
+ * Leverages global styling system from variables.css and utilities.css
+ */
+
+/* ============================================
+   PAGE LAYOUT
+   ============================================ */
+
+.withdrawal-page-layout {
+    min-height: 100vh;
+    background: var(--color-bg-layout);
+}
+
+.withdrawal-content {
+    padding: var(--spacing-xl) var(--spacing-md);
+    max-width: var(--container-max-width);
+    margin: 0 auto;
+}
+
+.page-wrapper {
+    min-height: calc(100vh - var(--header-height));
+}
+
+/* ============================================
+   MAIN CONTAINER
+   ============================================ */
+
+.withdrawal-page-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xl);
+    animation: fadeIn var(--transition-smooth) ease-out;
+}
+
+/* ============================================
+   HEADER SECTION
+   ============================================ */
+
+.withdrawal-header {
+    padding: var(--spacing-lg);
+    background: var(--color-bg-elevated);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+.header-content {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+}
+
+.header-icon {
+    font-size: 32px;
+    color: var(--color-primary);
+    padding: var(--spacing-md);
+    background: linear-gradient(135deg, #e6f7ff 0%, #bae7ff 100%);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.header-title {
+    margin: 0 !important;
+    color: var(--color-text-base) !important;
+}
+
+.header-subtitle {
+    color: var(--color-text-secondary) !important;
+    font-size: var(--font-size-sm);
+}
+
+/* ============================================
+   TAB NAVIGATION
+   ============================================ */
+
+.tab-navigation {
+    background: var(--color-bg-elevated);
+    padding: var(--spacing-sm);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+.segment-option {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-weight: var(--font-weight-medium);
+}
+
+/* Override Ant Design Segmented styles */
+.tab-navigation .ant-segmented {
+    background: transparent;
+}
+
+.tab-navigation .ant-segmented-item {
+    border-radius: var(--radius-md);
+    transition: all var(--transition-base);
+}
+
+.tab-navigation .ant-segmented-item-selected {
+    background: var(--color-primary) !important;
+    color: white !important;
+    box-shadow: var(--shadow-md);
+}
+
+.tab-navigation .ant-segmented-thumb {
+    border-radius: var(--radius-md);
+}
+
+/* ============================================
+   CONTENT AREA
+   ============================================ */
+
+.tab-content {
+    min-height: 400px;
+    animation: fadeInUp var(--transition-smooth) ease-out;
+}
+
+/* ============================================
+   HELP SECTION
+   ============================================ */
+
+.help-section {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(24, 144, 255, 0.1);
+}
+
+.help-section .anticon {
+    font-size: 20px;
+    color: var(--color-primary);
+    margin-top: 2px;
+}
+
+.help-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.help-text .ant-typography {
+    margin: 0 !important;
+    color: var(--color-text-base) !important;
+}
+
+.help-text .ant-typography-secondary {
+    color: var(--color-text-secondary) !important;
+    font-size: var(--font-size-sm);
+}
+
+/* ============================================
+   ACCESS REQUIRED STATE
+   ============================================ */
+
+.access-required-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 400px;
+    padding: var(--spacing-2xl);
+    background: var(--color-bg-elevated);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    text-align: center;
+    gap: var(--spacing-lg);
+}
+
+.access-icon {
+    font-size: 64px;
+    color: var(--color-primary);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.access-required-card .ant-typography {
+    margin: 0 !important;
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.8;
+        transform: scale(1.05);
+    }
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+
+@media (max-width: 768px) {
+    .withdrawal-content {
+        padding: var(--spacing-md) var(--spacing-sm);
+    }
+
+    .header-content {
+        /*flex-direction: column;*/
+        text-align: center;
+    }
+
+    .help-section {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .access-required-card {
+        padding: var(--spacing-xl);
+        min-height: 300px;
+    }
+
+    .access-icon {
+        font-size: 48px;
+    }
+}
+
+/* ============================================
+   ACCESSIBILITY
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+    .withdrawal-page-container,
+    .tab-content,
+    .access-icon {
+        animation: none !important;
+    }
+}
+
+/* ============================================
+   DARK MODE SUPPORT
+   ============================================ */
+
+html.dark .withdrawal-page-layout {
+    background: var(--color-bg-layout);
+}
+
+html.dark .help-section {
+    background: linear-gradient(135deg, rgba(10, 132, 255, 0.1) 0%, rgba(10, 132, 255, 0.05) 100%);
+    border-color: rgba(10, 132, 255, 0.2);
+}

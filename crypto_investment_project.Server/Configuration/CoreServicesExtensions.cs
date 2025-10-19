@@ -7,6 +7,7 @@ using Application.Interfaces.Logging;
 using Application.Interfaces.Network;
 using Application.Interfaces.Payment;
 using Application.Interfaces.Subscription;
+using Application.Interfaces.Treasury;
 using Application.Interfaces.Withdrawal;
 using Application.Validation;
 using Domain.DTOs.Settings;
@@ -23,6 +24,7 @@ using Infrastructure.Services.Network;
 using Infrastructure.Services.Payment;
 using Infrastructure.Services.Subscription;
 using Infrastructure.Services.Transaction;
+using Infrastructure.Services.Treasury;
 using Infrastructure.Services.Withdrawal;
 using MediatR;
 using Microsoft.AspNetCore.DataProtection;
@@ -193,6 +195,8 @@ public static class CoreServicesExtensions
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IIdempotencyService, IdempotencyService>();
         services.AddScoped<IWithdrawalService, WithdrawalService>();
+        services.AddScoped<ITreasuryService, TreasuryService>();
+        services.AddScoped<ITreasuryBalanceService, TreasuryBalanceService>();
         services.AddScoped<IDemoService, DemoService>();
     }
 }

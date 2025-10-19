@@ -1,0 +1,422 @@
+/**
+ * WITHDRAWAL HISTORY STYLES
+ * Leverages global styling system for consistency
+ */
+
+/* ============================================
+   MAIN WRAPPER
+   ============================================ */
+
+.history-wrapper {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* ============================================
+   CARD STYLING
+   ============================================ */
+
+.history-card {
+    background: var(--color-bg-elevated) !important;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: var(--shadow-md) !important;
+    padding: var(--spacing-xl) !important;
+    transition: box-shadow var(--transition-smooth) !important;
+    border: none !important;
+}
+
+.history-card .ant-card-body {
+    padding: 0 !important;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+
+.history-header {
+    margin-bottom: var(--spacing-lg);
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: var(--spacing-md);
+}
+
+.header-content .ant-typography {
+    color: var(--color-text-base) !important;
+    margin: 0 !important;
+}
+
+.header-content .ant-typography-secondary {
+    font-size: var(--font-size-sm) !important;
+    color: var(--color-text-secondary) !important;
+    margin-top: var(--spacing-xs) !important;
+}
+
+.refresh-button {
+    border-radius: var(--radius-md) !important;
+    height: 36px !important;
+    font-weight: var(--font-weight-medium) !important;
+    background: var(--color-bg-container) !important;
+    border: 1px solid var(--color-border) !important;
+    color: var(--color-text-base) !important;
+    transition: all var(--transition-base);
+}
+
+.refresh-button:hover {
+    background: var(--color-bg-base) !important;
+    border-color: var(--color-primary) !important;
+    color: var(--color-primary) !important;
+}
+
+/* ============================================
+   TABLE STYLING
+   ============================================ */
+
+.history-card .ant-table {
+    color: var(--color-text-base) !important;
+}
+
+.history-card .ant-table-thead > tr > th {
+    background: var(--color-bg-container) !important;
+    color: var(--color-text-base) !important;
+    font-weight: var(--font-weight-semibold) !important;
+    font-size: var(--font-size-xs) !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--color-border) !important;
+    padding: var(--spacing-sm) var(--spacing-md) !important;
+}
+
+.history-card .ant-table-thead > tr > th::before {
+    display: none !important;
+}
+
+.history-card .ant-table-tbody > tr {
+    transition: background-color var(--transition-base);
+}
+
+.history-card .ant-table-tbody > tr:hover {
+    background: var(--color-bg-container) !important;
+}
+
+.history-card .ant-table-tbody > tr > td {
+    border-bottom: 1px solid var(--color-border-secondary) !important;
+    padding: var(--spacing-md) !important;
+    color: var(--color-text-base) !important;
+}
+
+/* ============================================
+   TABLE CELLS
+   ============================================ */
+
+.date-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.date-cell .ant-typography {
+    font-size: var(--font-size-sm) !important;
+    line-height: var(--line-height-normal);
+}
+
+.date-cell .ant-typography:first-child {
+    color: var(--color-text-base) !important;
+    font-weight: var(--font-weight-medium) !important;
+}
+
+.date-cell .ant-typography-secondary {
+    font-size: var(--font-size-xs) !important;
+    color: var(--color-text-secondary) !important;
+}
+
+.amount-cell {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+}
+
+.amount-value {
+    font-size: var(--font-size-sm) !important;
+    font-weight: var(--font-weight-semibold) !important;
+    color: var(--color-text-base) !important;
+}
+
+.amount-currency {
+    font-size: var(--font-size-xs) !important;
+    font-weight: var(--font-weight-medium) !important;
+    color: var(--color-text-secondary) !important;
+    text-transform: uppercase;
+}
+
+/* ============================================
+   STATUS BADGE
+   ============================================ */
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border: 1px solid;
+    border-radius: var(--radius-sm);
+}
+
+.status-badge .ant-typography {
+    font-size: var(--font-size-xs) !important;
+    font-weight: var(--font-weight-medium) !important;
+    margin: 0 !important;
+}
+
+.status-badge .anticon {
+    font-size: 18px;
+}
+
+/* ============================================
+   HASH CELL
+   ============================================ */
+
+.hash-cell {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.hash-text {
+    font-family: var(--font-family-code) !important;
+    font-size: var(--font-size-xs) !important;
+    color: var(--color-text-base) !important;
+}
+
+.copy-button {
+    padding: var(--spacing-xs) !important;
+    height: 24px !important;
+    width: 24px !important;
+    min-width: 24px !important;
+    border-radius: 6px !important;
+    color: var(--color-text-secondary) !important;
+    opacity: 0;
+    transition: all var(--transition-base);
+}
+
+.hash-cell:hover .copy-button {
+    opacity: 1;
+}
+
+.copy-button:hover {
+    background: var(--color-bg-container) !important;
+    color: var(--color-primary) !important;
+}
+
+/* ============================================
+   CANCEL BUTTON
+   ============================================ */
+
+.cancel-button {
+    border-radius: 6px !important;
+    font-size: var(--font-size-xs) !important;
+    height: 28px !important;
+    padding: 0 var(--spacing-sm) !important;
+    font-weight: var(--font-weight-medium) !important;
+}
+
+/* ============================================
+   PAGINATION
+   ============================================ */
+
+.history-card .ant-pagination {
+    margin-top: var(--spacing-lg) !important;
+}
+
+.history-card .ant-pagination-item {
+    background: var(--color-bg-elevated) !important;
+    border: 1px solid var(--color-border) !important;
+    border-radius: 6px !important;
+}
+
+.history-card .ant-pagination-item a {
+    color: var(--color-text-base) !important;
+}
+
+.history-card .ant-pagination-item-active {
+    background: var(--color-primary) !important;
+    border-color: var(--color-primary) !important;
+}
+
+.history-card .ant-pagination-item-active a {
+    color: white !important;
+}
+
+.history-card .ant-pagination-prev button,
+.history-card .ant-pagination-next button {
+    background: var(--color-bg-elevated) !important;
+    border: 1px solid var(--color-border) !important;
+    border-radius: 6px !important;
+    color: var(--color-text-base) !important;
+}
+
+.history-card .ant-pagination-prev:hover button,
+.history-card .ant-pagination-next:hover button {
+    border-color: var(--color-primary) !important;
+    color: var(--color-primary) !important;
+}
+
+.history-card .ant-pagination-total-text {
+    color: var(--color-text-secondary) !important;
+    font-size: var(--font-size-sm) !important;
+}
+
+/* ============================================
+   EMPTY STATE
+   ============================================ */
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xl) var(--spacing-md);
+}
+
+.empty-state .ant-typography {
+    color: var(--color-text-secondary) !important;
+}
+
+.history-card .ant-empty-description {
+    color: var(--color-text-secondary) !important;
+}
+
+.history-card .ant-empty-image {
+    height: 60px !important;
+    margin-bottom: var(--spacing-md);
+}
+
+/* ============================================
+   LOADING SPINNER
+   ============================================ */
+
+.history-card .ant-spin-dot-item {
+    background-color: var(--color-primary) !important;
+}
+
+.history-card .ant-table-placeholder {
+    background: var(--color-bg-elevated) !important;
+}
+
+/* ============================================
+   SCROLLBAR STYLING
+   ============================================ */
+
+.history-card .ant-table-body::-webkit-scrollbar {
+    height: 8px;
+}
+
+.history-card .ant-table-body::-webkit-scrollbar-track {
+    background: var(--color-bg-container);
+    border-radius: var(--radius-xs);
+}
+
+.history-card .ant-table-body::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: var(--radius-xs);
+}
+
+.history-card .ant-table-body::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-tertiary);
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.history-card .ant-table-tbody > tr {
+    animation: fadeIn var(--transition-smooth) ease-in-out;
+}
+
+/* ============================================
+   RESPONSIVE DESIGN
+   ============================================ */
+
+@media (max-width: 1024px) {
+    .history-card {
+        padding: var(--spacing-lg) !important;
+    }
+
+    .header-content {
+        flex-direction: column;
+        gap: var(--spacing-md);
+    }
+
+    .refresh-button {
+        width: 100%;
+    }
+}
+
+@media (max-width: 768px) {
+    .history-card {
+        padding: var(--spacing-md) !important;
+        border-radius: var(--radius-md) !important;
+    }
+
+    .history-card .ant-table-thead > tr > th,
+    .history-card .ant-table-tbody > tr > td {
+        padding: var(--spacing-sm) !important;
+        font-size: var(--font-size-xs) !important;
+    }
+
+    .amount-value {
+        font-size: var(--font-size-sm) !important;
+    }
+
+    .hash-text {
+        font-size: 11px !important;
+    }
+
+    .copy-button {
+        opacity: 1;
+    }
+}
+
+/* ============================================
+   ACCESSIBILITY
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+    .history-card .ant-table-tbody > tr {
+        animation: none !important;
+    }
+}
+
+/* ============================================
+   TABLE SORT & FILTER
+   ============================================ */
+
+.history-card .ant-table-column-sorter {
+    color: var(--color-text-secondary) !important;
+}
+
+.history-card .ant-table-column-sorter-up.active,
+.history-card .ant-table-column-sorter-down.active {
+    color: var(--color-primary) !important;
+}
+
+.history-card .ant-table-filter-trigger {
+    color: var(--color-text-secondary) !important;
+}
+
+.history-card .ant-table-filter-trigger:hover {
+    color: var(--color-primary) !important;
+}

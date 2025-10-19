@@ -16,6 +16,8 @@ namespace Application.Interfaces.Base
         Task<CrudResult<T>> InsertAsync(T entity, CancellationToken cancellationToken = default);
         Task<CrudResult<T>> UpdateAsync(Guid id, object updatedFields, CancellationToken cancellationToken = default);
         Task<CrudResult<T>> UpdateManyAsync(FilterDefinition<T> filter, object updatedFields, CancellationToken cancellationToken = default);
+        Task<CrudResult<T>> ReplaceAsync(FilterDefinition<T> filter, T entity, CancellationToken cancellationToken = default);
+        Task<CrudResult<T>> ReplaceManyAsync(List<T> entities, CancellationToken cancellationToken = default);
         Task<CrudResult<T>> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
         Task<CrudResult<T>> DeleteManyAsync(FilterDefinition<T> filter, CancellationToken cancellationToken = default);
         Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken = default);

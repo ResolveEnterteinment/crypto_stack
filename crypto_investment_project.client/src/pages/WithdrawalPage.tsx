@@ -7,7 +7,6 @@ import WithdrawalLimitsComponent from '../components/Withdrawal/WithdrawalLimits
 import {
     Typography,
     message,
-    Space,
     Segmented,
 } from 'antd';
 import {
@@ -20,7 +19,7 @@ import Navbar from '../components/Navbar';
 import Layout, { Content } from 'antd/es/layout/layout';
 import ProtectedRoute from '../components/ProtectedRoute';
 import { KYC_LEVELS } from '../components/KYC';
-import './WithdrawalPage.css';
+import '../styles/Withdrawal/WithdrawalPage.css';
 
 const { Title, Text } = Typography;
 

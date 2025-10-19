@@ -8,7 +8,7 @@ import { Button, Card, Empty, message, Table, Typography } from 'antd';
 import React, { useEffect, useState } from 'react';
 import withdrawalService from '../../services/withdrawalService';
 import { WithdrawalResponse } from '../../types/withdrawal';
-import './WithdrawalHistory.css';
+import '../../styles/Withdrawal/WithdrawalHistory.css';
 
 const { Text, Title } = Typography;
 
@@ -124,7 +124,7 @@ const WithdrawalHistory: React.FC<WithdrawalHistoryProps> = ({ onWithdrawalCance
         const config = statusConfig[status] || { icon: null, color: '#d9d9d9', text: status };
 
         return (
-            <div className="status-badge" style={{ borderColor: config.color, backgroundColor: config.backgroundColor}}>
+            <div className="status-badge" style={{ borderColor: config.color, backgroundColor: config.backgroundColor }}>
                 <span style={{ color: config.color }}>{config.icon}</span>
                 <Text style={{ color: config.color, wordBreak: "keep-all" }}>{config.text}</Text>
             </div>

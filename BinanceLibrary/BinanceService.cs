@@ -233,6 +233,7 @@ namespace BinanceLibrary
                     QuoteQuantity = placedBinanceOrder.QuoteQuantity,
                     QuoteQuantityFilled = placedBinanceOrder.QuoteQuantityFilled,
                     Price = placedBinanceOrder.AverageFillPrice,
+                    Quantity = placedBinanceOrder.Quantity,
                     QuantityFilled = placedBinanceOrder.QuantityFilled,
                     OrderId = placedBinanceOrder.Id,
                     ClientOrderId = placedBinanceOrder.ClientOrderId,
@@ -280,6 +281,7 @@ namespace BinanceLibrary
                     QuoteQuantity = placedBinanceOrder.QuoteQuantity,
                     QuoteQuantityFilled = placedBinanceOrder.QuoteQuantityFilled,
                     Price = placedBinanceOrder.AverageFillPrice,
+                    Quantity = placedBinanceOrder.Quantity,
                     QuantityFilled = placedBinanceOrder.QuantityFilled,
                     OrderId = placedBinanceOrder.Id,
                     ClientOrderId = placedBinanceOrder.ClientOrderId,
@@ -453,6 +455,7 @@ namespace BinanceLibrary
                     Symbol = "BTCUSDT", // Placeholder
                     QuoteQuantity = 0,
                     QuoteQuantityFilled = 0,
+                    Quantity = 0,
                     QuantityFilled = 0,
                     Price = 0,
                     Status = OrderStatus.Filled // Placeholder
@@ -549,6 +552,7 @@ namespace BinanceLibrary
                         QuoteQuantity = o.QuoteQuantity,
                         QuoteQuantityFilled = o.QuoteQuantityFilled,
                         Price = o.AverageFillPrice,
+                        Quantity = o.Quantity,
                         QuantityFilled = o.QuantityFilled,
                         OrderId = o.Id,
                         Status = MapBinanceStatus(o.Status) ?? OrderStatus.Pending,

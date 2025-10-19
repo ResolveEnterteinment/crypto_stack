@@ -1,340 +1,263 @@
-// src/components/LandingPage/Navbar.tsx
-import React, { useState, useEffect } from 'react';
+/**
+ * NAVBAR COMPONENT
+ * 
+ * Professional navigation for crypto DCA platform
+ * 
+ * Features:
+ * - Ant Design integration
+ * - Global styling system (variables.css, global.css)
+ * - Smooth scroll behavior
+ * - Responsive mobile menu
+ * - Accessibility compliant
+ * - Dark mode support
+ * 
+ * Design principles:
+ * - Minimal, clean design consistent with landing page
+ * - Security-first messaging
+ * - Professional appearance
+ */
+
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { LockOutlined, MenuOutlined, CloseOutlined } from '@ant-design/icons';
+import { Button, Drawer, Space } from 'antd';
+import '../../styles/LandingPage/Navbar.css';
+
+/* ========================================
+   TYPE DEFINITIONS
+   ======================================== */
 
 interface NavbarProps {
     transparent?: boolean;
 }
 
-/**
- * Professional Navbar for Financial Platform
- * 
- * Design principles:
- * - Minimal, clean design
- * - Consistent with landing page (Ant Design)
- * - Security-first messaging
- * - Simple navigation
- * - No unnecessary animations
- */
+interface NavLink {
+    label: string;
+    path: string;
+}
+
+/* ========================================
+   CONSTANTS
+   ======================================== */
+
+const NAV_LINKS: NavLink[] = [
+    { label: 'Security', path: '/security' },
+    { label: 'Pricing', path: '/pricing' },
+    { label: 'Learn', path: '/learn' }
+];
+
+/* ========================================
+   MAIN NAVBAR COMPONENT
+   ======================================== */
+
 const Navbar: React.FC<NavbarProps> = ({ transparent = true }) => {
     const navigate = useNavigate();
     const { isAuthenticated } = useAuth();
     const [isScrolled, setIsScrolled] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-    // Track scroll for navbar background
+    /* ========================================
+       SCROLL HANDLER
+       ======================================== */
+
     useEffect(() => {
         const handleScroll = () => {
             setIsScrolled(window.scrollY > 20);
         };
 
         handleScroll(); // Set initial state
-        window.addEventListener('scroll', handleScroll);
+        window.addEventListener('scroll', handleScroll, { passive: true });
         return () => window.removeEventListener('scroll', handleScroll);
     }, []);
 
-    // Close mobile menu on ESC
+    /* ========================================
+       KEYBOARD NAVIGATION
+       ======================================== */
+
     useEffect(() => {
         const handleEsc = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setIsMobileMenuOpen(false);
+            if (e.key === 'Escape' && isMobileMenuOpen) {
+                setIsMobileMenuOpen(false);
+            }
         };
+
         if (isMobileMenuOpen) {
             document.addEventListener('keydown', handleEsc);
-            return () => document.removeEventListener('keydown', handleEsc);
+            // Prevent body scroll when menu is open
+            document.body.style.overflow = 'hidden';
+            return () => {
+                document.removeEventListener('keydown', handleEsc);
+                document.body.style.overflow = '';
+            };
         }
     }, [isMobileMenuOpen]);
 
-    const navigateTo = (path: string) => {
+    /* ========================================
+       NAVIGATION HANDLERS
+       ======================================== */
+
+    const navigateTo = useCallback((path: string) => {
         setIsMobileMenuOpen(false);
         navigate(path);
-    };
+    }, [navigate]);
 
-    // Determine navbar background
-    const navStyle: React.CSSProperties = {
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 1000,
-        transition: 'all 0.3s ease',
-        backgroundColor: isScrolled ? '#ffffff' : (transparent ? 'transparent' : '#ffffff'),
-        borderBottom: isScrolled ? '1px solid #e5e7eb' : (transparent ? 'none' : '1px solid #e5e7eb'),
-        boxShadow: isScrolled ? '0 1px 3px rgba(0,0,0,0.05)' : 'none'
-    };
+    const toggleMobileMenu = useCallback(() => {
+        setIsMobileMenuOpen(prev => !prev);
+    }, []);
 
-    const textColor = isScrolled ? '#1a1a1a' : (transparent ? '#ffffff' : '#1a1a1a');
-    const linkColor = isScrolled ? '#4a5568' : (transparent ? 'rgba(255,255,255,0.9)' : '#4a5568');
+    /* ========================================
+       DYNAMIC STYLES
+       ======================================== */
+
+    const navClassName = `navbar ${isScrolled ? 'navbar-scrolled' : ''} ${transparent && !isScrolled ? 'navbar-transparent' : ''}`;
+
+    /* ========================================
+       RENDER
+       ======================================== */
 
     return (
         <>
-            <nav style={navStyle}>
-                <div style={{
-                    maxWidth: 1200,
-                    margin: '0 auto',
-                    padding: '16px 24px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between'
-                }}>
+            <nav className={navClassName} role="navigation" aria-label="Main navigation">
+                <div className="navbar-container">
                     {/* Logo */}
-                    <div
+                    <button
                         onClick={() => navigateTo('/')}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            cursor: 'pointer',
-                            gap: 12
-                        }}
+                        className="navbar-logo"
+                        aria-label="Go to homepage"
                     >
-                        <LockOutlined style={{ fontSize: 24, color: '#2563eb' }} />
-                        <span style={{
-                            fontSize: '1.25rem',
-                            fontWeight: 600,
-                            color: textColor,
-                            letterSpacing: '-0.01em'
-                        }}>
-                            CryptoInvest
-                        </span>
-                    </div>
+                        <LockOutlined className="logo-icon" aria-hidden="true" />
+                        <span className="logo-text">CryptoInvest</span>
+                    </button>
 
                     {/* Desktop Navigation */}
-                    <div style={{
-                        display: 'none',
-                        alignItems: 'center',
-                        gap: 40
-                    }}
-                        className="desktop-nav">
-                        <div style={{ display: 'flex', gap: 32 }}>
-                            {[
-                                { label: 'Security', path: '/security' },
-                                { label: 'Pricing', path: '/pricing' },
-                                { label: 'Learn', path: '/learn' }
-                            ].map((item) => (
-                                <button
+                    <div className="navbar-desktop">
+                        <nav className="navbar-links" aria-label="Primary navigation">
+                            {NAV_LINKS.map((item) => (
+                                <Button
                                     key={item.path}
+                                    type="link"
                                     onClick={() => navigateTo(item.path)}
-                                    style={{
-                                        background: 'none',
-                                        border: 'none',
-                                        color: linkColor,
-                                        fontSize: '0.9375rem',
-                                        fontWeight: 500,
-                                        cursor: 'pointer',
-                                        padding: 0,
-                                        transition: 'color 0.2s'
-                                    }}
-                                    onMouseEnter={(e) => e.currentTarget.style.color = '#2563eb'}
-                                    onMouseLeave={(e) => e.currentTarget.style.color = linkColor}
+                                    className="nav-link"
+                                    aria-label={`Navigate to ${item.label}`}
                                 >
                                     {item.label}
-                                </button>
+                                </Button>
                             ))}
-                        </div>
+                        </nav>
 
-                        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                        <Space size="middle" className="navbar-actions">
                             {isAuthenticated ? (
-                                <button
+                                <Button
+                                    type="primary"
                                     onClick={() => navigateTo('/dashboard')}
-                                    style={{
-                                        backgroundColor: '#2563eb',
-                                        color: '#ffffff',
-                                        border: 'none',
-                                        padding: '10px 24px',
-                                        borderRadius: 4,
-                                        fontSize: '0.9375rem',
-                                        fontWeight: 500,
-                                        cursor: 'pointer',
-                                        transition: 'background-color 0.2s'
-                                    }}
-                                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1d4ed8'}
-                                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
+                                    className="nav-button-primary"
+                                    aria-label="Go to dashboard"
                                 >
                                     Dashboard
-                                </button>
+                                </Button>
                             ) : (
                                 <>
-                                    <button
+                                    <Button
+                                        type="link"
                                         onClick={() => navigateTo('/auth/login')}
-                                        style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            color: linkColor,
-                                            fontSize: '0.9375rem',
-                                            fontWeight: 500,
-                                            cursor: 'pointer',
-                                            padding: 0,
-                                            transition: 'color 0.2s'
-                                        }}
-                                        onMouseEnter={(e) => e.currentTarget.style.color = '#2563eb'}
-                                        onMouseLeave={(e) => e.currentTarget.style.color = linkColor}
+                                        className="nav-link"
+                                        aria-label="Log in to your account"
                                     >
                                         Log In
-                                    </button>
-                                    <button
+                                    </Button>
+                                    <Button
+                                        type="primary"
                                         onClick={() => navigateTo('/auth/register')}
-                                        style={{
-                                            backgroundColor: '#2563eb',
-                                            color: '#ffffff',
-                                            border: 'none',
-                                            padding: '10px 24px',
-                                            borderRadius: 4,
-                                            fontSize: '0.9375rem',
-                                            fontWeight: 500,
-                                            cursor: 'pointer',
-                                            transition: 'background-color 0.2s'
-                                        }}
-                                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1d4ed8'}
-                                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
+                                        className="nav-button-primary"
+                                        aria-label="Create a new account"
                                     >
                                         Sign Up
-                                    </button>
+                                    </Button>
                                 </>
                             )}
-                        </div>
+                        </Space>
                     </div>
 
                     {/* Mobile Menu Button */}
-                    <button
-                        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                        style={{
-                            display: 'none',
-                            background: 'none',
-                            border: 'none',
-                            color: textColor,
-                            fontSize: 24,
-                            cursor: 'pointer',
-                            padding: 8
-                        }}
-                        className="mobile-menu-btn"
+                    <Button
+                        type="text"
+                        icon={isMobileMenuOpen ? <CloseOutlined /> : <MenuOutlined />}
+                        onClick={toggleMobileMenu}
+                        className="navbar-mobile-toggle"
                         aria-label={isMobileMenuOpen ? 'Close menu' : 'Open menu'}
-                    >
-                        {isMobileMenuOpen ? <CloseOutlined /> : <MenuOutlined />}
-                    </button>
+                        aria-expanded={isMobileMenuOpen}
+                        aria-controls="mobile-menu"
+                    />
                 </div>
-
-                {/* Mobile Menu */}
-                {isMobileMenuOpen && (
-                    <div style={{
-                        backgroundColor: '#ffffff',
-                        borderTop: '1px solid #e5e7eb',
-                        padding: '24px'
-                    }}
-                        className="mobile-menu">
-                        <div style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 16
-                        }}>
-                            {[
-                                { label: 'Security', path: '/security' },
-                                { label: 'Pricing', path: '/pricing' },
-                                { label: 'Learn', path: '/learn' }
-                            ].map((item) => (
-                                <button
-                                    key={item.path}
-                                    onClick={() => navigateTo(item.path)}
-                                    style={{
-                                        background: 'none',
-                                        border: 'none',
-                                        color: '#1a1a1a',
-                                        fontSize: '1rem',
-                                        fontWeight: 500,
-                                        cursor: 'pointer',
-                                        padding: '12px 0',
-                                        textAlign: 'left',
-                                        borderBottom: '1px solid #f3f4f6'
-                                    }}
-                                >
-                                    {item.label}
-                                </button>
-                            ))}
-
-                            <div style={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 12,
-                                marginTop: 16
-                            }}>
-                                {isAuthenticated ? (
-                                    <button
-                                        onClick={() => navigateTo('/dashboard')}
-                                        style={{
-                                            backgroundColor: '#2563eb',
-                                            color: '#ffffff',
-                                            border: 'none',
-                                            padding: '12px 24px',
-                                            borderRadius: 4,
-                                            fontSize: '1rem',
-                                            fontWeight: 500,
-                                            cursor: 'pointer',
-                                            width: '100%'
-                                        }}
-                                    >
-                                        Dashboard
-                                    </button>
-                                ) : (
-                                    <>
-                                        <button
-                                            onClick={() => navigateTo('/auth/register')}
-                                            style={{
-                                                backgroundColor: '#2563eb',
-                                                color: '#ffffff',
-                                                border: 'none',
-                                                padding: '12px 24px',
-                                                borderRadius: 4,
-                                                fontSize: '1rem',
-                                                fontWeight: 500,
-                                                cursor: 'pointer',
-                                                width: '100%'
-                                            }}
-                                        >
-                                            Sign Up
-                                        </button>
-                                        <button
-                                            onClick={() => navigateTo('/auth/login')}
-                                            style={{
-                                                backgroundColor: 'transparent',
-                                                color: '#2563eb',
-                                                border: '1px solid #2563eb',
-                                                padding: '12px 24px',
-                                                borderRadius: 4,
-                                                fontSize: '1rem',
-                                                fontWeight: 500,
-                                                cursor: 'pointer',
-                                                width: '100%'
-                                            }}
-                                        >
-                                            Log In
-                                        </button>
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
             </nav>
 
-            {/* Add responsive CSS */}
-            <style>{`
-                @media (min-width: 768px) {
-                    .desktop-nav {
-                        display: flex !important;
-                    }
-                    .mobile-menu-btn {
-                        display: none !important;
-                    }
-                    .mobile-menu {
-                        display: none !important;
-                    }
-                }
-                @media (max-width: 767px) {
-                    .mobile-menu-btn {
-                        display: block !important;
-                    }
-                }
-            `}</style>
+            {/* Mobile Menu Drawer */}
+            <Drawer
+                id="mobile-menu"
+                placement="right"
+                open={isMobileMenuOpen}
+                onClose={() => setIsMobileMenuOpen(false)}
+                className="navbar-mobile-drawer"
+                width={300}
+                closeIcon={<CloseOutlined />}
+                aria-label="Mobile navigation menu"
+            >
+                <nav className="mobile-menu-content" aria-label="Mobile primary navigation">
+                    <div className="mobile-menu-links">
+                        {NAV_LINKS.map((item) => (
+                            <Button
+                                key={item.path}
+                                type="text"
+                                onClick={() => navigateTo(item.path)}
+                                className="mobile-nav-link"
+                                block
+                                size="large"
+                                aria-label={`Navigate to ${item.label}`}
+                            >
+                                {item.label}
+                            </Button>
+                        ))}
+                    </div>
+
+                    <div className="mobile-menu-actions">
+                        {isAuthenticated ? (
+                            <Button
+                                type="primary"
+                                onClick={() => navigateTo('/dashboard')}
+                                className="mobile-nav-button-primary"
+                                block
+                                size="large"
+                                aria-label="Go to dashboard"
+                            >
+                                Dashboard
+                            </Button>
+                        ) : (
+                            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                                <Button
+                                    type="primary"
+                                    onClick={() => navigateTo('/auth/register')}
+                                    className="mobile-nav-button-primary"
+                                    block
+                                    size="large"
+                                    aria-label="Create a new account"
+                                >
+                                    Sign Up
+                                </Button>
+                                <Button
+                                    onClick={() => navigateTo('/auth/login')}
+                                    className="mobile-nav-button-secondary"
+                                    block
+                                    size="large"
+                                    aria-label="Log in to your account"
+                                >
+                                    Log In
+                                </Button>
+                            </Space>
+                        )}
+                    </div>
+                </nav>
+            </Drawer>
         </>
     );
 };

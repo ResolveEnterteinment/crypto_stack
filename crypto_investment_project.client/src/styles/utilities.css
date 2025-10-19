@@ -53,7 +53,7 @@
 
 .card-hover:hover {
     box-shadow: var(--shadow-md);
-    transform: translateY(-2px);
+    /*transform: translateY(-2px);*/
 }
 
 .card-interactive {

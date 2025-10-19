@@ -2,6 +2,7 @@
 using Application.Interfaces.Base;
 using Application.Interfaces.Exchange;
 using Application.Interfaces.Logging;
+using Application.Interfaces.Treasury;
 using Domain.Constants.Logging;
 using Domain.DTOs.Exchange;
 using Domain.DTOs.Subscription;
@@ -13,12 +14,14 @@ using Domain.Models.Payment;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
+using Stripe.Terminal;
 
 namespace Infrastructure.Flows.Exchange
 {
     public class AllocationExchangeOrderFlow : FlowDefinition
     {
         private readonly IAssetService _assetService;
+        private readonly ITreasuryService _treasuryService;
         private readonly IExchangeService _exchangeService;
         private readonly IBalanceManagementService _balanceManagementService;
         private readonly IOrderManagementService _orderManagementService;
@@ -27,6 +30,7 @@ namespace Infrastructure.Flows.Exchange
 
         public AllocationExchangeOrderFlow(
             IAssetService assetService,
+            ITreasuryService treasuryService,
             IExchangeService exchangeService,
             IBalanceManagementService balanceManagementService,
             IOrderManagementService orderManagementService,
@@ -34,6 +38,7 @@ namespace Infrastructure.Flows.Exchange
             ILoggingService logger)
         {
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
+            _treasuryService = treasuryService ?? throw new ArgumentNullException(nameof(treasuryService));
             _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
             _balanceManagementService = balanceManagementService ?? throw new ArgumentNullException(nameof(balanceManagementService));
             _orderManagementService = orderManagementService ?? throw new ArgumentNullException(nameof(orderManagementService));
@@ -43,7 +48,7 @@ namespace Infrastructure.Flows.Exchange
 
         protected override void DefineSteps()
         {
-            _builder.Step("ValidateAndPrepareAllocation")
+            _builder.Step("ValidateAllocation")
                 .RequiresData<PaymentData>("Payment")
                 .RequiresData<EnhancedAllocationDto>("Allocation")
                 .Execute(async context =>
@@ -61,7 +66,7 @@ namespace Infrastructure.Flows.Exchange
                     }
 
                     // Calculate quote order quantity
-                    decimal quoteOrderQuantity = Math.Round(payment.NetAmount * (allocation.PercentAmount / 100m), 2, MidpointRounding.ToZero);
+                    decimal quoteOrderQuantity = payment.NetAmount * (allocation.PercentAmount / 100m);
 
                     if (quoteOrderQuantity <= 0m)
                     {
@@ -74,8 +79,47 @@ namespace Infrastructure.Flows.Exchange
                 })
                 .Build();
 
-            _builder.Step("FetchAndValidateAsset")
-                .After("ValidateAndPrepareAllocation")
+            _builder.Step("CheckRoundingDifference")
+                .After("ValidateAllocation")
+                .Execute(async context =>
+                {
+                    var payment = context.GetData<PaymentData>("Payment");
+                    var allocation = context.GetData<EnhancedAllocationDto>("Allocation");
+                    var quoteOrderQuantity = context.GetData<decimal>("QuoteOrderQuantity");
+
+                    var quoteAssetResult = await _assetService.GetByTickerAsync(allocation.Currency);
+
+                    if (quoteAssetResult == null || !quoteAssetResult.IsSuccess || quoteAssetResult.Data == null)
+                    {
+                        return StepResult.Failure($"Failed to fetch asset for quote currency {allocation.Currency}");
+                    }
+
+                    var quoteAsset = quoteAssetResult.Data;
+
+                    decimal roundedQuoteQuantity = Math.Round(quoteOrderQuantity, quoteAsset.Precision, MidpointRounding.ToZero);
+                    var roundingDifference = quoteOrderQuantity - roundedQuoteQuantity;
+
+                    if (roundingDifference > 0m)
+                    {
+                        // Accrue rounding differences to treasury
+                        await _treasuryService.RecordRoundingDifferenceAsync(
+                            roundingDifference,
+                            payment.Currency,
+                            allocation.AssetId,
+                            "PaymentAllocationOrder",
+                            payment.Id.ToString(),
+                            cancellationToken: context.CancellationToken
+                            );
+                    }
+
+                    context.SetData("QuoteOrderQuantity", roundedQuoteQuantity);
+
+                    return StepResult.Success($"Recorded rounding difference of {roundedQuoteQuantity} {quoteAsset.Ticker}", roundingDifference);
+                })
+                .Build();
+
+            _builder.Step("ValidateAsset")
+                .After("ValidateAllocation")
                 .RequiresData<EnhancedAllocationDto>("Allocation")
                 .Execute(async context =>
                 {
@@ -95,8 +139,8 @@ namespace Infrastructure.Flows.Exchange
                 })
                 .Build();
 
-            _builder.Step("GetAndValidateExchange")
-                .After("FetchAndValidateAsset")
+            _builder.Step("ValidateExchange")
+                .After("ValidateAsset")
                 .RequiresData<AssetData>("Asset")
                 .Execute(async context =>
                 {
@@ -116,7 +160,7 @@ namespace Infrastructure.Flows.Exchange
                 .Build();
 
             _builder.Step("ValidateExchangeBalance")
-                .After("GetAndValidateExchange")
+                .After("ValidateExchange")
                 .RequiresData<AssetData>("Asset")
                 .RequiresData<decimal>("QuoteOrderQuantity")
                 .CanPause(async context => {
@@ -326,6 +370,11 @@ namespace Infrastructure.Flows.Exchange
                 })
                 .WithIdempotency()
                 .Critical()
+                .Triggers<CollectDustFlow>(context => new Dictionary<string, object>
+                {
+                    ["ExchangeOrderData"] = context.GetData<ExchangeOrderData>("ExchangeOrderData"),
+                    ["PlacedOrder"] = context.GetData<PlacedExchangeOrder>("PlacedOrder"),
+                })
                 .Build();
 
             _builder.Step("PublishOrderCompletedEvent")

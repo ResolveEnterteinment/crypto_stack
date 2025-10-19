@@ -32,13 +32,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 // Import verification components based on level
-import { getKycLevelValue, getKycLevelName, KYC_LEVELS } from '../components/KYC';
+import ErrorBoundry from '../components/ErrorBoundary';
+import { getKycLevelValue, KYC_LEVELS } from '../components/KYC';
 import AdvancedVerification from '../components/KYC/AdvancedVerification';
 import BasicVerification from '../components/KYC/BasicVerification';
 import EnhancedVerification from '../components/KYC/EnhancedVerification';
 import StandardVerification from '../components/KYC/StandardVerification';
 import Navbar from '../components/Navbar';
-import ErrorBoundry from '../components/ErrorBoundary';
 import kycService from '../services/kycService';
 import { AdvancedVerificationData, BasicVerificationData, KycStatus, StandardVerificationData } from '../types/kyc';
 
@@ -285,8 +285,7 @@ const KycLevelCard: React.FC<{
             custom={index}
             style={{ marginBottom: '16px' }}
         >
-            <Card
-                hoverable={isClickable}
+            <div
                 onClick={() => isClickable && onSelectLevel(levelKey)}
                 style={{
                     background: 'rgba(255, 255, 255, 0.9)',
@@ -303,9 +302,9 @@ const KycLevelCard: React.FC<{
                     opacity: status === 'locked' ? 0.6 : 1,
                     cursor: status === 'locked' ? 'not-allowed' : isClickable ? 'pointer' : 'default',
                     position: 'relative',
-                    overflow: 'hidden'
+                    overflow: 'hidden',
+                    padding: '15px'
                 }}
-                bodyStyle={{ padding: '24px' }}
             >
                 {/* Premium badge for enhanced level */}
                 {levelKey === 'ENHANCED' && (
@@ -448,7 +447,7 @@ const KycLevelCard: React.FC<{
                         </Space>
                     </Col>
                 </Row>
-            </Card>
+            </div>
         </motion.div>
     );
 };
@@ -577,7 +576,7 @@ const KycPageContent: React.FC = () => {
             setError(null);
 
             // Try to restore existing session
-            const restoredSessionId = kycService.restoreSession();
+            const restoredSessionId = await kycService.restoreSession();
             if (restoredSessionId) {
                 const isValid = await kycService.validateSession();
                 if (isValid) {
@@ -768,7 +767,7 @@ const KycPageContent: React.FC = () => {
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ duration: 0.6, ease: [0.4, 0.0, 0.2, 1] }}
                                 >
-                                    <Card
+                                    <div
                                         style={{
                                             background: 'rgba(255, 255, 255, 0.9)',
                                             backdropFilter: 'blur(10px)',
@@ -778,7 +777,6 @@ const KycPageContent: React.FC = () => {
                                             overflow: 'hidden',
                                             marginBottom: '24px'
                                         }}
-                                        bodyStyle={{ padding: 0 }}
                                     >
                                         {/* Header */}
                                         <div style={{
@@ -831,8 +829,7 @@ const KycPageContent: React.FC = () => {
                                                     transition={{ duration: 0.5, delay: 0.4 }}
                                                     style={{ marginBottom: '32px' }}
                                                 >
-                                                    <Card
-                                                        size="small"
+                                                    <div
                                                         style={{
                                                             background: userCurrentStatus === 'APPROVED'
                                                                 ? 'linear-gradient(135deg, #f6ffed 0%, #d9f7be 100%)'
@@ -842,7 +839,8 @@ const KycPageContent: React.FC = () => {
                                                             border: `1px solid ${userCurrentStatus === 'APPROVED' ? '#b7eb8f' :
                                                                 userCurrentStatus === 'PENDING' ? '#ffd591' : '#ffccc7'
                                                                 }`,
-                                                            borderRadius: '12px'
+                                                            borderRadius: '12px',
+                                                            padding: '15px'
                                                         }}
                                                     >
                                                         <Row align="middle" gutter={16}>
@@ -874,7 +872,7 @@ const KycPageContent: React.FC = () => {
                                                                 </Text>
                                                             </Col>
                                                         </Row>
-                                                    </Card>
+                                                    </div>
                                                 </motion.div>
                                             )}
 
@@ -977,7 +975,7 @@ const KycPageContent: React.FC = () => {
                                                 </Col>
                                             </Row>
                                         </div>
-                                    </Card>
+                                    </div>
 
                                     <motion.div
                                         initial={{ opacity: 0 }}
@@ -1036,7 +1034,7 @@ const KycPageContent: React.FC = () => {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.6 }}
                     >
-                        <Card
+                        <div
                             style={{
                                 background: 'rgba(255, 255, 255, 0.9)',
                                 backdropFilter: 'blur(10px)',
@@ -1045,7 +1043,6 @@ const KycPageContent: React.FC = () => {
                                 boxShadow: '0 20px 60px rgba(0, 0, 0, 0.1)',
                                 overflow: 'hidden'
                             }}
-                            bodyStyle={{ padding: 0 }}
                         >
                             {/* Header */}
                             <div style={{
@@ -1070,16 +1067,6 @@ const KycPageContent: React.FC = () => {
                                                 <Title level={2} style={{ margin: 0, color: '#fff' }}>
                                                     {levelConfig.title}
                                                 </Title>
-                                                <Tag
-                                                    style={{
-                                                        background: 'rgba(255, 255, 255, 0.2)',
-                                                        color: 'white',
-                                                        border: 'none',
-                                                        marginTop: '4px'
-                                                    }}
-                                                >
-                                                    {selectedLevel} Level
-                                                </Tag>
                                             </Col>
                                         </Row>
                                     </Col>
@@ -1144,7 +1131,7 @@ const KycPageContent: React.FC = () => {
                                 {/* Dynamic KYC Verification Component */}
                                 {renderVerificationComponent()}
                             </div>
-                        </Card>
+                        </div>
                     </motion.div>
                 </Col>
             </Row>

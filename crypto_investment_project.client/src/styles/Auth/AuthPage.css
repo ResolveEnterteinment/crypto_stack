@@ -1,0 +1,696 @@
+/**
+ * AUTHENTICATION PAGE STYLES
+ * 
+ * Apple-inspired minimalist authentication interface
+ * Integrated with global styling system
+ * 
+ * Features:
+ * - Uses CSS custom properties from variables.css
+ * - Follows design tokens from antd-theme.config.ts
+ * - Responsive layout with mobile-first approach
+ * - Dark mode support through ThemeProvider
+ * - Smooth animations and transitions
+ * - Accessibility compliant
+ */
+
+/* ========================================
+   PAGE LAYOUT
+   ======================================== */
+
+.auth-page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-lg);
+    position: relative;
+    overflow: hidden;
+}
+
+/* Subtle background pattern */
+.auth-page::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+}
+
+.auth-container {
+    width: 100%;
+    max-width: 480px;
+    position: relative;
+    z-index: 1;
+    animation: slideUp 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ========================================
+   CARD STYLING
+   ======================================== */
+
+.auth-card,
+.auth-card.ant-card {
+    background: var(--color-bg-elevated, #ffffff) !important;
+    border-radius: 24px !important;
+    padding: var(--spacing-2xl) var(--spacing-xl) !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15),
+                0 8px 24px rgba(0, 0, 0, 0.1) !important;
+    border: none !important;
+    backdrop-filter: blur(20px);
+    transition: all var(--transition-smooth, 300ms ease);
+}
+
+.auth-card .ant-card-body {
+    padding: 0 !important;
+}
+
+.auth-card:hover {
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.18),
+                0 10px 28px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* ========================================
+   HEADER SECTION
+   ======================================== */
+
+.auth-header {
+    text-align: center;
+    margin-bottom: var(--spacing-xl);
+}
+
+.auth-title,
+.auth-title.ant-typography {
+    font-size: 32px !important;
+    font-weight: 700 !important;
+    color: var(--color-text-base, #1D1D1F) !important;
+    margin-bottom: var(--spacing-xs) !important;
+    line-height: 1.2 !important;
+    letter-spacing: -0.02em;
+}
+
+.auth-subtitle,
+.auth-subtitle.ant-typography {
+    font-size: 15px !important;
+    color: var(--color-text-secondary, #86868B) !important;
+    margin: 0 !important;
+}
+
+/* ========================================
+   TABS STYLING
+   ======================================== */
+
+.auth-tabs.ant-tabs {
+    margin-top: var(--spacing-lg);
+}
+
+.auth-tabs .ant-tabs-nav {
+    margin-bottom: var(--spacing-xl) !important;
+}
+
+.auth-tabs .ant-tabs-nav::before {
+    border-bottom: 2px solid var(--color-border-secondary, #F2F2F7);
+}
+
+.auth-tabs .ant-tabs-tab {
+    padding: var(--spacing-sm) var(--spacing-lg) !important;
+    font-size: 16px !important;
+    font-weight: 500 !important;
+    color: var(--color-text-tertiary, #C7C7CC) !important;
+    transition: all var(--transition-base, 200ms ease) !important;
+}
+
+.auth-tabs .ant-tabs-tab:hover {
+    color: var(--color-primary, #007AFF) !important;
+}
+
+.auth-tabs .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+    color: var(--color-primary, #007AFF) !important;
+    font-weight: 600 !important;
+}
+
+.auth-tabs .ant-tabs-ink-bar {
+    background: var(--color-primary, #007AFF) !important;
+    height: 3px !important;
+    border-radius: 3px 3px 0 0;
+}
+
+/* ========================================
+   FORM STYLING
+   ======================================== */
+
+.auth-card .ant-form {
+    margin-top: var(--spacing-md);
+}
+
+.auth-card .ant-form-item {
+    margin-bottom: var(--spacing-lg);
+}
+
+.auth-card .ant-form-item-label > label {
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    color: var(--color-text-secondary, #1D1D1F) !important;
+    height: auto !important;
+}
+
+/* Input fields */
+.auth-card .ant-input,
+.auth-card .ant-input-password {
+    border-radius: 12px !important;
+    padding: 12px 16px !important;
+    font-size: 15px !important;
+    transition: all var(--transition-base, 200ms ease) !important;
+}
+
+.auth-card .ant-input:hover,
+.auth-card .ant-input-password:hover .ant-input {
+    border-color: var(--color-primary, #007AFF) !important;
+    background: var(--color-bg-elevated, #ffffff) !important;
+}
+
+.auth-card .ant-input:focus,
+.auth-card .ant-input-focused,
+.auth-card .ant-input-password .ant-input:focus {
+    border-color: var(--color-primary, #007AFF) !important;
+    background: var(--color-bg-elevated, #ffffff) !important;
+    box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.1) !important;
+}
+
+.auth-card .ant-input-affix-wrapper {
+    border-radius: 12px !important;
+    padding: 4px 16px !important;
+    border: 2px solid var(--color-border, #E5E5EA) !important;
+    background: var(--color-bg-container, #F5F5F7) !important;
+}
+
+.auth-card .ant-input-affix-wrapper:hover,
+.auth-card .ant-input-affix-wrapper:focus,
+.auth-card .ant-input-affix-wrapper-focused {
+    border-color: var(--color-primary, #007AFF) !important;
+    background: var(--color-bg-elevated, #ffffff) !important;
+    box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.1) !important;
+}
+
+/* Input icons */
+.input-icon {
+    color: var(--color-text-tertiary, #C7C7CC) !important;
+    font-size: 18px !important;
+}
+
+.auth-card .ant-input-affix-wrapper:focus .input-icon,
+.auth-card .ant-input-affix-wrapper-focused .input-icon {
+    color: var(--color-primary, #007AFF) !important;
+}
+
+/* Password visibility toggle */
+.auth-card .ant-input-password-icon {
+    color: var(--color-text-tertiary, #C7C7CC) !important;
+    font-size: 16px !important;
+    transition: color var(--transition-quick, 150ms ease) !important;
+}
+
+.auth-card .ant-input-password-icon:hover {
+    color: var(--color-primary, #007AFF) !important;
+}
+
+/* Error states */
+.auth-card .ant-form-item-has-error .ant-input,
+.auth-card .ant-form-item-has-error .ant-input-affix-wrapper {
+    border-color: var(--color-error, #FF3B30) !important;
+    background: rgba(255, 59, 48, 0.05) !important;
+}
+
+.auth-card .ant-form-item-has-error .ant-input:focus,
+.auth-card .ant-form-item-has-error .ant-input-affix-wrapper:focus,
+.auth-card .ant-form-item-has-error .ant-input-affix-wrapper-focused {
+    box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.1) !important;
+}
+
+.auth-card .ant-form-item-explain-error {
+    font-size: 13px !important;
+    margin-top: 6px !important;
+    color: var(--color-error, #FF3B30) !important;
+}
+
+/* Password hint */
+.password-hint {
+    font-size: 12px !important;
+    line-height: 1.4 !important;
+    margin-top: 6px !important;
+    display: block;
+}
+
+/* ========================================
+   BUTTONS
+   ======================================== */
+
+/* Submit button */
+.submit-button-wrapper {
+    margin-top: var(--spacing-xl) !important;
+    margin-bottom: var(--spacing-md) !important;
+}
+
+.submit-button,
+.submit-button.ant-btn {
+    height: 50px !important;
+    border-radius: 12px !important;
+    font-size: 16px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em;
+    background: var(--color-primary, #007AFF) !important;
+    border: none !important;
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3) !important;
+    transition: all var(--transition-base, 200ms ease) !important;
+}
+
+.submit-button:hover,
+.submit-button.ant-btn:hover {
+    background: var(--color-primary-hover, #0051D5) !important;
+    box-shadow: 0 6px 16px rgba(0, 122, 255, 0.4) !important;
+    transform: translateY(-2px);
+}
+
+.submit-button:active,
+.submit-button.ant-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3) !important;
+}
+
+.submit-button:disabled,
+.submit-button.ant-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+/* Primary button (in success/warning views) */
+.primary-button,
+.primary-button.ant-btn {
+    height: 48px !important;
+    border-radius: 12px !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    background: var(--color-primary, #007AFF) !important;
+    border: none !important;
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.25) !important;
+    transition: all var(--transition-base, 200ms ease) !important;
+}
+
+.primary-button:hover,
+.primary-button.ant-btn:hover {
+    background: var(--color-primary-hover, #0051D5) !important;
+    box-shadow: 0 6px 16px rgba(0, 122, 255, 0.35) !important;
+    transform: translateY(-1px);
+}
+
+/* Secondary button */
+.secondary-button,
+.secondary-button.ant-btn {
+    height: 48px !important;
+    border-radius: 12px !important;
+    font-size: 15px !important;
+    font-weight: 500 !important;
+    background: var(--color-bg-container, #F5F5F7) !important;
+    border: 2px solid var(--color-border, #E5E5EA) !important;
+    color: var(--color-text-base, #1D1D1F) !important;
+    transition: all var(--transition-base, 200ms ease) !important;
+}
+
+.secondary-button:hover,
+.secondary-button.ant-btn:hover {
+    background: var(--color-bg-elevated, #ffffff) !important;
+    border-color: var(--color-primary, #007AFF) !important;
+    color: var(--color-primary, #007AFF) !important;
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.15) !important;
+}
+
+/* Switch form button */
+.switch-form-button,
+.switch-form-button.ant-btn {
+    color: var(--color-primary, #007AFF) !important;
+    font-weight: 500 !important;
+    padding: 0 !important;
+    height: auto !important;
+}
+
+.switch-form-button:hover,
+.switch-form-button.ant-btn:hover {
+    color: var(--color-primary-hover, #0051D5) !important;
+}
+
+/* ========================================
+   FORM FOOTER
+   ======================================== */
+
+.form-footer {
+    text-align: right;
+    margin-top: -8px;
+    margin-bottom: var(--spacing-md);
+}
+
+.forgot-password-link {
+    font-size: 14px;
+    color: var(--color-primary, #007AFF) !important;
+    font-weight: 500;
+    text-decoration: none;
+    transition: color var(--transition-quick, 150ms ease);
+}
+
+.forgot-password-link:hover {
+    color: var(--color-primary-hover, #0051D5) !important;
+    text-decoration: underline;
+}
+
+/* ========================================
+   DIVIDER
+   ======================================== */
+
+.divider-text.ant-divider {
+    margin: var(--spacing-lg) 0 var(--spacing-md) 0 !important;
+    font-size: 13px !important;
+    color: var(--color-text-secondary, #86868B) !important;
+}
+
+.divider-text.ant-divider::before,
+.divider-text.ant-divider::after {
+    border-top-color: var(--color-border-secondary, #F2F2F7) !important;
+}
+
+/* ========================================
+   SUCCESS VIEW
+   ======================================== */
+
+.success-view {
+    text-align: center;
+    padding: var(--spacing-lg) 0;
+}
+
+.success-icon-wrapper {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto var(--spacing-lg);
+    background: linear-gradient(135deg, #34C759 0%, #30D158 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 8px 24px rgba(52, 199, 89, 0.25);
+    animation: scaleIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes scaleIn {
+    from {
+        transform: scale(0);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.success-icon {
+    font-size: 40px !important;
+    color: #ffffff !important;
+}
+
+.success-title,
+.success-title.ant-typography {
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    color: var(--color-text-base, #1D1D1F) !important;
+    margin-bottom: var(--spacing-sm) !important;
+}
+
+.success-description,
+.success-description.ant-typography {
+    font-size: 15px !important;
+    color: var(--color-text-secondary, #86868B) !important;
+    margin-bottom: var(--spacing-lg) !important;
+    line-height: 1.6 !important;
+}
+
+/* ========================================
+   WARNING VIEW
+   ======================================== */
+
+.warning-view {
+    text-align: center;
+    padding: var(--spacing-lg) 0;
+}
+
+.warning-icon-wrapper {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto var(--spacing-lg);
+    background: linear-gradient(135deg, #FF9500 0%, #FFB340 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 8px 24px rgba(255, 149, 0, 0.25);
+    animation: scaleIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.warning-icon {
+    font-size: 40px !important;
+    color: #ffffff !important;
+}
+
+.warning-title,
+.warning-title.ant-typography {
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    color: var(--color-text-base, #1D1D1F) !important;
+    margin-bottom: var(--spacing-sm) !important;
+}
+
+.warning-description,
+.warning-description.ant-typography {
+    font-size: 15px !important;
+    color: var(--color-text-secondary, #86868B) !important;
+    margin-bottom: var(--spacing-lg) !important;
+    line-height: 1.6 !important;
+}
+
+/* ========================================
+   ALERTS
+   ======================================== */
+
+.info-alert,
+.warning-alert {
+    border-radius: 12px !important;
+    margin-bottom: var(--spacing-lg) !important;
+    padding: var(--spacing-md) !important;
+    border-width: 1px !important;
+}
+
+.info-alert.ant-alert {
+    background: rgba(90, 200, 250, 0.08) !important;
+    border-color: rgba(90, 200, 250, 0.2) !important;
+}
+
+.info-alert .ant-alert-message {
+    color: var(--color-info, #5AC8FA) !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+}
+
+.info-alert .ant-alert-description {
+    color: var(--color-text-secondary, #86868B) !important;
+    font-size: 13px !important;
+    margin-top: 4px !important;
+}
+
+.warning-alert.ant-alert {
+    background: rgba(255, 149, 0, 0.08) !important;
+    border-color: rgba(255, 149, 0, 0.2) !important;
+}
+
+.warning-alert .ant-alert-message {
+    color: var(--color-warning, #FF9500) !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+}
+
+.warning-alert .ant-alert-description {
+    color: var(--color-text-secondary, #86868B) !important;
+    font-size: 13px !important;
+    margin-top: 4px !important;
+}
+
+/* ========================================
+   BUTTON GROUPS
+   ======================================== */
+
+.button-group {
+    width: 100%;
+    margin-top: var(--spacing-xl);
+}
+
+.button-group .ant-space-item {
+    width: 100%;
+}
+
+/* ========================================
+   RESPONSIVE DESIGN
+   ======================================== */
+
+/* Tablet and below */
+@media (max-width: 768px) {
+    .auth-page {
+        padding: var(--spacing-md);
+    }
+
+    .auth-card,
+    .auth-card.ant-card {
+        padding: var(--spacing-xl) var(--spacing-lg) !important;
+        border-radius: 20px !important;
+    }
+
+    .auth-title,
+    .auth-title.ant-typography {
+        font-size: 28px !important;
+    }
+
+    .success-title,
+    .success-title.ant-typography,
+    .warning-title,
+    .warning-title.ant-typography {
+        font-size: 24px !important;
+    }
+
+    .success-icon-wrapper,
+    .warning-icon-wrapper {
+        width: 70px;
+        height: 70px;
+    }
+
+    .success-icon,
+    .warning-icon {
+        font-size: 36px !important;
+    }
+}
+
+/* Mobile */
+@media (max-width: 480px) {
+    .auth-page {
+        padding: var(--spacing-sm);
+        align-items: flex-start;
+        padding-top: var(--spacing-xl);
+    }
+
+    .auth-card,
+    .auth-card.ant-card {
+        padding: var(--spacing-lg) !important;
+        border-radius: 16px !important;
+    }
+
+    .auth-title,
+    .auth-title.ant-typography {
+        font-size: 24px !important;
+    }
+
+    .auth-subtitle,
+    .auth-subtitle.ant-typography {
+        font-size: 14px !important;
+    }
+
+    .success-title,
+    .success-title.ant-typography,
+    .warning-title,
+    .warning-title.ant-typography {
+        font-size: 22px !important;
+    }
+
+    .success-icon-wrapper,
+    .warning-icon-wrapper {
+        width: 64px;
+        height: 64px;
+    }
+
+    .success-icon,
+    .warning-icon {
+        font-size: 32px !important;
+    }
+}
+
+/* ========================================
+   DARK MODE SUPPORT
+   ======================================== */
+
+[data-theme='dark'] .auth-page {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+}
+
+[data-theme='dark'] .auth-card,
+[data-theme='dark'] .auth-card.ant-card {
+    background: var(--color-bg-elevated, #2C2C2E) !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4),
+                0 8px 24px rgba(0, 0, 0, 0.3) !important;
+}
+
+[data-theme='dark'] .auth-title,
+[data-theme='dark'] .auth-title.ant-typography,
+[data-theme='dark'] .success-title,
+[data-theme='dark'] .success-title.ant-typography,
+[data-theme='dark'] .warning-title,
+[data-theme='dark'] .warning-title.ant-typography {
+    color: var(--color-text-base, #F5F5F7) !important;
+}
+
+[data-theme='dark'] .auth-subtitle,
+[data-theme='dark'] .auth-subtitle.ant-typography,
+[data-theme='dark'] .success-description,
+[data-theme='dark'] .success-description.ant-typography,
+[data-theme='dark'] .warning-description,
+[data-theme='dark'] .warning-description.ant-typography {
+    color: var(--color-text-secondary, #98989D) !important;
+}
+
+/* ========================================
+   ACCESSIBILITY
+   ======================================== */
+
+/* Focus visible for keyboard navigation */
+.auth-card .ant-input:focus-visible,
+.auth-card .ant-input-affix-wrapper:focus-visible,
+.auth-card .ant-btn:focus-visible {
+    /*outline: 3px solid rgba(0, 122, 255, 0.5);
+    outline-offset: 2px;*/
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .auth-card .ant-input,
+    .auth-card .ant-input-affix-wrapper {
+        border-width: 3px !important;
+    }
+
+    .submit-button,
+    .submit-button.ant-btn {
+        border: 3px solid var(--color-primary, #007AFF) !important;
+    }
+}

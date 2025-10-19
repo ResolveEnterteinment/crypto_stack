@@ -1,0 +1,443 @@
+/**
+ * SUBSCRIPTION CARD STYLES
+ * 
+ * Integrated with global styling system
+ * Animated progress states with glassmorphism
+ * Full dark mode support
+ */
+
+/* ============================================
+   CARD CONTAINER
+   ============================================ */
+
+.card {
+    background: var(--color-bg-elevated);
+    backdrop-filter: blur(10px);
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    transition: all var(--transition-smooth);
+    position: relative;
+    overflow: visible;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-lg);
+}
+
+.cardProcessing {
+  animation: pulseGlow 2s infinite;
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 4px var(--pulse-color, rgba(250, 173, 20, 0.3)), 
+                0 8px 32px rgba(0, 0, 0, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 8px var(--pulse-color, rgba(250, 173, 20, 0.1)), 
+                0 8px 32px rgba(0, 0, 0, 0.1);
+  }
+}
+
+.cardCancelled {
+  opacity: 0.75;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--spacing-lg);
+  gap: var(--spacing-md);
+}
+
+.headerLeft {
+  flex: 1;
+}
+
+.headerContent {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.icon {
+  background: linear-gradient(135deg, var(--icon-color, #3b82f6) 0%, var(--icon-color-end, #2563eb) 100%);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: white;
+}
+
+.amountTitle {
+  margin: 0;
+  line-height: 1.2;
+  font-size: clamp(20px, 3vw, 24px);
+  font-weight: 700;
+  color: var(--color-text-base);
+}
+
+.intervalText {
+    text-wrap:nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.badge {
+  border-radius: var(--radius-md);
+  padding: 6px 14px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.badgePulsing {
+  box-shadow: 0 2px 8px var(--badge-shadow-color, rgba(250, 173, 20, 0.4));
+}
+
+/* ============================================
+   PROCESSING INDICATOR
+   ============================================ */
+
+.processingIndicator {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.processingHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.processingIcon {
+  font-size: 18px;
+  color: var(--processing-color);
+}
+
+.processingText {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--processing-color);
+}
+
+.processingDescription {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin-top: 4px;
+}
+
+.progressBar {
+  margin-top: var(--spacing-sm);
+}
+
+.estimatedTime {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
+}
+
+.estimatedTimeIcon {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.estimatedTimeText {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+/* ============================================
+   PROGRESS SECTION
+   ============================================ */
+
+.progress {
+  margin-bottom: var(--spacing-lg);
+}
+
+.progressDates {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-xs);
+}
+
+.progressLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.toggleButton {
+  padding: 4px var(--spacing-xs);
+  height: auto;
+  font-size: 13px;
+  color: var(--color-primary);
+  margin-top: var(--spacing-sm);
+}
+
+/* ============================================
+   EXPANDED DETAILS
+   ============================================ */
+
+.details {
+  overflow: hidden;
+  margin-top: var(--spacing-md);
+}
+
+.detailsCard {
+  background: linear-gradient(135deg, var(--color-bg-container) 0%, var(--color-bg-base) 100%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+}
+
+.detailsContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  width: 100%;
+}
+
+.infoGrid {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-evenly;
+}
+
+.infoLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.infoValue {
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--color-text-base);
+}
+
+.infoValueStrong {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-success);
+}
+
+.divider {
+  margin: var(--spacing-xs) 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+/* ============================================
+   ALLOCATIONS
+   ============================================ */
+
+.allocations {
+  margin-top: var(--spacing-sm);
+}
+
+.allocationsHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-sm);
+}
+
+.allocationsTitle {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-base);
+}
+
+.allocationBar {
+  height: 8px;
+  background: var(--color-bg-container);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  display: flex;
+  margin-bottom: var(--spacing-sm);
+}
+
+.allocationSegment {
+  height: 100%;
+  cursor: pointer;
+  transition: opacity var(--transition-quick);
+}
+
+.allocationSegment:hover {
+  opacity: 0.8;
+}
+
+.allocationList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    width: 100%;
+}
+
+.allocationItem {
+    display: flex;
+}
+
+.allocationLeft {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    flex: 1 1 auto;
+}
+
+.allocationDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.allocationName {
+    font-size: 13px;
+    color: var(--color-text-base);
+}
+
+.allocationPercent {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text-base);
+}
+
+/* ============================================
+   ACTIONS
+   ============================================ */
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--spacing-lg);
+}
+
+.actionButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
+@media (max-width: 768px) {
+
+  .actionButtons {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .amountTitle {
+    font-size: 18px;
+  }
+
+  .allocationItem {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-xs);
+  }
+}
+
+/* ============================================
+   PROGRESS OVERLAY
+   ============================================ */
+
+.progressOverlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(8px);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    padding: var(--spacing-lg);
+}
+
+html.dark .progressOverlay {
+  background: rgba(28, 28, 30, 0.98);
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+@keyframes slideDown {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: auto;
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.detailsEnter {
+  animation: slideDown 0.4s ease-out;
+}
+
+.detailsExit {
+  animation: slideDown 0.3s ease-in reverse;
+}
+
+/* ============================================
+   ACCESSIBILITY
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .cardProcessing,
+  .allocationSegment {
+    animation: none;
+    transition: none;
+  }
+
+  .detailsEnter,
+  .detailsExit {
+    animation: none;
+  }
+}
+
+@media (prefers-contrast: high) {
+  .card {
+    border-width: 3px;
+  }
+
+  .badge {
+    border: 2px solid currentColor;
+  }
+}

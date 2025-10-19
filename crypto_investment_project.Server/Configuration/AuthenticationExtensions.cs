@@ -1,6 +1,7 @@
 using Domain.DTOs;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Polly;
 using System.Text;
 
 namespace crypto_investment_project.Server.Configuration;
@@ -71,6 +72,7 @@ public static class AuthenticationExtensions
         services.AddAuthorization(options =>
         {
             options.AddPolicy("RequireAdminRole", policy => policy.RequireRole("ADMIN"));
+            options.AddPolicy("TreasuryAccess", policy => policy.RequireRole("ADMIN", "FINANCE"));
             options.AddPolicy("RequireUserRole", policy => policy.RequireRole("USER"));
         });
 

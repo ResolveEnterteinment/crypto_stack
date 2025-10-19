@@ -7,6 +7,7 @@ namespace Application.Interfaces.Base
         public Task<List<T>?> GetCachedCollectionAsync(string key, Func<Task<List<T>?>> factory, TimeSpan? duration = null);
         Task<TItem?> GetAnyCachedAsync<TItem>(string key, Func<Task<TItem?>> factory, TimeSpan? duration = null);
         void Invalidate(string key);
+        void InvalidateWithPrefix(string keyPrefix);
         string GetCacheKey(Guid id);
         string GetFilterCacheKey();
         string GetCollectionCacheKey();

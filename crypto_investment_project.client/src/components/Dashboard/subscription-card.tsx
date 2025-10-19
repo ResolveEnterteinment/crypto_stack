@@ -30,6 +30,7 @@ import {
     Form,
     Input,
     InputNumber,
+    List,
     Modal,
     Popconfirm,
     Progress,
@@ -54,21 +55,20 @@ import ResponsiveProgressOverlay from './ResponsiveProgressOverlay';
 import { Allocation, Subscription, SubscriptionCardProps, SubscriptionState, SubscriptionStateType, SubscriptionStatus } from '../../types/subscription';
 import { formatApiError } from '../../utils/apiErrorHandler';
 import SubscriptionPaymentManager from '../Subscription/SubscriptionPaymentManager';
+import styles from '../../styles/Dashboard/SubscriptionCard.module.css';
 
 const { Option } = Select;
 const { Title, Text } = Typography;
 
-// Get status color and theme
+// Get status color and theme configuration
 const getStatusConfig = (subscription: Subscription) => {
     const status = subscription.status.toUpperCase();
     const state = subscription.state;
 
-    // State takes precedence for visual feedback when there's active processing
     if (state !== SubscriptionState.IDLE) {
         return getProcessingStateConfig(state, status);
     }
 
-    // Default status-based configuration when IDLE
     return getIdleStatusConfig(status);
 };
 
@@ -219,7 +219,6 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
     const [isExpanded, setIsExpanded] = useState(false);
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
-
     const [loading, setLoading] = useState(false);
     const [retrying, setRetrying] = useState(false);
     const [syncing, setSyncing] = useState(false);
@@ -355,7 +354,7 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
         } catch (paymentError: any) {
             console.error('Payment initialization error:', paymentError);
             const errorMessage = formatApiError(paymentError);
-            throw new Error(`Payment initialization failed: ${errorMessage}`);
+            message.error(`Payment initialization failed: ${errorMessage}`);
         } finally {
             setRetrying(false);
         }
@@ -364,14 +363,15 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
     const handleSyncPaymentsClick = async () => {
         try {
             setSyncing(true);
-
-            var result = await syncPayments(subscription.id);
-
-            message
+            await syncPayments(subscription.id);
+            message.success('Payments synchronized successfully');
+            if (onDataUpdated) {
+                onDataUpdated();
+            }
         } catch (syncError: any) {
-            console.error('Payment syncronization error:', syncError);
+            console.error('Payment synchronization error:', syncError);
             const errorMessage = formatApiError(syncError);
-            throw new Error(`Sync payments failed: ${errorMessage}`);
+            message.error(`Sync payments failed: ${errorMessage}`);
         } finally {
             setSyncing(false);
         }
@@ -454,45 +454,9 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
         return Math.max(0, 100 - total);
     };
 
-    // Animation variants for smooth transitions
-    const detailsVariants = {
-        collapsed: {
-            height: 0,
-            opacity: 0,
-            marginTop: 0,
-            transition: {
-                duration: 0.3,
-                ease: [0.4, 0.0, 0.2, 1],
-                opacity: { duration: 0.2 }
-            }
-        },
-        expanded: {
-            height: 'auto',
-            opacity: 1,
-            marginTop: 16,
-            transition: {
-                duration: 0.4,
-                ease: [0.4, 0.0, 0.2, 1],
-                opacity: { duration: 0.3, delay: 0.1 }
-            }
-        }
-    };
-
-    const contentVariants = {
-        collapsed: {
-            y: -10,
-            opacity: 0
-        },
-        expanded: {
-            y: 0,
-            opacity: 1,
-            transition: {
-                duration: 0.3,
-                delay: 0.1,
-                ease: [0.4, 0.0, 0.2, 1]
-            }
-        }
-    };
+    // Build card className
+    const cardClassName = `${styles.card} ${statusConfig.showPulse ? styles.cardProcessing : ''
+        } ${subscription.isCancelled ? styles.cardCancelled : ''}`;
 
     return (
         <>
@@ -503,18 +467,11 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                 transition={{ duration: 0.5, ease: [0.4, 0.0, 0.2, 1] }}
             >
                 <Card
+                    className={cardClassName}
                     style={{
-                        background: 'rgba(255, 255, 255, 0.9)',
-                        backdropFilter: 'blur(10px)',
-                        border: `2px solid ${statusConfig.borderColor}`,
-                        borderRadius: '16px',
-                        boxShadow: statusConfig.showPulse
-                            ? `0 0 0 4px ${statusConfig.borderColor}, 0 8px 32px rgba(0, 0, 0, 0.1)`
-                            : '0 8px 32px rgba(0, 0, 0, 0.1)',
-                        transition: 'all 0.3s ease',
-                        opacity: subscription.isCancelled ? 0.75 : 1,
-                        animation: statusConfig.showPulse ? 'pulse 2s infinite' : 'none'
-                    }}
+                        '--pulse-color': statusConfig.borderColor,
+                        borderColor: statusConfig.borderColor
+                    } as React.CSSProperties}
                     hoverable
                     bodyStyle={{ padding: '24px' }}
                 >
@@ -526,57 +483,46 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                     />
 
                     {/* Header Section */}
-                    <Row justify="space-between" align="top" style={{ marginBottom: '20px' }}>
-                        <Col flex="1">
-                            <Space direction="vertical" size="small">
-                                <Space align="center">
-                                    <div style={{
-                                        background: `linear-gradient(135deg, ${statusConfig.color} 0%, ${statusConfig.color}dd 100%)`,
-                                        padding: '8px',
-                                        borderRadius: '8px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center'
-                                    }}>
-                                        <DollarOutlined style={{ fontSize: '16px', color: 'white' }} />
-                                    </div>
-                                    <div>
-                                        <Title level={4} style={{ margin: 0, lineHeight: 1.2 }}>
-                                            ${subscription.amount} {subscription.currency}
-                                        </Title>
-                                        <Text type="secondary" style={{ fontSize: '14px' }}>
-                                            {subscription.interval.toLowerCase()} subscription
-                                        </Text>
-                                    </div>
-                                </Space>
-                            </Space>
-                        </Col>
-
-                        <Col>
-                            <Badge
-                                status={statusConfig.badgeStatus as any}
-                                dot={statusConfig.showPulse}
-                                offset={[-5, 5]}
-                            >
-                                <Tag
-                                    icon={statusConfig.icon}
-                                    color={statusConfig.color}
+                    <div className={styles.header}>
+                        <div className={styles.headerLeft}>
+                            <div className={styles.headerContent}>
+                                <div
+                                    className={styles.icon}
                                     style={{
-                                        borderRadius: '12px',
-                                        padding: '6px 14px',
-                                        fontSize: '12px',
-                                        fontWeight: 600,
-                                        border: 'none',
-                                        boxShadow: statusConfig.showPulse
-                                            ? `0 2px 8px ${statusConfig.color}40`
-                                            : 'none'
-                                    }}
+                                        '--icon-color': statusConfig.color,
+                                        '--icon-color-end': statusConfig.color
+                                    } as React.CSSProperties}
                                 >
-                                    {statusConfig.text}
-                                </Tag>
-                            </Badge>
-                        </Col>
-                    </Row>
+                                    <DollarOutlined />
+                                </div>
+                                <div>
+                                    <Title level={4} className={styles.amountTitle}>
+                                        ${subscription.amount} {subscription.currency}
+                                    </Title>
+                                    <Text className={styles.intervalText}>
+                                        {subscription.interval.toLowerCase()} subscription
+                                    </Text>
+                                </div>
+                            </div>
+                        </div>
+
+                        <Badge
+                            status={statusConfig.badgeStatus as any}
+                            dot={statusConfig.showPulse}
+                            offset={[-5, 5]}
+                        >
+                            <Tag
+                                icon={statusConfig.icon}
+                                color={statusConfig.color}
+                                className={`${styles.badge} ${statusConfig.showPulse ? styles.badgePulsing : ''}`}
+                                style={{
+                                    '--badge-shadow-color': `${statusConfig.color}40`
+                                } as React.CSSProperties}
+                            >
+                                {statusConfig.text}
+                            </Tag>
+                        </Badge>
+                    </div>
 
                     {/* Processing Indicator */}
                     <AnimatePresence>
@@ -587,19 +533,15 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                     </AnimatePresence>
 
                     {/* Progress Section */}
-                    <div style={{ marginBottom: '20px' }}>
-                        <Row justify="space-between" style={{ marginBottom: '8px' }}>
-                            <Col>
-                                <Text type="secondary" style={{ fontSize: '12px' }}>
-                                    Last payment: {subscription.lastPayment ? formatDate(subscription.lastPayment) : "N/A"}
-                                </Text>
-                            </Col>
-                            <Col>
-                                <Text type="secondary" style={{ fontSize: '12px' }}>
-                                    Next: {formatDate(subscription.nextDueDate)}
-                                </Text>
-                            </Col>
-                        </Row>
+                    <div className={styles.progress}>
+                        <div className={styles.progressDates}>
+                            <Text className={styles.progressLabel}>
+                                Last payment: {subscription.lastPayment ? formatDate(subscription.lastPayment) : "N/A"}
+                            </Text>
+                            <Text className={styles.progressLabel}>
+                                Next: {formatDate(subscription.nextDueDate)}
+                            </Text>
+                        </div>
 
                         <Progress
                             percent={calculateProgress()}
@@ -609,20 +551,13 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                             }}
                             showInfo={false}
                             strokeWidth={8}
-                            style={{ marginBottom: '12px' }}
                         />
 
-                        {/* Toggle Details Button */}
                         <Button
                             type="text"
                             size="small"
                             onClick={() => setIsExpanded(!isExpanded)}
-                            style={{
-                                padding: '4px 8px',
-                                height: 'auto',
-                                fontSize: '13px',
-                                color: '#1890ff'
-                            }}
+                            className={styles.toggleButton}
                             icon={isExpanded ? <UpOutlined /> : <DownOutlined />}
                         >
                             {isExpanded ? 'Hide details' : 'Show details'}
@@ -633,185 +568,161 @@ const SubscriptionCard: React.FC<SubscriptionCardProps & { onDataUpdated?: () =>
                     <AnimatePresence>
                         {isExpanded && (
                             <motion.div
-                                variants={detailsVariants}
-                                initial="collapsed"
-                                animate="expanded"
-                                exit="collapsed"
-                                style={{ overflow: 'hidden' }}
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                transition={{ duration: 0.3 }}
+                                className={styles.details}
                             >
-                                <motion.div variants={contentVariants}>
-                                    <Card
-                                        size="small"
-                                        style={{
-                                            background: 'linear-gradient(135deg, #fafafa 0%, #f0f0f0 100%)',
-                                            border: '1px solid #e8e8e8',
-                                            borderRadius: '12px'
-                                        }}
-                                    >
-                                        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                                            {/* Subscription Info */}
-                                            <Row gutter={[16, 8]}>
-                                                <Col xs={24} sm={12}>
-                                                    <Text type="secondary" style={{ fontSize: '12px' }}>Subscription ID</Text>
-                                                    <br />
-                                                    <Text style={{ fontSize: '13px', fontFamily: 'monospace' }}>
-                                                        {subscription.id.slice(0, 8)}...
-                                                    </Text>
-                                                </Col>
-                                                <Col xs={24} sm={12}>
-                                                    <Text type="secondary" style={{ fontSize: '12px' }}>Total Invested</Text>
-                                                    <br />
-                                                    <Text strong style={{ fontSize: '13px', color: '#52c41a' }}>
-                                                        {formatCurrency(subscription.totalInvestments)} {subscription.currency}
-                                                    </Text>
-                                                </Col>
-                                            </Row>
-
-                                            <Divider style={{ margin: '8px 0' }} />
-
-                                            {/* Asset Allocations */}
+                                <Card size="small" className={styles.detailsCard}>
+                                    <div className={styles.detailsContent}>
+                                        {/* Subscription Info */}
+                                        <div className={styles.infoGrid}>
                                             <div>
-                                                <Space align="center" style={{ marginBottom: '12px' }}>
-                                                    <PieChartOutlined style={{ color: '#1890ff' }} />
-                                                    <Text strong style={{ fontSize: '14px' }}>Asset Allocations</Text>
-                                                </Space>
+                                                <Text className={styles.infoLabel}>Subscription ID</Text>
+                                                <br />
+                                                <Text className={styles.infoValue}>
+                                                    {subscription.id.slice(0, 8)}...
+                                                </Text>
+                                            </div>
+                                            <div>
+                                                <Text className={styles.infoLabel}>Total Invested</Text>
+                                                <br />
+                                                <Text className={styles.infoValueStrong}>
+                                                    {formatCurrency(subscription.totalInvestments)} {subscription.currency}
+                                                </Text>
+                                            </div>
+                                        </div>
 
-                                                {/* Allocation Bar */}
-                                                <div style={{
-                                                    height: '8px',
-                                                    background: '#f5f5f5',
-                                                    borderRadius: '4px',
-                                                    overflow: 'hidden',
-                                                    display: 'flex',
-                                                    marginBottom: '12px'
-                                                }}>
-                                                    {subscription.allocations?.map((alloc: Allocation) => (
-                                                        <Tooltip
-                                                            key={alloc.assetId}
-                                                            title={`${alloc.assetTicker}: ${alloc.percentAmount.toFixed(1)}%`}
-                                                        >
+                                        <Divider className={styles.divider} />
+
+                                        {/* Asset Allocations */}
+                                        <div className={styles.allocations}>
+                                            <div className={styles.allocationsHeader}>
+                                                <PieChartOutlined />
+                                                <Text className={styles.allocationsTitle}>Asset Allocations</Text>
+                                            </div>
+
+                                            {/* Allocation Bar */}
+                                            <div className={styles.allocationBar}>
+                                                {subscription.allocations?.map((alloc: Allocation) => (
+                                                    <Tooltip
+                                                        key={alloc.assetId}
+                                                        title={`${alloc.assetTicker}: ${alloc.percentAmount.toFixed(1)}%`}
+                                                    >
+                                                        <div
+                                                            className={styles.allocationSegment}
+                                                            style={{
+                                                                width: `${alloc.percentAmount}%`,
+                                                                backgroundColor: AssetColors[alloc.assetTicker] || '#6B7280'
+                                                            }}
+                                                        />
+                                                    </Tooltip>
+                                                ))}
+                                            </div>
+
+                                            {/* Allocation List */}
+                                            <div className={styles.allocationList}>
+                                                {subscription.allocations.map((alloc: Allocation) => (
+                                                    <div key={alloc.assetId} className={styles.allocationItem}>
+                                                        <div className={styles.allocationLeft}>
                                                             <div
+                                                                className={styles.allocationDot}
                                                                 style={{
-                                                                    width: `${alloc.percentAmount}%`,
-                                                                    backgroundColor: AssetColors[alloc.assetTicker] || '#6B7280',
-                                                                    height: '100%',
-                                                                    cursor: 'pointer'
+                                                                    backgroundColor: AssetColors[alloc.assetTicker] || '#6B7280'
                                                                 }}
                                                             />
-                                                        </Tooltip>
-                                                    ))}
-                                                </div>
-
-                                                {/* Allocation List */}
-                                                <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                                                    {subscription.allocations.map((alloc: Allocation) => (
-                                                        <Row key={alloc.assetId} justify="space-between" align="middle">
-                                                            <Col>
-                                                                <Space align="center" size="small">
-                                                                    <div
-                                                                        style={{
-                                                                            width: '10px',
-                                                                            height: '10px',
-                                                                            backgroundColor: AssetColors[alloc.assetTicker] || '#6B7280',
-                                                                            borderRadius: '50%'
-                                                                        }}
-                                                                    />
-                                                                    <Text style={{ fontSize: '13px' }}>
-                                                                        {alloc.assetName} ({alloc.assetTicker})
-                                                                    </Text>
-                                                                </Space>
-                                                            </Col>
-                                                            <Col>
-                                                                <Text strong style={{ fontSize: '13px' }}>
-                                                                    {alloc.percentAmount}%
-                                                                </Text>
-                                                            </Col>
-                                                        </Row>
-                                                    ))}
-                                                </Space>
+                                                            <Text className={styles.allocationName}>
+                                                                {alloc.assetName} ({alloc.assetTicker})
+                                                            </Text>
+                                                        </div>
+                                                        <Text className={styles.allocationPercent}>
+                                                            {alloc.percentAmount}%
+                                                        </Text>
+                                                    </div>
+                                                ))}
                                             </div>
-                                        </Space>
-                                    </Card>
-                                    {/* Action Buttons */}
-                                    <Row justify="end" style={{ marginTop: '20px' }}>
-                                        <Col>
-                                            <Space wrap size="small">
-                                                {subscription.status === SubscriptionStatus.ACTIVE && (
-                                                    <Button
-                                                        size="small"
-                                                        onClick={() => setShowPaymentModal(true)}
-                                                        icon={<CreditCardOutlined />}
-                                                    >
-                                                        Payment Status
-                                                    </Button>
-                                                )}
+                                        </div>
+                                    </div>
+                                </Card>
 
-                                                {!subscription.isCancelled && (
-                                                    <Button
-                                                        size="small"
-                                                        type="primary"
-                                                        onClick={handleEditClick}
-                                                        disabled={subscription.isCancelled}
-                                                        icon={<EditOutlined />}
-                                                    >
-                                                        Edit
-                                                    </Button>
-                                                )}
+                                {/* Action Buttons */}
+                                <div className={styles.actions}>
+                                    <div className={styles.actionButtons}>
+                                        {subscription.status === SubscriptionStatus.ACTIVE && (
+                                            <Button
+                                                size="small"
+                                                onClick={() => setShowPaymentModal(true)}
+                                                icon={<CreditCardOutlined />}
+                                            >
+                                                Payment Status
+                                            </Button>
+                                        )}
 
-                                                <Popconfirm
-                                                    title="Cancel subscription"
-                                                    description={
-                                                        subscription.status === SubscriptionStatus.PENDING || subscription.isCancelled
-                                                            ? "Are you sure to delete this subscription? This will permanently delete all the data."
-                                                            : "Are you sure to cancel this subscription? This action will suspend any pending payments. You can always reactivate later."
-                                                    }
-                                                    onConfirm={() => onCancel(subscription.id)}
-                                                    icon={<QuestionCircleOutlined style={{ color: 'red' }} />}
-                                                >
-                                                    <Button
-                                                        size="small"
-                                                        danger
-                                                        icon={<CloseOutlined />}
-                                                    >
-                                                        {subscription.status === SubscriptionStatus.PENDING || subscription.isCancelled ? "Delete" : "Cancel"}
-                                                    </Button>
-                                                </Popconfirm>
+                                        {!subscription.isCancelled && (
+                                            <Button
+                                                size="small"
+                                                type="primary"
+                                                onClick={handleEditClick}
+                                                disabled={subscription.isCancelled}
+                                                icon={<EditOutlined />}
+                                            >
+                                                Edit
+                                            </Button>
+                                        )}
 
-                                                {subscription.status === SubscriptionStatus.PENDING && (
-                                                    <Button
-                                                        size="small"
-                                                        loading={retrying}
-                                                        style={{ backgroundColor: '#faad14', borderColor: '#faad14', color: 'white' }}
-                                                        onClick={handleRetryPaymentClick}
-                                                        icon={<RedoOutlined />}
-                                                    >
-                                                        {retrying ? 'Retrying...' : 'Retry Payment'}
-                                                    </Button>
-                                                )}
+                                        <Popconfirm
+                                            title="Cancel subscription"
+                                            description={
+                                                subscription.status === SubscriptionStatus.PENDING || subscription.isCancelled
+                                                    ? "Are you sure to delete this subscription? This will permanently delete all the data."
+                                                    : "Are you sure to cancel this subscription? This action will suspend any pending payments. You can always reactivate later."
+                                            }
+                                            onConfirm={() => onCancel(subscription.id)}
+                                            icon={<QuestionCircleOutlined style={{ color: 'red' }} />}
+                                        >
+                                            <Button
+                                                size="small"
+                                                danger
+                                                icon={<CloseOutlined />}
+                                            >
+                                                {subscription.status === SubscriptionStatus.PENDING || subscription.isCancelled ? "Delete" : "Cancel"}
+                                            </Button>
+                                        </Popconfirm>
 
-                                                <Button
-                                                    size="small"
-                                                    loading={syncing}
-                                                    style={{ backgroundColor: 'green', borderColor: 'green', color: 'white' }}
-                                                    onClick={handleSyncPaymentsClick}
-                                                    icon={<RedoOutlined />}
-                                                >
-                                                    {retrying ? 'Retrying...' : 'Sync Payments'}
-                                                </Button>
+                                        {subscription.status === SubscriptionStatus.PENDING && (
+                                            <Button
+                                                size="small"
+                                                loading={retrying}
+                                                style={{ backgroundColor: '#faad14', borderColor: '#faad14', color: 'white' }}
+                                                onClick={handleRetryPaymentClick}
+                                                icon={<RedoOutlined />}
+                                            >
+                                                {retrying ? 'Retrying...' : 'Retry Payment'}
+                                            </Button>
+                                        )}
 
-                                                {subscription.status !== SubscriptionStatus.PENDING && (
-                                                    <Button
-                                                        size="small"
-                                                        onClick={handleViewHistoryClick}
-                                                        icon={<HistoryOutlined />}
-                                                    >
-                                                        History
-                                                    </Button>
-                                                )}
-                                            </Space>
-                                        </Col>
-                                    </Row>
-                                </motion.div>
+                                        <Button
+                                            size="small"
+                                            loading={syncing}
+                                            style={{ backgroundColor: 'green', borderColor: 'green', color: 'white' }}
+                                            onClick={handleSyncPaymentsClick}
+                                            icon={<RedoOutlined />}
+                                        >
+                                            {syncing ? 'Syncing...' : 'Sync Payments'}
+                                        </Button>
+
+                                        {subscription.status !== SubscriptionStatus.PENDING && (
+                                            <Button
+                                                size="small"
+                                                onClick={handleViewHistoryClick}
+                                                icon={<HistoryOutlined />}
+                                            >
+                                                History
+                                            </Button>
+                                        )}
+                                    </div>
+                                </div>
                             </motion.div>
                         )}
                     </AnimatePresence>

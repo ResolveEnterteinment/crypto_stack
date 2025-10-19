@@ -1,48 +1,47 @@
-﻿import React, { useEffect, useState, useCallback } from 'react';
-import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
-import {
-    Layout,
-    Typography,
-    Card,
-    Row,
-    Col,
-    Button,
-    Spin,
-    Space,
-    Modal,
-    Empty,
-    Badge,
-    notification
-} from 'antd';
-import {
-    ReloadOutlined,
-    PlusOutlined,
-    DollarOutlined,
-    RiseOutlined,
-    FallOutlined,
+﻿import {
     BarChartOutlined,
-    HistoryOutlined
+    DollarOutlined,
+    DollarCircleOutlined,
+    FallOutlined,
+    HistoryOutlined,
+    PlusOutlined,
+    ReloadOutlined,
+    RiseOutlined
 } from '@ant-design/icons';
-import Navbar from "../components/Navbar";
-import PortfolioChart from "../components/Dashboard/portfolio-chart";
+import {
+    Badge,
+    Button,
+    Card,
+    Empty,
+    Layout,
+    Modal,
+    notification,
+    Space,
+    Spin,
+    Typography
+} from 'antd';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from "react-router-dom";
 import AssetBalanceCard from "../components/Dashboard/asset-balance-card";
+import PortfolioChart from "../components/Dashboard/portfolio-chart";
 import SubscriptionCard from "../components/Dashboard/subscription-card";
-import { getDashboardData } from "../services/dashboard";
-import { getSubscriptions, cancelSubscription } from "../services/subscription";
-import { getBySubscription as getTransactionsBySubscription } from "../services/transactionService";
-import { Subscription } from "../types/subscription";
-import ITransaction from "../interfaces/ITransaction";
-import ApiTestPanel from '../components/DevTools/ApiTestPanel';
-import { Dashboard } from '../types/dashboardTypes';
+import ErrorBoundary from '../components/ErrorBoundary';
+import Navbar from "../components/Navbar";
 import SuccessNotification from '../components/Subscription/PaymentSyncSuccessNotification';
+import { useAuth } from "../context/AuthContext";
 import { useDashboardSignalR } from "../hooks/useDashboardSignalR";
+import ITransaction from "../interfaces/ITransaction";
+import { getDashboardData } from "../services/dashboard";
+import { cancelSubscription, getSubscriptions } from "../services/subscription";
+import { getBySubscription as getTransactionsBySubscription } from "../services/transactionService";
+import styles from '../styles/Dashboard/DashboardPage.module.css';
+import { Dashboard } from '../types/dashboardTypes';
+import { Subscription } from "../types/subscription";
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 
 const DashboardPageContent: React.FC = () => {
-    // Get authenticated user and navigation
     const { user } = useAuth();
     const navigate = useNavigate();
 
@@ -61,13 +60,12 @@ const DashboardPageContent: React.FC = () => {
         message: string;
     }>({ show: false, message: '' });
 
-    // SignalR integration for real-time updates (moved before usage)
+    // SignalR integration
     const handleSignalRDashboardUpdate = useCallback(async (newDashboardData: Dashboard) => {
         console.log('Received real-time dashboard update:', newDashboardData);
         setDashboardData(newDashboardData);
         await fetchSubscriptions();
-        
-        // Show notification for real-time updates
+
         notification.info({
             message: 'Dashboard Updated',
             description: 'Your dashboard has been updated',
@@ -85,13 +83,12 @@ const DashboardPageContent: React.FC = () => {
         });
     }, []);
 
-    // Initialize SignalR connection (moved before usage)
     const { refreshDashboard: signalRRefresh, isConnected } = useDashboardSignalR(
         handleSignalRDashboardUpdate,
         handleSignalRError
     );
 
-    // Memoized fetch functions to prevent unnecessary re-renders
+    // Fetch functions
     const fetchDashboardData = useCallback(async () => {
         try {
             if (!user?.id) return;
@@ -132,57 +129,40 @@ const DashboardPageContent: React.FC = () => {
         }).format(amount);
     };
 
-    // Enhanced refresh function with better error handling
     const refreshDashboardData = useCallback(async () => {
         try {
             setRefreshing(true);
             setError(null);
-
-            // Refresh both dashboard data and subscriptions in parallel
-            await Promise.all([
-                fetchDashboardData(),
-                fetchSubscriptions()
-            ]);
-
-            console.log('Dashboard data refreshed successfully');
+            await Promise.all([fetchDashboardData(), fetchSubscriptions()]);
         } catch (err) {
             console.error('Error refreshing dashboard data:', err);
             setError('Failed to refresh dashboard data. Please try again.');
-
-            // Show error notification
             notification.error({
                 message: 'Refresh Failed',
                 description: 'Failed to refresh dashboard data',
                 placement: 'topRight'
             });
-
-            throw err; // Re-throw to allow caller to handle
+            throw err;
         } finally {
             setRefreshing(false);
         }
     }, [fetchDashboardData, fetchSubscriptions]);
 
-    // Enhanced data update handler with different success messages
     const handleDataUpdated = useCallback(async (customMessage?: string) => {
         try {
             await refreshDashboardData();
-
-            // Show success notification with custom or default message
             notification.success({
                 message: 'Dashboard Updated',
                 description: customMessage || 'Dashboard updated with latest information',
                 placement: 'topRight'
             });
         } catch (err) {
-            // Error is already handled in refreshDashboardData
             console.error('Failed to handle data update:', err);
         }
     }, [refreshDashboardData]);
 
-    // Initial data fetch
     useEffect(() => {
         if (!user || !user.id) {
-            // Clear state explicitly upon logout
             setSubscriptions([]);
             setDashboardData(null);
             navigate('/auth');
@@ -191,15 +171,10 @@ const DashboardPageContent: React.FC = () => {
 
         setLoading(true);
         setError(null);
-
-        // Clear previous user's data immediately on user change
         setSubscriptions([]);
         setDashboardData(null);
 
-        Promise.all([
-            fetchDashboardData(),
-            fetchSubscriptions()
-        ])
+        Promise.all([fetchDashboardData(), fetchSubscriptions()])
             .then(() => setLoading(false))
             .catch(err => {
                 console.error('Error loading dashboard data:', err);
@@ -208,7 +183,6 @@ const DashboardPageContent: React.FC = () => {
             });
     }, [user, fetchDashboardData, fetchSubscriptions, navigate]);
 
-    // Fetch subscription transactions
     const fetchTransactionHistory = useCallback(async (subscriptionId: string) => {
         if (!subscriptionId) {
             console.error('Cannot fetch transaction history: Subscription ID is undefined');
@@ -227,21 +201,15 @@ const DashboardPageContent: React.FC = () => {
         }
     }, []);
 
-    // Handle edit completion (inline editing via modal)
     const handleEditComplete = useCallback(async (subscriptionId: string) => {
         console.log('Edit completed for subscription:', subscriptionId);
-
-        // Refresh data after successful edit
         await handleDataUpdated('Subscription updated successfully');
     }, [handleDataUpdated]);
 
     const handleCancelSubscription = useCallback(async (id: string) => {
         try {
             await cancelSubscription(id);
-
-            // Refresh all data with custom success message
             await handleDataUpdated('Subscription cancelled successfully');
-
         } catch (err) {
             console.error('Error cancelling subscription:', err);
             notification.error({
@@ -257,44 +225,34 @@ const DashboardPageContent: React.FC = () => {
             console.error("Cannot view history: Subscription ID is missing");
             return;
         }
-
         setCurrentSubscriptionId(id);
         setHistoryModalOpen(true);
         await fetchTransactionHistory(id);
     }, [fetchTransactionHistory]);
 
-    // Hide notification handler
     const handleHideNotification = useCallback(() => {
         setSuccessNotification({ show: false, message: '' });
     }, []);
 
-    // Calculate profit/loss percentage
     const calculateProfitPercentage = useCallback(() => {
         if (!dashboardData) return 0;
-
         const { totalInvestments, portfolioValue } = dashboardData;
         if (!totalInvestments || totalInvestments === 0) return 0;
-
         return ((portfolioValue - totalInvestments) / totalInvestments);
     }, [dashboardData]);
 
     const profitPercentage = calculateProfitPercentage();
     const isProfitable = profitPercentage >= 0;
-
-    // Find current subscription details for the modal
     const currentSubscription = subscriptions.find(sub => sub.id === currentSubscriptionId);
 
-    // Close transaction modal handler
     const handleCloseTransactionModal = useCallback(() => {
         setHistoryModalOpen(false);
         setTransactions([]);
         setCurrentSubscriptionId(null);
     }, []);
 
-    // Manual refresh handler (now signalRRefresh is available)
     const handleManualRefresh = useCallback(async () => {
         try {
-            // Trigger both manual API refresh and SignalR refresh
             await Promise.all([
                 handleDataUpdated('Dashboard data refreshed successfully'),
                 signalRRefresh()
@@ -306,23 +264,8 @@ const DashboardPageContent: React.FC = () => {
 
     if (loading) {
         return (
-            <div style={{
-                minHeight: '100vh',
-                background: 'linear-gradient(135deg, #f8fafc 0%, #e1f5fe 50%, #e8eaf6 100%)',
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center'
-            }}>
-                <Card
-                    style={{
-                        textAlign: 'center',
-                        background: 'rgba(255, 255, 255, 0.9)',
-                        backdropFilter: 'blur(10px)',
-                        border: '1px solid rgba(255, 255, 255, 0.2)',
-                        borderRadius: '16px',
-                        boxShadow: '0 20px 40px rgba(0, 0, 0, 0.1)'
-                    }}
-                >
+            <div className={styles.loadingContainer}>
+                <Card className={styles.loadingCard}>
                     <Spin size="large" />
                     <Title level={4} style={{ marginTop: 16, marginBottom: 8 }}>
                         Loading Dashboard
@@ -335,29 +278,9 @@ const DashboardPageContent: React.FC = () => {
 
     if (error) {
         return (
-            <div style={{
-                minHeight: '100vh',
-                background: 'linear-gradient(135deg, #f8fafc 0%, #ffebee 50%, #fce4ec 100%)',
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-                padding: '16px'
-            }}>
-                <Card
-                    style={{
-                        maxWidth: '512px',
-                        width: '100%',
-                        textAlign: 'center',
-                        background: 'rgba(255, 255, 255, 0.95)',
-                        backdropFilter: 'blur(10px)',
-                        border: '1px solid rgba(244, 67, 54, 0.1)',
-                        borderRadius: '16px',
-                        boxShadow: '0 20px 40px rgba(244, 67, 54, 0.1)'
-                    }}
-                >
-                    <div style={{ fontSize: '48px', color: '#f44336', marginBottom: '24px' }}>
-                        ⚠️
-                    </div>
+            <div className={styles.errorContainer}>
+                <Card className={styles.errorCard}>
+                    <div className={styles.errorIcon}>⚠️</div>
                     <Title level={3} style={{ marginBottom: '16px' }}>
                         Unable to Load Dashboard
                     </Title>
@@ -374,10 +297,7 @@ const DashboardPageContent: React.FC = () => {
                         >
                             {refreshing ? 'Retrying...' : 'Try Again'}
                         </Button>
-                        <Button
-                            size="large"
-                            onClick={() => window.location.reload()}
-                        >
+                        <Button size="large" onClick={() => window.location.reload()}>
                             Reload Page
                         </Button>
                     </Space>
@@ -387,62 +307,17 @@ const DashboardPageContent: React.FC = () => {
     }
 
     return (
-        <div style={{
-            minHeight: '100vh',
-            background: 'linear-gradient(135deg, #f8fafc 0%, #e1f5fe 50%, #e8eaf6 100%)',
-            position: 'relative',
-            paddingTop: '40px'
-        }}>
-            {/* Background Elements */}
-            <div style={{
-                position: 'absolute',
-                inset: 0,
-                overflow: 'hidden',
-                pointerEvents: 'none',
-                zIndex: 0
-            }}>
-                <div style={{
-                    position: 'absolute',
-                    top: '-160px',
-                    right: '-160px',
-                    width: '320px',
-                    height: '320px',
-                    background: 'linear-gradient(135deg, rgba(33, 150, 243, 0.2) 0%, rgba(63, 81, 181, 0.2) 100%)',
-                    borderRadius: '50%',
-                    filter: 'blur(40px)'
-                }} />
-                <div style={{
-                    position: 'absolute',
-                    bottom: '-160px',
-                    left: '-160px',
-                    width: '320px',
-                    height: '320px',
-                    background: 'linear-gradient(135deg, rgba(156, 39, 176, 0.2) 0%, rgba(233, 30, 99, 0.2) 100%)',
-                    borderRadius: '50%',
-                    filter: 'blur(40px)'
-                }} />
+        <div className={styles.dashboardPage}>
+            <div className={styles.backgroundElements}>
+                <div className={`${styles.backgroundBlob} ${styles.backgroundBlobTop}`} />
+                <div className={`${styles.backgroundBlob} ${styles.backgroundBlobBottom}`} />
             </div>
 
             <Layout style={{ background: 'transparent', position: 'relative', zIndex: 1 }}>
-                <Content style={{ padding: '32px 40px 50px' }}>
-                    {/* Refreshing Indicator */}
+                <Content className={styles.content}>
                     {refreshing && (
-                        <div style={{
-                            position: 'fixed',
-                            top: '80px',
-                            right: '16px',
-                            zIndex: 1000
-                        }}>
-                            <Card
-                                size="small"
-                                style={{
-                                    background: 'rgba(255, 255, 255, 0.95)',
-                                    backdropFilter: 'blur(10px)',
-                                    border: '1px solid rgba(33, 150, 243, 0.2)',
-                                    borderRadius: '12px',
-                                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)'
-                                }}
-                            >
+                        <div className={styles.refreshingIndicator}>
+                            <Card size="small" className={styles.refreshingCard}>
                                 <Space>
                                     <Spin size="small" />
                                     <Text style={{ fontSize: '14px', fontWeight: 500, color: '#1976d2' }}>
@@ -453,334 +328,168 @@ const DashboardPageContent: React.FC = () => {
                         </div>
                     )}
 
-                    {/* Header Section */}
-                    <div style={{ marginBottom: '32px' }}>
-                        <Row justify="space-between" align="middle">
-                            <Col>
-                                <Title
-                                    level={1}
-                                    style={{
-                                        background: 'linear-gradient(135deg, #424242 0%, #616161 100%)',
-                                        WebkitBackgroundClip: 'text',
-                                        WebkitTextFillColor: 'transparent',
-                                        marginBottom: '8px'
-                                    }}
-                                >
-                                    Dashboard
-                                </Title>
-                            </Col>
-                            <Col>
-                                <div style={{ textAlign: 'right' }}>
-                                    <Text type="secondary" style={{ fontSize: '12px', display: 'block' }}>
-                                        Last updated
-                                    </Text>
-                                    <Text style={{ fontSize: '14px', fontWeight: 500 }}>
-                                        {new Date().toLocaleDateString()}
-                                    </Text>
-                                </div>
-                            </Col>
-                        </Row>
+                    <div className={styles.header}>
+                        <div className={styles.headerRow}>
+                            <div>
+                                <Text className={styles.headerTitle}>Dashboard</Text>
+                            </div>
+                            <div className={styles.headerInfo}>
+                                <Text className={styles.lastUpdatedLabel}>Last updated</Text>
+                                <Text className={styles.lastUpdatedTime}>{new Date().toLocaleDateString()}</Text>
+                            </div>
+                        </div>
                     </div>
 
-                    {/* Connection Status Indicator */}
-                    <div style={{ 
-                        position: 'fixed', 
-                        bottom: '20px', 
-                        right: '20px',
-                        zIndex: 1000 
-                    }}>
-                        <Card
-                            size="small"
-                            style={{
-                                background: isConnected ? 'rgba(76, 175, 80, 0.9)' : 'rgba(244, 67, 54, 0.9)',
-                                backdropFilter: 'blur(10px)',
-                                border: 'none',
-                                borderRadius: '20px',
-                                color: 'white'
-                            }}
-                        >
-                            <Space size="small">
-                                <Badge 
-                                    status={isConnected ? "success" : "error"} 
-                                />
-                                <Text style={{ color: 'white', fontSize: '12px' }}>
-                                    {isConnected ? 'Live Updates' : 'Disconnected'}
-                                </Text>
-                            </Space>
+                    <div className={`${styles.gridRow} ${styles.summaryGrid}`}>
+                        <Card hoverable className={styles.summaryCard}>
+                            <div className={styles.summaryCardHeader}>
+                                <div className={styles.summaryCardContent}>
+                                    <Text className={styles.summaryCardLabel}>Total Investment</Text>
+                                    <Title level={2} className={styles.summaryCardValue}>
+                                        {dashboardData && formatCurrency(dashboardData.totalInvestments) || '0.00'}
+                                    </Title>
+                                    <div className={styles.summaryCardSubtext}>
+                                        <RiseOutlined />
+                                        <Text>Your total investments</Text>
+                                    </div>
+                                </div>
+                                <div className={styles.summaryCardIcon}>
+                                    <DollarOutlined />
+                                </div>
+                            </div>
+                        </Card>
+
+                        <Card hoverable className={styles.summaryCard}>
+                            <div className={styles.summaryCardHeader}>
+                                <div className={styles.summaryCardContent}>
+                                    <Text className={styles.summaryCardLabel}>Portfolio Value</Text>
+                                    <Title level={2} className={styles.summaryCardValue}>
+                                        {dashboardData && formatCurrency(dashboardData.portfolioValue)}
+                                    </Title>
+                                    <div className={styles.summaryCardSubtext}>
+                                        <BarChartOutlined />
+                                        <Text>Current market value</Text>
+                                    </div>
+                                </div>
+                                <div className={`${styles.summaryCardIcon} ${styles.summaryCardIconGreen}`}>
+                                    <RiseOutlined />
+                                </div>
+                            </div>
+                        </Card>
+
+                        <Card hoverable className={styles.summaryCard}>
+                            <div className={styles.summaryCardHeader}>
+                                <div className={styles.summaryCardContent}>
+                                    <Text className={styles.summaryCardLabel}>Profit/Loss</Text>
+                                    <Title
+                                        level={2}
+                                        className={`${styles.summaryCardValue} ${isProfitable ? styles.profitValue : styles.lossValue}`}
+                                    >
+                                        <div className={isProfitable ? styles.profitValue : styles.lossValue}>{isProfitable ? '+' : ''}{formatPercent(profitPercentage)}</div>
+                                    </Title>
+                                    <div className={styles.summaryCardSubtext}>
+                                        {isProfitable ? <RiseOutlined className={styles.summaryCardIconProfit} /> : <FallOutlined className={styles.summaryCardIconLoss} />}
+                                        <Text>
+                                            {dashboardData && formatCurrency(Math.abs(dashboardData.portfolioValue - dashboardData.totalInvestments))}
+                                        </Text>
+                                    </div>
+                                </div>
+                                <div className={`${styles.summaryCardIcon} ${isProfitable ? styles.summaryCardIconGreen : styles.summaryCardIconRed}`}>
+                                    {isProfitable ? <RiseOutlined /> : <FallOutlined />}
+                                </div>
+                            </div>
                         </Card>
                     </div>
 
-                    {/* Enhanced Summary Cards */}
-                    <Row gutter={[24, 24]} style={{ marginBottom: '32px' }}>
-                        {/* Total Investment Card */}
-                        <Col xs={24} md={8}>
-                            <Card
-                                hoverable
-                                style={{
-                                    background: 'rgba(255, 255, 255, 0.9)',
-                                    backdropFilter: 'blur(10px)',
-                                    border: '1px solid rgba(255, 255, 255, 0.2)',
-                                    borderRadius: '16px',
-                                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-                                    transition: 'all 0.3s ease'
-                                }}
-                                bodyStyle={{ padding: '24px' }}
-                            >
-                                <Row justify="space-between" align="top">
-                                    <Col flex="1">
-                                        <Text type="secondary" style={{ fontWeight: 500 }}>
-                                            Total Investment
-                                        </Text>
-                                        <Title level={2} style={{ margin: '8px 0 4px', color: '#424242' }}>
-                                            {dashboardData && formatCurrency(dashboardData.totalInvestments) || '0.00'}
-                                        </Title>
-                                        <Space size="small">
-                                            <RiseOutlined style={{ color: '#666' }} />
-                                            <Text type="secondary" style={{ fontSize: '14px' }}>
-                                                Your total investments
-                                            </Text>
-                                        </Space>
-                                    </Col>
-                                    <Col>
-                                        <div style={{
-                                            background: 'linear-gradient(135deg, #2196f3 0%, #3f51b5 100%)',
-                                            padding: '12px',
-                                            borderRadius: '12px',
-                                            boxShadow: '0 4px 12px rgba(33, 150, 243, 0.3)'
-                                        }}>
-                                            <DollarOutlined style={{ fontSize: '24px', color: 'white' }} />
-                                        </div>
-                                    </Col>
-                                </Row>
-                            </Card>
-                        </Col>
-
-                        {/* Portfolio Value Card */}
-                        <Col xs={24} md={8}>
-                            <Card
-                                hoverable
-                                style={{
-                                    background: 'rgba(255, 255, 255, 0.9)',
-                                    backdropFilter: 'blur(10px)',
-                                    border: '1px solid rgba(255, 255, 255, 0.2)',
-                                    borderRadius: '16px',
-                                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-                                    transition: 'all 0.3s ease'
-                                }}
-                                bodyStyle={{ padding: '24px' }}
-                            >
-                                <Row justify="space-between" align="top">
-                                    <Col flex="1">
-                                        <Text type="secondary" style={{ fontWeight: 500 }}>
-                                            Portfolio Value
-                                        </Text>
-                                        <Title level={2} style={{ margin: '8px 0 4px', color: '#424242' }}>
-                                            {dashboardData && formatCurrency(dashboardData.portfolioValue)}
-                                        </Title>
-                                        <Space size="small">
-                                            <BarChartOutlined style={{ color: '#666' }} />
-                                            <Text type="secondary" style={{ fontSize: '14px' }}>
-                                                Current market value
-                                            </Text>
-                                        </Space>
-                                    </Col>
-                                    <Col>
-                                        <div style={{
-                                            background: 'linear-gradient(135deg, #4caf50 0%, #00bcd4 100%)',
-                                            padding: '12px',
-                                            borderRadius: '12px',
-                                            boxShadow: '0 4px 12px rgba(76, 175, 80, 0.3)'
-                                        }}>
-                                            <RiseOutlined style={{ fontSize: '24px', color: 'white' }} />
-                                        </div>
-                                    </Col>
-                                </Row>
-                            </Card>
-                        </Col>
-
-                        {/* Profit/Loss Card */}
-                        <Col xs={24} md={8}>
-                            <Card
-                                hoverable
-                                style={{
-                                    background: 'rgba(255, 255, 255, 0.9)',
-                                    backdropFilter: 'blur(10px)',
-                                    border: '1px solid rgba(255, 255, 255, 0.2)',
-                                    borderRadius: '16px',
-                                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-                                    transition: 'all 0.3s ease'
-                                }}
-                                bodyStyle={{ padding: '24px' }}
-                            >
-                                <Row justify="space-between" align="top">
-                                    <Col flex="1">
-                                        <Text type="secondary" style={{ fontWeight: 500 }}>
-                                            Profit/Loss
-                                        </Text>
-                                        <Title
-                                            level={2}
-                                            style={{
-                                                margin: '8px 0 4px',
-                                                color: isProfitable ? '#4caf50' : '#f44336'
-                                            }}
-                                        >
-                                            {isProfitable ? '+' : ''}{formatPercent(profitPercentage)}
-                                        </Title>
-                                        <Space size="small">
-                                            {isProfitable ? (
-                                                <RiseOutlined style={{ color: '#4caf50' }} />
-                                            ) : (
-                                                <FallOutlined style={{ color: '#f44336' }} />
-                                            )}
-                                            <Text type="secondary" style={{ fontSize: '14px' }}>
-                                                {dashboardData && formatCurrency(Math.abs(dashboardData.portfolioValue - dashboardData.totalInvestments))}
-                                            </Text>
-                                        </Space>
-                                    </Col>
-                                    <Col>
-                                        <div style={{
-                                            background: isProfitable ?
-                                                'linear-gradient(135deg, #4caf50 0%, #00bcd4 100%)' :
-                                                'linear-gradient(135deg, #f44336 0%, #e91e63 100%)',
-                                            padding: '12px',
-                                            borderRadius: '12px',
-                                            boxShadow: `0 4px 12px ${isProfitable ? 'rgba(76, 175, 80, 0.3)' : 'rgba(244, 67, 54, 0.3)'}`
-                                        }}>
-                                            {isProfitable ? (
-                                                <RiseOutlined style={{ fontSize: '24px', color: 'white' }} />
-                                            ) : (
-                                                <FallOutlined style={{ fontSize: '24px', color: 'white' }} />
-                                            )}
-                                        </div>
-                                    </Col>
-                                </Row>
-                            </Card>
-                        </Col>
-                    </Row>
-
-                    {/* Enhanced Chart & Assets Section */}
-                    <Row gutter={[24, 24]} style={{ marginBottom: '32px' }}>
-                        {/* Chart */}
-                        <Col xs={24} lg={16}>
-                            <Card
-                                hoverable
-                                style={{
-                                    background: 'rgba(255, 255, 255, 0.9)',
-                                    backdropFilter: 'blur(10px)',
-                                    border: '1px solid rgba(255, 255, 255, 0.2)',
-                                    borderRadius: '16px',
-                                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
-                                    transition: 'all 0.3s ease'
-                                }}
-                            >
-                                <Row justify="space-between" align="middle" style={{ marginBottom: '24px' }}>
-                                    <Col>
-                                        <Title level={4} style={{ margin: 0 }}>
-                                            Investment vs Portfolio Value
-                                        </Title>
-                                    </Col>
-                                    <Col>
-                                        <Space size="small">
-                                            <Badge status="processing" />
-                                            <Text type="secondary" style={{ fontSize: '14px' }}>
-                                                Live Data
-                                            </Text>
-                                        </Space>
-                                    </Col>
-                                </Row>
-                                <PortfolioChart
-                                    investmentData={dashboardData?.totalInvestments || 0}
-                                    portfolioData={dashboardData?.portfolioValue || 0}
-                                />
-                            </Card>
-                        </Col>
-
-                        {/* Asset Balance */}
-                        <Col xs={24} lg={8}>
-                            <AssetBalanceCard assetHoldings={dashboardData?.assetHoldings!} />
-                        </Col>
-                    </Row>
-
-                    {/* Enhanced Subscriptions Section */}
-                    <Card
-                        style={{
-                            background: 'rgba(255, 255, 255, 0.7)',
-                            backdropFilter: 'blur(10px)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
-                            borderRadius: '16px',
-                            marginBottom: '32px'
-                        }}
-                    >
-                        <Row justify="space-between" align="middle" style={{ marginBottom: '24px' }}>
-                            <Col>
-                                <Title level={3} style={{ marginBottom: '8px' }}>
-                                    Subscriptions
+                    <div className={`${styles.gridRow} ${styles.chartAssetsGrid}`}>
+                        <Card hoverable className={styles.chartCard}>
+                            <div className={styles.chartHeader}>
+                                <Title level={4} className={styles.chartTitle}>
+                                    Investment vs Portfolio Value
                                 </Title>
-                                <Text type="secondary" style={{ fontSize: '16px' }}>
-                                    Manage your investment subscriptions
-                                </Text>
-                            </Col>
-                            <Col>
-                                <Space>
-                                    <Button
-                                        loading={refreshing}
-                                        onClick={handleManualRefresh}
-                                        icon={<ReloadOutlined />}
-                                    >
-                                        {refreshing ? 'Refreshing' : 'Refresh'}
-                                    </Button>
-                                    <Button
-                                        type="primary"
-                                        onClick={() => navigate('/subscription/new')}
-                                        icon={<PlusOutlined />}
-                                    >
-                                        New Subscription
-                                    </Button>
-                                </Space>
-                            </Col>
-                        </Row>
+                                <div className={styles.liveDataBadge}>
+                                    <Badge status="processing" />
+                                    <Text>Live Data</Text>
+                                </div>
+                            </div>
+                            <PortfolioChart
+                                investmentData={dashboardData?.totalInvestments || 0}
+                                portfolioData={dashboardData?.portfolioValue || 0}
+                            />
+                        </Card>
+                        <AssetBalanceCard assetHoldings={dashboardData?.assetHoldings!} />
+                    </div>
+
+                    <Card className={styles.subscriptionsCard}>
+                        <div className={styles.subscriptionsHeader}>
+                            <div className={styles.subscriptionsHeaderLeft}>
+                                <div className={styles.subscriptionsCardIcon}>
+                                    <DollarOutlined />
+                                </div>
+                                <div>
+                                    <Title level={3} className={styles.subscriptionsTitle}>Subscriptions</Title>
+                                </div>
+                            </div>
+                            <div className={styles.subscriptionsActions}>
+                                <Button
+                                    loading={refreshing}
+                                    onClick={handleManualRefresh}
+                                    icon={<ReloadOutlined />}
+                                    className={"btn-ghost" }
+                                >
+                                    {refreshing ? 'Refreshing' : 'Refresh'}
+                                </Button>
+                                <Button
+                                    className={"btn-primary"}
+                                    onClick={() => navigate('/subscription/new')}
+                                    icon={<PlusOutlined />}
+                                >
+                                    New Subscription
+                                </Button>
+                            </div>
+                        </div>
 
                         {subscriptions.length > 0 ? (
-                            <Row gutter={[24, 24]}>
+                            <div className={`${styles.gridRow} ${styles.subscriptionsGrid}`}>
                                 {subscriptions.map((subscription) => (
-                                    <Col xs={24} md={12} lg={8} key={subscription.id}>
-                                        <SubscriptionCard
-                                            subscription={subscription}
-                                            onEdit={handleEditComplete}
-                                            onCancel={handleCancelSubscription}
-                                            onViewHistory={handleViewHistory}
-                                            onDataUpdated={() => handleDataUpdated()}
-                                        />
-                                    </Col>
+                                    <SubscriptionCard
+                                        key={subscription.id}
+                                        subscription={subscription}
+                                        onEdit={handleEditComplete}
+                                        onCancel={handleCancelSubscription}
+                                        onViewHistory={handleViewHistory}
+                                        onDataUpdated={() => handleDataUpdated()}
+                                    />
                                 ))}
-                            </Row>
+                            </div>
                         ) : (
-                            <Empty
-                                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                                description={
-                                    <div>
-                                        <Title level={4} style={{ marginBottom: '12px' }}>
-                                            Start Your Investment Journey
-                                        </Title>
-                                        <Paragraph style={{ maxWidth: '400px', margin: '0 auto 32px' }}>
-                                            You haven't created any subscriptions yet. Create your first
-                                            subscription to begin building your investment portfolio.
-                                        </Paragraph>
-                                        <Button
-                                            type="primary"
-                                            size="large"
-                                            onClick={() => navigate('/subscription/new')}
-                                            icon={<PlusOutlined />}
-                                        >
-                                            Create Your First Subscription
-                                        </Button>
-                                    </div>
-                                }
-                            />
+                            <div className={styles.subscriptionsEmpty}>
+                                <Empty
+                                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                    description={
+                                        <div>
+                                            <Title level={4} className={styles.emptyStateTitle}>
+                                                Start Your Investment Journey
+                                            </Title>
+                                            <Paragraph className={styles.emptyStateDescription}>
+                                                You haven't created any subscriptions yet. Create your first
+                                                subscription to begin building your investment portfolio.
+                                            </Paragraph>
+                                            <Button
+                                                type="primary"
+                                                size="large"
+                                                onClick={() => navigate('/subscription/new')}
+                                                icon={<PlusOutlined />}
+                                            >
+                                                Create Your First Subscription
+                                            </Button>
+                                        </div>
+                                    }
+                                />
+                            </div>
                         )}
                     </Card>
 
-                    {/* Enhanced Transaction History Modal */}
                     <Modal
                         title={
                             <Space>
@@ -801,9 +510,7 @@ const DashboardPageContent: React.FC = () => {
                                 Close
                             </Button>
                         ]}
-                        styles={{
-                            body: { maxHeight: '60vh', overflowY: 'auto' }
-                        }}
+                        styles={{ body: { maxHeight: '60vh', overflowY: 'auto' } }}
                     >
                         {transactionsLoading ? (
                             <div style={{ textAlign: 'center', padding: '40px' }}>
@@ -812,54 +519,36 @@ const DashboardPageContent: React.FC = () => {
                         ) : transactions.length > 0 ? (
                             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                                 {transactions.map((item, index) => (
-                                    <Card
-                                        key={index}
-                                        size="small"
-                                        style={{
-                                            background: 'linear-gradient(135deg, #f8f9fa 0%, #f1f3f4 100%)',
-                                            border: '1px solid #e0e0e0',
-                                            borderRadius: '8px'
-                                        }}
-                                    >
-                                        <Row justify="space-between" align="middle">
-                                            <Col>
-                                                <Space>
-                                                    <div style={{
-                                                        background: 'linear-gradient(135deg, #4caf50 0%, #00bcd4 100%)',
-                                                        width: '40px',
-                                                        height: '40px',
-                                                        borderRadius: '12px',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'center'
-                                                    }}>
-                                                        <RiseOutlined style={{ fontSize: '20px', color: 'white' }} />
-                                                    </div>
-                                                    <div>
-                                                        <Text strong style={{ display: 'block' }}>
-                                                            {item.assetName} {item.action}
-                                                        </Text>
-                                                        <Text type="secondary" style={{ fontSize: '12px' }}>
-                                                            {new Date(item.createdAt).toLocaleDateString('en-US', {
-                                                                year: 'numeric',
-                                                                month: 'short',
-                                                                day: 'numeric',
-                                                                hour: '2-digit',
-                                                                minute: '2-digit'
-                                                            })}
-                                                        </Text>
-                                                    </div>
-                                                </Space>
-                                            </Col>
-                                            <Col style={{ textAlign: 'right' }}>
-                                                <Text strong style={{ display: 'block' }}>
+                                    <Card key={index} size="small" className={styles.transactionCard}>
+                                        <div className={styles.transactionRow}>
+                                            <Space>
+                                                <div className={styles.transactionIcon}>
+                                                    <RiseOutlined />
+                                                </div>
+                                                <div className={styles.transactionInfo}>
+                                                    <Text className={styles.transactionName}>
+                                                        {item.assetName} {item.action}
+                                                    </Text>
+                                                    <Text className={styles.transactionDate}>
+                                                        {new Date(item.createdAt).toLocaleDateString('en-US', {
+                                                            year: 'numeric',
+                                                            month: 'short',
+                                                            day: 'numeric',
+                                                            hour: '2-digit',
+                                                            minute: '2-digit'
+                                                        })}
+                                                    </Text>
+                                                </div>
+                                            </Space>
+                                            <div className={styles.transactionAmount}>
+                                                <Text className={styles.transactionQuantity}>
                                                     +{item.quantity.toFixed(6)} {item.assetTicker}
                                                 </Text>
-                                                <Text type="secondary" style={{ fontSize: '12px' }}>
+                                                <Text className={styles.transactionValue}>
                                                     {item.quoteCurrency} {item.quoteQuantity.toFixed(2)}
                                                 </Text>
-                                            </Col>
-                                        </Row>
+                                            </div>
+                                        </div>
                                     </Card>
                                 ))}
                             </Space>
@@ -877,7 +566,6 @@ const DashboardPageContent: React.FC = () => {
                         )}
                     </Modal>
 
-                    {/* Success/Error Notification */}
                     <SuccessNotification
                         show={successNotification.show}
                         message={successNotification.message}
@@ -893,10 +581,9 @@ const DashboardPage: React.FC = () => {
     return (
         <>
             <Navbar />
-            <div className="dashboard-page">
+            <ErrorBoundary>
                 <DashboardPageContent />
-            </div>
-            <ApiTestPanel />
+            </ErrorBoundary>
         </>
     );
 }

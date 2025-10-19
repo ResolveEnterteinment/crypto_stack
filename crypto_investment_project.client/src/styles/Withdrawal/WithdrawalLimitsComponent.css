@@ -1,0 +1,410 @@
+/* ============================================
+   MAIN WRAPPER
+   ============================================ */
+
+.limits-wrapper {
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+/* ============================================
+   CARD STYLING
+   ============================================ */
+
+.limits-card {
+    background: var(--color-bg-elevated) !important;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: var(--shadow-md) !important;
+    padding: var(--spacing-xl) !important;
+    transition: box-shadow var(--transition-smooth) !important;
+    border: none !important;
+    
+}
+
+.limits-card .ant-card-body {
+    padding: 0 !important;
+}
+
+/* ============================================
+   LOADING STATE
+   ============================================ */
+
+.limits-loading {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 400px;
+}
+
+.limits-loading .ant-typography {
+    color: var(--color-text-secondary) !important;
+}
+
+/* ============================================
+   ERROR STATE
+   ============================================ */
+
+.limits-error {
+    text-align: center;
+    padding: var(--spacing-3xl) var(--spacing-xl);
+}
+
+.error-icon {
+    font-size: 48px;
+    color: var(--color-warning) !important;
+    margin-bottom: var(--spacing-md);
+}
+
+.limits-error .ant-typography {
+    color: var(--color-text-base) !important;
+    margin-bottom: var(--spacing-xs);
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+
+.limits-header {
+    margin-bottom: var(--spacing-xs);
+}
+
+.header-content {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-md);
+}
+
+.header-icon {
+    font-size: 24px;
+    color: var(--color-primary) !important;
+    padding: var(--spacing-sm);
+    background: linear-gradient(135deg, #e6f7ff 0%, #bae7ff 100%);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.header-text {
+    flex: 1;
+}
+
+.header-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-xs);
+}
+
+.header-title-row .ant-typography {
+    margin: 0 !important;
+    color: var(--color-text-base) !important;
+}
+
+.refresh-button {
+    color: var(--color-text-secondary) !important;
+    padding: var(--spacing-xs) var(--spacing-sm) !important;
+    transition: all var(--transition-base);
+}
+
+.refresh-button:hover {
+    color: var(--color-primary) !important;
+    background: rgba(24, 144, 255, 0.08) !important;
+}
+
+/* ============================================
+   KYC BADGE
+   ============================================ */
+
+.kyc-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: var(--color-bg-container) !important;
+    border: 1px solid;
+    border-radius: var(--radius-full);
+}
+
+.badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+}
+
+.kyc-badge .ant-typography {
+    font-size: var(--font-size-xs) !important;
+    font-weight: var(--font-weight-medium) !important;
+    color: var(--color-text-base) !important;
+    margin: 0 !important;
+}
+
+/* ============================================
+   DIVIDER
+   ============================================ */
+
+.limits-card .ant-divider {
+    border-color: var(--color-border) !important;
+}
+
+.limitsGrid {
+    display: grid;
+    grid-auto-flow: column
+}
+
+/* ============================================
+   LIMIT CARDS
+   ============================================ */
+
+.limit-card {
+    background: linear-gradient(135deg, var(--color-bg-container) 0%, var(--color-bg-base) 100%) !important;
+    border-radius: var(--radius-md) !important;
+    padding: var(--spacing-lg) !important;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.daily-limit {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%) !important;
+    border: 5px solid #a4c5db;
+}
+
+.monthly-limit {
+    background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%) !important;
+    border: 5px solid #7cba92;
+}
+
+/* ============================================
+   LIMIT HEADER
+   ============================================ */
+
+.limit-header {
+    text-align: center;
+    margin-bottom: var(--spacing-sm);
+}
+
+.limit-title {
+    font-size: var(--font-size-lg) !important;
+    color: var(--color-text-base) !important;
+    display: block;
+    margin-bottom: var(--spacing-xs) !important;
+}
+
+/* ============================================
+   PROGRESS CONTAINER
+   ============================================ */
+
+.progress-container {
+    display: flex;
+    justify-content: center;
+    margin: var(--spacing-lg) 0;
+}
+
+.progress-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.progress-percent {
+    font-size: 20px !important;
+    font-weight: var(--font-weight-semibold) !important;
+    color: var(--color-text-base) !important;
+}
+
+.progress-label {
+    font-size: var(--font-size-xs) !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-text-secondary) !important;
+    margin-top: -4px !important;
+}
+
+/* ============================================
+   PROGRESS CIRCLE OVERRIDE
+   ============================================ */
+
+.limits-card .ant-progress-circle-trail {
+    stroke: rgba(0, 0, 0, 0.06) !important;
+}
+
+.limits-card .ant-progress-text {
+    fill: var(--color-text-base) !important;
+}
+
+/* ============================================
+   LIMIT STATS
+   ============================================ */
+
+.limit-stats {
+    display: flex;
+    flex-direction: column;
+    /*gap: var(--spacing-xs);*/
+    margin-top: var(--spacing-lg);
+}
+
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    /*padding: var(--spacing-xs) 0;*/
+}
+
+.stat-row.highlight {
+    padding-top: var(--spacing-xs);
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+    .stat-row .ant-typography {
+        margin: 0 !important;
+    }
+
+.stat-row .ant-typography-secondary {
+    font-size: var(--font-size-sm) !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--color-text-secondary) !important;
+}
+
+.stat-row .ant-typography:not(.ant-typography-secondary) {
+    font-size: var(--font-size-md) !important;
+    font-weight: var(--font-weight-medium) !important;
+    color: var(--color-text-base) !important;
+}
+
+/* ============================================
+   USAGE WARNING
+   ============================================ */
+
+.usage-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+    background: #fffbf0 !important;
+    border: 1px solid #ffe7ba;
+    border-radius: var(--radius-sm);
+    margin-top: var(--spacing-lg);
+}
+
+.warning-icon {
+    font-size: 18px;
+    color: var(--color-warning) !important;
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+
+.warning-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    flex: 1;
+}
+
+.warning-content .ant-typography {
+    margin: 0 !important;
+}
+
+.warning-content .ant-typography:first-child {
+    font-size: var(--font-size-sm) !important;
+    font-weight: var(--font-weight-medium) !important;
+    color: var(--color-text-base) !important;
+}
+
+.warning-content .ant-typography-secondary {
+    font-size: var(--font-size-sm) !important;
+    color: var(--color-text-secondary) !important;
+    line-height: var(--line-height-normal);
+}
+
+/* ============================================
+   FOOTER
+   ============================================ */
+
+.limits-footer {
+    text-align: center;
+}
+
+.limits-footer .ant-space {
+    justify-content: center;
+}
+
+.limits-footer .ant-typography {
+    font-size: var(--font-size-xs) !important;
+    color: var(--color-text-secondary) !important;
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.limit-card {
+    animation: fadeIn var(--transition-smooth) ease-in-out;
+}
+
+.usage-warning {
+    animation: fadeIn var(--transition-smooth) ease-in-out;
+}
+
+/* ============================================
+   LOADING SPINNER
+   ============================================ */
+
+.limits-card .ant-spin-dot-item {
+    background-color: var(--color-primary) !important;
+}
+
+/* ============================================
+   BUTTON OVERRIDE
+   ============================================ */
+
+.limits-error button.ant-btn-primary {
+    border-radius: var(--radius-md);
+    height: 40px;
+    font-weight: var(--font-weight-medium);
+}
+
+/* ============================================
+   ACCESSIBILITY
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+    .limit-card,
+    .usage-warning {
+        animation: none !important;
+    }
+}
+
+/* ============================================
+   DARK MODE SUPPORT
+   ============================================ */
+
+html.dark .daily-limit {
+    background: linear-gradient(135deg, rgba(10, 132, 255, 0.1) 0%, rgba(10, 132, 255, 0.05) 100%) !important;
+}
+
+html.dark .monthly-limit {
+    background: linear-gradient(135deg, rgba(82, 196, 26, 0.1) 0%, rgba(82, 196, 26, 0.05) 100%) !important;
+}
+
+html.dark .usage-warning {
+    background: rgba(250, 173, 20, 0.1) !important;
+    border-color: rgba(250, 173, 20, 0.3) !important;
+}
+
+html.dark .header-icon {
+    background: linear-gradient(135deg, rgba(10, 132, 255, 0.2) 0%, rgba(10, 132, 255, 0.1) 100%);
+}

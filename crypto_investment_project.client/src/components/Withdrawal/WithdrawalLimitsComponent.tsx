@@ -1,16 +1,22 @@
-import React, { useState, useEffect } from 'react';
 import {
-    Card, Typography, Row, Col, Progress, Space,
-    Spin, Button, Divider
-} from 'antd';
-import {
-    WalletOutlined, ReloadOutlined, CalendarOutlined,
-    CheckCircleOutlined, WarningOutlined, TrophyOutlined
+    CalendarOutlined,
+    ReloadOutlined,
+    TrophyOutlined,
+    WarningOutlined
 } from '@ant-design/icons';
-import { WithdrawalLimits } from '../../types/withdrawal';
-import withdrawalService from '../../services/withdrawalService';
+import {
+    Button,
+    Card,
+    Divider,
+    Progress, Space,
+    Spin,
+    Typography
+} from 'antd';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import './WithdrawalLimitsComponent.css';
+import withdrawalService from '../../services/withdrawalService';
+import '../../styles/Withdrawal/WithdrawalLimitsComponent.css';
+import { WithdrawalLimits } from '../../types/withdrawal';
 
 const { Title, Text } = Typography;
 
@@ -162,15 +168,11 @@ const WithdrawalLimitsComponent: React.FC<WithdrawalLimitsProps> = ({
                 <Divider style={{ margin: '20px 0' }} />
 
                 {/* Limits Grid */}
-                <Row gutter={16}>
+                <Space className="limitsGrid">
                     {/* Daily Limit */}
-                    <Col xs={24} md={12}>
-                        <div className="limit-card daily-limit">
+                    <Card className="limit-card daily-limit">
                             <div className="limit-header">
                                 <Text strong className="limit-title">Daily Limit</Text>
-                                <Text type="secondary" className="limit-subtitle">
-                                    Resets at midnight UTC
-                                </Text>
                             </div>
 
                             <div className="progress-container">
@@ -211,60 +213,54 @@ const WithdrawalLimitsComponent: React.FC<WithdrawalLimitsProps> = ({
                                     </Text>
                                 </div>
                             </div>
-                        </div>
-                    </Col>
+                    </Card>
 
                     {/* Monthly Limit */}
-                    <Col xs={24} md={12}>
-                        <div className="limit-card monthly-limit">
-                            <div className="limit-header">
-                                <Text strong className="limit-title">Monthly Limit</Text>
-                                <Text type="secondary" className="limit-subtitle">
-                                    Resets on the 1st of each month
+                    <Card className="limit-card monthly-limit">
+                        <div className="limit-header">
+                            <Text strong className="limit-title">Monthly Limit</Text>
+                        </div>
+
+                        <div className="progress-container">
+                            <Progress
+                                type="circle"
+                                percent={monthlyPercentage}
+                                strokeColor={monthlyColor}
+                                strokeWidth={8}
+                                size={100}
+                                format={() => (
+                                    <div className="progress-content">
+                                        <Text strong className="progress-percent">{monthlyPercentage}%</Text>
+                                        <Text type="secondary" className="progress-label">used</Text>
+                                    </div>
+                                )}
+                            />
+                        </div>
+
+                        <div className="limit-stats">
+                            <div className="stat-row">
+                                <Text type="secondary">Limit</Text>
+                                <Text strong>{formatCurrency(withdrawalLimits.monthlyLimit)}</Text>
+                            </div>
+                            <div className="stat-row">
+                                <Text type="secondary">Used</Text>
+                                <Text style={{ color: monthlyPercentage > 75 ? '#faad14' : '#52c41a' }}>
+                                    {formatCurrency(withdrawalLimits.monthlyUsed)}
                                 </Text>
                             </div>
-
-                            <div className="progress-container">
-                                <Progress
-                                    type="circle"
-                                    percent={monthlyPercentage}
-                                    strokeColor={monthlyColor}
-                                    strokeWidth={8}
-                                    size={100}
-                                    format={() => (
-                                        <div className="progress-content">
-                                            <Text strong className="progress-percent">{monthlyPercentage}%</Text>
-                                            <Text type="secondary" className="progress-label">used</Text>
-                                        </div>
-                                    )}
-                                />
-                            </div>
-
-                            <div className="limit-stats">
-                                <div className="stat-row">
-                                    <Text type="secondary">Limit</Text>
-                                    <Text strong>{formatCurrency(withdrawalLimits.monthlyLimit)}</Text>
-                                </div>
-                                <div className="stat-row">
-                                    <Text type="secondary">Used</Text>
-                                    <Text style={{ color: monthlyPercentage > 75 ? '#faad14' : '#52c41a' }}>
-                                        {formatCurrency(withdrawalLimits.monthlyUsed)}
-                                    </Text>
-                                </div>
-                                <div className="stat-row highlight">
-                                    <Text type="secondary">Available</Text>
-                                    <Text strong style={{
-                                        color: withdrawalLimits.monthlyRemaining < withdrawalLimits.monthlyLimit * 0.2
-                                            ? '#ff4d4f' : '#52c41a',
-                                        fontSize: '16px'
-                                    }}>
-                                        {formatCurrency(withdrawalLimits.monthlyRemaining)}
-                                    </Text>
-                                </div>
+                            <div className="stat-row highlight">
+                                <Text type="secondary">Available</Text>
+                                <Text strong style={{
+                                    color: withdrawalLimits.monthlyRemaining < withdrawalLimits.monthlyLimit * 0.2
+                                        ? '#ff4d4f' : '#52c41a',
+                                    fontSize: '16px'
+                                }}>
+                                    {formatCurrency(withdrawalLimits.monthlyRemaining)}
+                                </Text>
                             </div>
                         </div>
-                    </Col>
-                </Row>
+                    </Card>
+                </Space>
 
                 {/* Usage Warning */}
                 {(dailyPercentage >= 80 || monthlyPercentage >= 80) && (

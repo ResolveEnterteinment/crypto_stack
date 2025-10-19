@@ -29,7 +29,7 @@ namespace Infrastructure.Services.FlowEngine.Extensions
             services.AddScoped<PaymentProcessingFlow>();
             // Exchange flows
             services.AddScoped<AllocationExchangeOrderFlow>();
-            services.AddScoped<HandleDustFlow>();
+            services.AddScoped<CollectDustFlow>();
 
             return services;
         }

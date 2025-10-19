@@ -24,7 +24,7 @@ import { useAuth } from '../../context/AuthContext';
 import exchangeService from '../../services/exchangeService';
 import { useAddressValidation } from '../../hooks/useAddressValidation';
 import { AddressValidationService } from '../../services/addressValidationService';
-import './WithdrawalForm.css';
+import '../../styles/Withdrawal/WithdrawalForm.css';
 
 interface WithdrawalFormProps {
     userId: string;
@@ -103,7 +103,6 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
 
     // Error Handling
     const extractErrorMessage = (error: ApiError): string => {
-        // Try multiple paths to get the error message
         const errorMessage =
             error?.response?.data?.errorMessage ||
             error?.response?.data?.message ||
@@ -157,10 +156,8 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
             duration = 8;
         }
 
-        // Set error state for inline display
         setCurrentError(description);
 
-        // Show toast notification
         message.error({
             content: (
                 <div>
@@ -176,7 +173,6 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
             icon: <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
         });
 
-        // Log for debugging
         console.error('Withdrawal Error:', {
             title,
             description,
@@ -216,7 +212,6 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
         } catch (err) {
             console.error("Error fetching minimum withdrawal:", err);
             setMinimumWithdrawal(0);
-            // Don't show error to user for this non-critical failure
         } finally {
             setIsLoadingMinimum(false);
         }
@@ -264,19 +259,19 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
             };
         }
 
-        var quarterPercentMark = (maxWithdrawable - minimumWithdrawal) * .25 + minimumWithdrawal;
+        const quarterPercentMark = (maxWithdrawable - minimumWithdrawal) * .25 + minimumWithdrawal;
         marks[quarterPercentMark] = {
             style: { color: '#ff4d4f', fontSize: '11px' },
             label: <span>25%</span>
         };
 
-        var halfPercentMark = (maxWithdrawable - minimumWithdrawal) * .5 + minimumWithdrawal;
+        const halfPercentMark = (maxWithdrawable - minimumWithdrawal) * .5 + minimumWithdrawal;
         marks[halfPercentMark] = {
             style: { color: '#ff4d4f', fontSize: '11px' },
             label: <span>50%</span>
         };
 
-        var threeQuartersPercentMark = (maxWithdrawable - minimumWithdrawal) * .75 + minimumWithdrawal;
+        const threeQuartersPercentMark = (maxWithdrawable - minimumWithdrawal) * .75 + minimumWithdrawal;
         marks[threeQuartersPercentMark] = {
             style: { color: '#ff4d4f', fontSize: '11px' },
             label: <span>75%</span>
@@ -402,7 +397,6 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
     };
 
     const handleSubmit = async (values: any): Promise<void> => {
-        // Guard clause for user validation
         if (!user?.id) {
             message.error('User session expired. Please log in again.');
             return;
@@ -412,12 +406,10 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
             setIsLoading(true);
             setCurrentError(null);
 
-            // Validate amount
             if (!values.amount || values.amount <= 0) {
                 throw new Error('Please enter a valid withdrawal amount');
             }
 
-            // Pre-submission validation
             const canUserWithdraw = await withdrawalService.canUserWithdraw(
                 values.amount,
                 selectedAsset
@@ -434,7 +426,6 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
 
             let response: WithdrawalResponse | null = null;
 
-            // Process withdrawal based on type
             if (withdrawalMethod === WithdrawalMethod.CryptoTransfer) {
                 if (!values.withdrawalAddress || !values.network) {
                     throw new Error('Wallet address and network are required');
@@ -465,18 +456,15 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                     withdrawalAddress: values.withdrawalAddress.trim(),
                 };
 
-                // Fixed: Use correct service method for bank withdrawals
                 response = await withdrawalService.requestBankWithdrawal(bankRequest);
             }
 
-            // Success handling
             message.success({
                 content: 'Withdrawal request submitted successfully! Processing may take 24-48 hours.',
                 duration: 5,
                 style: { marginTop: '10vh' }
             });
 
-            // Reset form
             form.resetFields();
             setAmount(null);
             setSelectedAsset('');
@@ -484,12 +472,10 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
             setSupportedNetworks([]);
             setCurrentError(null);
 
-            // Callback to parent
             if (response) {
                 onSuccess(response);
             }
 
-            // Refresh balance
             await refetchBalance();
 
         } catch (error: any) {
@@ -754,7 +740,6 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                                     size="large"
                                     onChange={(value) => {
                                         setSelectedNetwork(value);
-                                        // Clear address when network changes
                                         form.setFieldsValue({ withdrawalAddress: undefined, memo: undefined });
                                         setValidatedAddress('');
                                         setValidatedMemo('');
@@ -838,7 +823,6 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                                     setValidatedAddress(value);
                                 }}
                                 onPaste={(e) => {
-                                    // Clean pasted content
                                     e.preventDefault();
                                     const pastedText = e.clipboardData.getData('text').trim();
                                     form.setFieldsValue({ withdrawalAddress: pastedText });
@@ -959,7 +943,6 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                                 <Text type="secondary" style={{ fontSize: 14 }}>Network</Text>
                                 <div>
                                     <Text strong style={{ fontSize: 18 }}>{selectedNetwork}</Text>
-
                                 </div>
                             </Space>
 
@@ -967,7 +950,7 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                                 <Text type="secondary" style={{ fontSize: 14 }}>Wallet Address</Text>
                                 <Text style={{
                                     background: '#f5f5f5',
-                                    padding: '12px 12px 12px 12px',
+                                    padding: '12px',
                                     borderRadius: 10,
                                     wordBreak: 'keep-all',
                                     fontFamily: 'monospace',
@@ -994,7 +977,7 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                             <div style={{
                                 background: '#f5f5f5',
                                 padding: '8px 12px',
-                                paddingBottom : '12px',
+                                paddingBottom: '12px',
                                 borderRadius: 4,
                                 fontFamily: 'monospace'
                             }}>
@@ -1003,17 +986,17 @@ const WithdrawalForm: React.FC<WithdrawalFormProps> = ({ onSuccess, onError }) =
                         </div>
                     )}
                 </Space>
-                <div style={{paddingTop:'20px'} }>
+                <div style={{ paddingTop: '20px' }}>
                     <Space direction="horizontal" style={{ width: '100%' }} size="small">
                         <WarningOutlined />
                         <Text type="secondary" style={{ fontSize: 12 }}>Cryptocurrency transactions are irreversible. Please double-check all information before confirming.</Text>
                     </Space>
                     <Space direction="horizontal" style={{ width: '100%' }} size="small">
-                        <SafetyOutlined color = "#ff0000" />
+                        <SafetyOutlined />
                         <Text type="secondary" style={{ fontSize: 12 }}>All transactions are verified for security.</Text>
                     </Space>
                     <Space direction="horizontal" style={{ width: '100%' }} size="small">
-                        <ClockCircleOutlined color="#ff0000" />
+                        <ClockCircleOutlined />
                         <Text type="secondary" style={{ fontSize: 12 }}>Processing Time: 24-48 hours.</Text>
                     </Space>
                 </div>
