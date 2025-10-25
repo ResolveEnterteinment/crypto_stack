@@ -55,8 +55,7 @@ namespace Infrastructure.Services
             _stripeService = new StripeService(stripeSettings);
             _providers.Add("Stripe", _stripeService as IPaymentProvider);
             _settings = paymentSettings.Value ?? throw new ArgumentNullException(nameof(paymentSettings));
-            _defaultProvider = _providers[
-                _settings.DefaultProvider
+            _defaultProvider = _providers[_settings.DefaultProvider
                     ?? throw new InvalidOperationException("DefaultProvider not configured")];
         }
 

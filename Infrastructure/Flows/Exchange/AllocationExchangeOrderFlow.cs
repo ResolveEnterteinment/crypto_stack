@@ -14,7 +14,6 @@ using Domain.Models.Payment;
 using Infrastructure.Services.FlowEngine.Core.Enums;
 using Infrastructure.Services.FlowEngine.Core.Models;
 using Infrastructure.Services.FlowEngine.Core.PauseResume;
-using Stripe.Terminal;
 
 namespace Infrastructure.Flows.Exchange
 {
@@ -374,6 +373,7 @@ namespace Infrastructure.Flows.Exchange
                 {
                     ["ExchangeOrderData"] = context.GetData<ExchangeOrderData>("ExchangeOrderData"),
                     ["PlacedOrder"] = context.GetData<PlacedExchangeOrder>("PlacedOrder"),
+                    ["Allocation"] = context.GetData<EnhancedAllocationDto>("Allocation")
                 })
                 .Build();
 
@@ -385,6 +385,7 @@ namespace Infrastructure.Flows.Exchange
                     var exchangeOrderData = context.GetData<ExchangeOrderData>("ExchangeOrderData");
 
                     await _eventService.PublishAsync(new ExchangeOrderCompletedEvent(exchangeOrderData, _logger.Context));
+                    // This event will also trigger transaction recording via a separate event handler in TransactionService
 
                     return StepResult.Success($"Order completed event published for order {exchangeOrderData.Id}");
                 })

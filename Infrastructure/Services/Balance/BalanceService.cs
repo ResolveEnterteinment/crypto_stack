@@ -1,11 +1,13 @@
 ﻿using Application.Interfaces;
 using Application.Interfaces.Asset;
+using CryptoExchange.Net.CommonObjects;
 using Domain.Constants;
 using Domain.Constants.Asset;
 using Domain.Constants.Logging;
 using Domain.DTOs;
 using Domain.DTOs.Balance;
 using Domain.DTOs.Logging;
+using Domain.DTOs.Transaction;
 using Domain.Events.Entity;
 using Domain.Exceptions;
 using Domain.Models.Balance;
@@ -13,7 +15,7 @@ using Domain.Models.Transaction;
 using Infrastructure.Services.Base;
 using MongoDB.Driver;
 
-namespace Infrastructure.Services
+namespace Infrastructure.Services.Balance
 {
     public class BalanceService : BaseService<BalanceData>, IBalanceService
     {
@@ -22,6 +24,7 @@ namespace Infrastructure.Services
         // Cache keys and durations
         private const string USER_BALANCE_CACHE_KEY = "user_balance:{0}";
         private const string USER_BALANCE_BY_TICKER_CACHE_KEY = "user_balance_ticker:{0}:{1}";
+        private const string USER_ENHANCED_BALANCE_BY_TICKER_CACHE_KEY = "user_enhanced_balance_ticker:{0}:{1}";
         private const string USER_BALANCES_BY_TYPE_CACHE_KEY = "user_balances_type:{0}:{1}";
         private const string USER_BALANCES_WITH_ASSETS_CACHE_KEY = "user_balances_assets:{0}:{1}";
 
@@ -71,7 +74,7 @@ namespace Infrastructure.Services
                         ? string.Format(USER_BALANCE_CACHE_KEY, userId)
                         : string.Format(USER_BALANCES_BY_TYPE_CACHE_KEY, userId, assetType);
 
-                    var cachedBalances = await _cacheService.GetAnyCachedAsync<List<BalanceData>>(
+                    var cachedBalances = await _cacheService.GetAnyCachedAsync(
                         cacheKey,
                         async () =>
                         {
@@ -113,6 +116,8 @@ namespace Infrastructure.Services
 
         public Task<ResultWrapper<BalanceData>> GetUserBalanceByTickerAsync(Guid userId, string ticker)
         {
+            ticker = ticker.ToUpperInvariant();
+
             return _resilienceService.CreateBuilder(
                 new Scope
                 {
@@ -134,7 +139,7 @@ namespace Infrastructure.Services
 
                     var cacheKey = string.Format(USER_BALANCE_BY_TICKER_CACHE_KEY, userId, ticker.ToUpperInvariant());
 
-                    var cachedBalance = await _cacheService.GetAnyCachedAsync<BalanceData>(
+                    var cachedBalance = await _cacheService.GetAnyCachedAsync(
                         cacheKey,
                         async () =>
                         {
@@ -188,7 +193,7 @@ namespace Infrastructure.Services
                 {
                     var cacheKey = string.Format(USER_BALANCES_WITH_ASSETS_CACHE_KEY, userId, assetType ?? "all");
 
-                    var cachedBalances = await _cacheService.GetAnyCachedAsync<List<BalanceData>>(
+                    var cachedBalances = await _cacheService.GetAnyCachedAsync(
                         cacheKey,
                         async () =>
                         {
@@ -239,6 +244,82 @@ namespace Infrastructure.Services
                         USER_BALANCES_CACHE_DURATION);
 
                     return cachedBalances ?? [];
+                })
+                .ExecuteAsync();
+        }
+
+        /// <summary>
+        /// Gets or creates a balance enhanced with asset info.
+        /// </summary>
+        /// <param name="userId"></param>
+        /// <param name="ticker"></param>
+        /// <returns></returns>
+        /// <exception cref="DatabaseException"></exception>
+        /// <exception cref="AssetFetchException"></exception>
+        public async Task<ResultWrapper<BalanceData>> GetOrCreateEnhancedBalanceAsync(Guid userId, string ticker)
+        {
+            if (userId == Guid.Empty)
+            {
+                return ResultWrapper<BalanceData>.Failure(FailureReason.ValidationError, "Invalid userId");
+            }
+            
+            if (string.IsNullOrWhiteSpace(ticker))
+            {
+                return ResultWrapper<BalanceData>.Failure(FailureReason.ValidationError, "Invalid asset ticker");
+            }
+
+            ticker = ticker.ToUpperInvariant();
+
+            return await _resilienceService.CreateBuilder(
+                new Scope
+                {
+                    NameSpace = "Infrastructure.Services.Balance",
+                    FileName = "BalanceService",
+                    OperationName = "GetOrCreateEnhancedBalanceAsync(Guid userId, string ticker)",
+                    State = {
+                        ["UserId"] = userId,
+                        ["AssetTicker"] = ticker,
+                    },
+                    LogLevel = LogLevel.Error
+                },
+                async () =>
+                {
+                    var cacheKey = string.Format(USER_ENHANCED_BALANCE_BY_TICKER_CACHE_KEY, userId, ticker);
+
+                    var cachedBalance = await _cacheService.GetAnyCachedAsync(
+                        cacheKey,
+                        async () =>
+                        {
+                            var balance = await GetOrCreateOneAsync(userId, ticker);
+
+                            var assetWr = await _assetService.GetByTickerAsync(ticker);
+                            if (assetWr == null || !assetWr.IsSuccess)
+                            {
+                                await _loggingService.LogTraceAsync($"Asset not found for ID {balance.AssetId}", level: LogLevel.Error);
+                                throw new AssetFetchException($"Asset not found for ID {balance.AssetId}");
+                            }
+
+                            return new BalanceData
+                            {
+                                Id = balance.Id,
+                                UserId = balance.UserId,
+                                AssetId = balance.AssetId,
+                                Ticker = balance.Ticker,
+                                Available = balance.Available,
+                                Locked = balance.Locked,
+                                Total = balance.Total,
+                                Asset = assetWr.Data,
+                                UpdatedAt = balance.UpdatedAt
+                            };
+                        },
+                        USER_BALANCES_CACHE_DURATION);
+
+                    return cachedBalance ?? new BalanceData
+                    {
+                        UserId = userId,
+                        AssetId = Guid.Empty,
+                        Ticker = ticker
+                    };
                 })
                 .ExecuteAsync();
         }
@@ -341,6 +422,10 @@ namespace Infrastructure.Services
                 .ExecuteAsync();
         }
 
+        // ===== UPDATED HANDLE METHOD FOR BALANCESERVICE =====
+        // Replace the existing Handle method in BalanceService with this version
+        // This properly processes double-entry transactions with FromBalance, ToBalance, Fee, and Rounding
+
         public async Task Handle(EntityCreatedEvent<TransactionData> notification, CancellationToken cancellationToken)
         {
             await _resilienceService.CreateBuilder(
@@ -350,41 +435,314 @@ namespace Infrastructure.Services
                     FileName = "BalanceService",
                     OperationName = "Handle(EntityCreatedEvent<TransactionData> notification, CancellationToken cancellationToken)",
                     State = {
-                        ["TransactionId"] = notification.Entity.Id,
-                        ["UserId"] = notification.Entity.UserId,
-                        ["SubscriptionId"] = notification.Entity.SubscriptionId,
-                        ["AssetId"] = notification.Entity.AssetId,
-                        ["SourceName"] = notification.Entity.SourceName,
-                        ["Action"] = notification.Entity.Action,
-                        ["Amount"] = notification.Entity.Quantity.ToString(),
-                        ["CancellationToken"] = cancellationToken,
+                ["TransactionId"] = notification.Entity.Id,
+                ["UserId"] = notification.Entity.UserId,
+                ["SubscriptionId"] = notification.Entity.SubscriptionId,
+                ["Action"] = notification.Entity.Action,
+                ["CancellationToken"] = cancellationToken,
                     },
                     LogLevel = LogLevel.Error
                 },
                 async () =>
                 {
                     var transaction = notification.Entity;
-                    var assetId = notification.Entity.AssetId;
+
+                    // Get all affected user IDs for cache invalidation
+                    var affectedUserIds = transaction.GetAffectedUserIds();
 
                     // Invalidate user balance caches before processing
-                    await InvalidateUserBalanceCachesAsync(transaction.UserId);
-
-                    // Create balance update data based on transaction action
-                    var balanceUpdateDto = BalanceUpdateDto.FromTransaction(transaction);
-
-                    var upsertResult = await UpsertBalanceAsync(transaction.UserId, balanceUpdateDto);
-
-                    if (upsertResult == null || !upsertResult.IsSuccess)
+                    foreach (var userId in affectedUserIds)
                     {
-                        throw new DatabaseException($"Failed to upsert balance for user {transaction.UserId}: {upsertResult?.ErrorMessage ?? "Upsert result returned null"}");
+                        await InvalidateUserBalanceCachesAsync(userId);
                     }
 
-                    _loggingService.LogInformation("Balance updated for user {UserId} due to transaction {TransactionId}",
-                        transaction.UserId, transaction.Id);
+                    // Process all balance entries in the transaction
+                    var updateTasks = new List<Task<ResultWrapper<BalanceData>>>();
+
+                    // Process FromBalance (debit)
+                    if (transaction.FromBalance != null)
+                    {
+                        updateTasks.Add(ProcessBalanceEntryAsync(
+                            transaction.FromBalance,
+                            transaction.Id,
+                            isDebit: true));
+                    }
+
+                    // Process ToBalance (credit)
+                    if (transaction.ToBalance != null)
+                    {
+                        updateTasks.Add(ProcessBalanceEntryAsync(
+                            transaction.ToBalance,
+                            transaction.Id,
+                            isDebit: false));
+                    }
+
+                    // Process Fee
+                    if (transaction.Fee != null)
+                    {
+                        updateTasks.Add(ProcessBalanceEntryAsync(
+                            transaction.Fee,
+                            transaction.Id,
+                            isDebit: false)); // Fee is typically a credit to the recipient
+                    }
+
+                    // Process Rounding
+                    if (transaction.Rounding != null)
+                    {
+                        updateTasks.Add(ProcessBalanceEntryAsync(
+                            transaction.Rounding,
+                            transaction.Id,
+                            isDebit: transaction.Rounding.Quantity < 0));
+                    }
+
+                    // Execute all balance updates
+                    var results = await Task.WhenAll(updateTasks);
+
+                    // Check if any updates failed
+                    var failedUpdates = results.Where(r => r == null || !r.IsSuccess).ToList();
+                    if (failedUpdates.Any())
+                    {
+                        var errorMessages = string.Join(", ", failedUpdates.Select(r => r?.ErrorMessage ?? "Unknown error"));
+                        throw new DatabaseException($"Failed to update balances for transaction {transaction.Id}: {errorMessages}");
+                    }
+
+                    _loggingService.LogInformation(
+                        "Balance updated for transaction {TransactionId}, affected {UserCount} users, {UpdateCount} balance updates",
+                        transaction.Id, affectedUserIds.Count(), updateTasks.Count);
                 })
                 .ExecuteAsync();
         }
-        
+
+        /// <summary>
+        /// Processes a single balance entry (FromBalance, ToBalance, Fee, or Rounding)
+        /// </summary>
+        private async Task<ResultWrapper<BalanceData>> ProcessBalanceEntryAsync(
+            TransactionEntry entry,
+            Guid transactionId,
+            bool isDebit)
+        {
+            try
+            {
+                // Create BalanceUpdateDto from the entry
+                var updateDto = new BalanceUpdateDto
+                {
+                    AssetId = entry.AssetId,
+                    Available = 0,
+                    Locked = 0,
+                    LastTransactionId = transactionId,
+                    LastUpdated = DateTime.UtcNow
+                };
+
+                // Apply the balance change based on BalanceType
+                switch (entry.BalanceType)
+                {
+                    case BalanceType.Available:
+                        updateDto.Available = entry.Quantity;
+                        break;
+
+                    case BalanceType.Locked:
+                        updateDto.Locked = entry.Quantity;
+                        break;
+
+                    case BalanceType.LockFromAvailable:
+                        // Move from Available to Locked
+                        updateDto.Available = -Math.Abs(entry.Quantity);
+                        updateDto.Locked = Math.Abs(entry.Quantity);
+                        break;
+
+                    case BalanceType.UnlockToAvailable:
+                        // Move from Locked to Available
+                        updateDto.Locked = -Math.Abs(entry.Quantity);
+                        updateDto.Available = Math.Abs(entry.Quantity);
+                        break;
+
+                    default:
+                        throw new InvalidOperationException($"Unsupported BalanceType: {entry.BalanceType}");
+                }
+
+                // Update the balance
+                var result = await UpsertBalanceAsync(entry.UserId, updateDto);
+
+                if (result.IsSuccess && result.Data != null)
+                {
+                    _loggingService.LogInformation(
+                        "Updated balance for user {UserId}, asset {AssetId}: Available {Available}, Locked {Locked}",
+                        entry.UserId, entry.AssetId, updateDto.Available, updateDto.Locked);
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogError(
+                    "Failed to process balance entry for user {UserId}, asset {AssetId}: {Error}",
+                    entry.UserId, entry.AssetId, ex.Message);
+
+                return ResultWrapper<BalanceData>.Failure(
+                    FailureReason.DatabaseError,
+                    $"Failed to process balance entry: {ex.Message}");
+            }
+        }
+
+        // ===== ALTERNATIVE: ENHANCED UPSERT METHOD =====
+        // If you want better validation and snapshots, you can use this enhanced version instead
+
+        /// <summary>
+        /// Enhanced version that includes balance validation and snapshot recording
+        /// </summary>
+        private async Task<ResultWrapper<BalanceData>> ProcessBalanceEntryWithValidationAsync(
+            TransactionEntry entry,
+            Guid transactionId,
+            bool isDebit)
+        {
+            try
+            {
+                // Get existing balance or create new one
+                var filter = Builders<BalanceData>.Filter.And(
+                    Builders<BalanceData>.Filter.Eq(b => b.UserId, entry.UserId),
+                    Builders<BalanceData>.Filter.Eq(b => b.AssetId, entry.AssetId)
+                );
+
+                var existingResult = await GetOneAsync(filter);
+                BalanceData balance;
+
+                if (existingResult != null && existingResult.IsSuccess && existingResult.Data != null)
+                {
+                    balance = existingResult.Data;
+                }
+                else
+                {
+                    // Create new balance
+                    var assetResult = await _assetService.GetByIdAsync(entry.AssetId);
+                    if (assetResult == null || !assetResult.IsSuccess || assetResult.Data == null)
+                    {
+                        throw new ResourceNotFoundException("Asset", entry.AssetId.ToString());
+                    }
+
+                    balance = new BalanceData
+                    {
+                        UserId = entry.UserId,
+                        AssetId = entry.AssetId,
+                        Ticker = entry.Ticker ?? assetResult.Data.Ticker,
+                        Available = 0,
+                        Locked = 0,
+                        Total = 0,
+                        LastTransactionId = transactionId,
+                        TransactionCount = 0
+                    };
+                }
+
+                // Record BEFORE snapshot
+                entry.BalanceBeforeAvailable = balance.Available;
+                entry.BalanceBeforeLocked = balance.Locked;
+                entry.BalanceId = balance.Id;
+
+                // Apply the balance change based on BalanceType
+                switch (entry.BalanceType)
+                {
+                    case BalanceType.Available:
+                        balance.Available += entry.Quantity;
+                        break;
+
+                    case BalanceType.Locked:
+                        balance.Locked += entry.Quantity;
+                        break;
+
+                    case BalanceType.LockFromAvailable:
+                        balance.Available -= Math.Abs(entry.Quantity);
+                        balance.Locked += Math.Abs(entry.Quantity);
+                        break;
+
+                    case BalanceType.UnlockToAvailable:
+                        balance.Locked -= Math.Abs(entry.Quantity);
+                        balance.Available += Math.Abs(entry.Quantity);
+                        break;
+
+                    default:
+                        throw new InvalidOperationException($"Unsupported BalanceType: {entry.BalanceType}");
+                }
+
+                // CRITICAL: Validate balance constraints
+                if (balance.Available < 0)
+                {
+                    throw new InsufficientBalanceException(
+                        $"Insufficient available balance for user {entry.UserId}, asset {entry.AssetId}. " +
+                        $"Required: {Math.Abs(entry.Quantity)}, Available: {entry.BalanceBeforeAvailable}");
+                }
+
+                if (balance.Locked < 0)
+                {
+                    throw new InsufficientBalanceException(
+                        $"Insufficient locked balance for user {entry.UserId}, asset {entry.AssetId}");
+                }
+
+                // Update totals
+                balance.Total = balance.Available + balance.Locked;
+                balance.LastTransactionId = transactionId;
+                balance.LastTransactionAt = DateTime.UtcNow;
+                balance.TransactionCount++;
+                balance.UpdatedAt = DateTime.UtcNow;
+
+                // Record AFTER snapshot
+                entry.BalanceAfterAvailable = balance.Available;
+                entry.BalanceAfterLocked = balance.Locked;
+
+                // Save the balance
+                ResultWrapper<BalanceData> result;
+                if (balance.Id == Guid.Empty)
+                {
+                    var insertResult = await InsertAsync(balance);
+                    if(insertResult == null || !insertResult.IsSuccess || !insertResult.Data.IsSuccess)
+                    {
+                        throw new DatabaseException($"Failed to insert balance: {insertResult?.ErrorMessage}");
+                    }
+                    result = ResultWrapper<BalanceData>.Success(insertResult.Data.Documents.First());
+                }
+                else
+                {
+                    var fields = new Dictionary<string, object>
+                    {
+                        ["Available"] = balance.Available,
+                        ["Locked"] = balance.Locked,
+                        ["Total"] = balance.Total,
+                        ["LastTransactionId"] = balance.LastTransactionId,
+                        ["LastTransactionAt"] = balance.LastTransactionAt,
+                        ["TransactionCount"] = balance.TransactionCount,
+                        ["UpdatedAt"] = balance.UpdatedAt
+                    };
+
+                    var updateResult = await UpdateAsync(balance.Id, fields);
+
+                    if (updateResult == null || !updateResult.IsSuccess || !updateResult.Data.IsSuccess)
+                    {
+                        throw new DatabaseException($"Failed to update balance: {updateResult?.ErrorMessage}");
+                    }
+
+                    result = ResultWrapper<BalanceData>.Success(updateResult.Data.Documents.First());
+                }
+
+                if (result.IsSuccess)
+                {
+                    _loggingService.LogInformation(
+                        "Updated balance {BalanceId} for user {UserId}, asset {AssetId}: {Before} → {After}",
+                        balance.Id, entry.UserId, entry.AssetId,
+                        entry.BalanceBeforeAvailable, entry.BalanceAfterAvailable);
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogError(
+                    "Failed to process balance entry for user {UserId}, asset {AssetId}: {Error}",
+                    entry.UserId, entry.AssetId, ex.Message);
+
+                return ResultWrapper<BalanceData>.Failure(
+                    FailureReason.DatabaseError,
+                    $"Failed to process balance entry: {ex.Message}");
+            }
+        }
+
         public async Task<ResultWrapper<BalanceCacheStats>> GetCacheStatsAsync(Guid userId)
         {
             try
@@ -539,9 +897,59 @@ namespace Infrastructure.Services
             }
         }
 
-        /// <summary>
-        /// Gets cache statistics for monitoring balance cache health
-        /// </summary>
-        /// <param name="userId">The user ID to get stats for</param>
+        private async Task<BalanceData> GetOrCreateOneAsync(Guid userId, string ticker)
+        {
+            ticker = ticker.ToUpperInvariant();
+
+            // First try to get the balance
+            FilterDefinition<BalanceData>[] filters = [
+                                Builders<BalanceData>.Filter.Eq(b => b.UserId, userId),
+                                Builders<BalanceData>.Filter.Eq(b => b.Ticker, ticker.ToUpper()),
+                                Builders<BalanceData>.Filter.Gt(b => b.Total, 0m),
+                            ];
+
+            var filter = Builders<BalanceData>.Filter.And(filters);
+
+            var balanceResult = await GetOneAsync(filter);
+
+            if(balanceResult.IsSuccess && balanceResult.Data != null)
+            {
+                return balanceResult.Data;
+            }
+
+            // If no balance is found, then create a new one and return it.
+
+            var assetResult = await _assetService.GetByTickerAsync(ticker);
+
+            if(!assetResult.IsSuccess || assetResult.Data == null)
+            {
+                throw new AssetFetchException(assetResult.ErrorMessage);
+            }
+
+            var asset = assetResult.Data;
+
+            var balanceEntity = new BalanceData
+            {
+                UserId = userId,
+                AssetId = asset.Id,
+                Ticker = ticker,
+                Available = 0m,
+                Locked = 0m,
+                Total = 0m
+            };
+
+            var newBalanceResult = await InsertAsync(balanceEntity);
+
+            if(!newBalanceResult.IsSuccess || !newBalanceResult.Data.IsSuccess)
+            {
+                throw new DatabaseException(newBalanceResult.Data.ErrorMessage);
+            }
+
+            var enhancedEntity = newBalanceResult.Data.Documents.First();
+
+            enhancedEntity.Asset = asset;
+
+            return enhancedEntity;
+        }
     }
 }

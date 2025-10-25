@@ -1,8 +1,3 @@
-import {
-    SyncOutlined, CheckCircleOutlined, ClockCircleOutlined,
-    ShoppingCartOutlined, DollarCircleOutlined, ShoppingOutlined,
-    ExclamationCircleOutlined, CloseCircleOutlined
-} from '@ant-design/icons';
 import { ReactNode } from 'react';
 
 export const SubscriptionStatus: Record<string, string> = {

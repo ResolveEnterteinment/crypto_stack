@@ -23,23 +23,14 @@ namespace Infrastructure.Services.Treasury
     {
         private readonly ITreasuryBalanceService _balanceService;
         private readonly IAssetService _assetService;
-        //private readonly IExchangeService _exchangeService;
-        private readonly IUserService _userService;
-        private readonly ILoggingService _loggingService;
-        private readonly ICacheService<TreasuryBalanceData> _cacheService;
 
-        private const string BALANCE_CACHE_PREFIX = "treasury:balance:";
         private const string SUMMARY_CACHE_PREFIX = "treasury:summary:";
         private static readonly TimeSpan CACHE_DURATION = TimeSpan.FromMinutes(5);
 
         public TreasuryService(
             IServiceProvider serviceProvider,
             ITreasuryBalanceService treasuryBalanceService,
-            IAssetService assetService,
-            //IExchangeService exchangeService,
-            IUserService userService,
-            ILoggingService loggingService,
-            ICacheService<TreasuryBalanceData> cacheService
+            IAssetService assetService
         ) : base(
             serviceProvider,
             new()
@@ -80,10 +71,6 @@ namespace Infrastructure.Services.Treasury
         {
             _balanceService = treasuryBalanceService ?? throw new ArgumentNullException(nameof(treasuryBalanceService));
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
-            //_exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
-            _userService = userService ?? throw new ArgumentNullException(nameof(userService));
-            _loggingService = loggingService ?? throw new ArgumentNullException(nameof(loggingService));
-            _cacheService = cacheService ?? throw new ArgumentNullException(nameof(cacheService));
         }
 
         #region Transaction Recording

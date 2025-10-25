@@ -1,7 +1,5 @@
-using Application.Interfaces;
 using Application.Interfaces.Asset;
-using Application.Interfaces.Base;
-using Application.Interfaces.Logging;
+using Application.Interfaces.Exchange;
 using Application.Interfaces.Treasury;
 using Domain.Constants.Treasury;
 using Domain.Exceptions;
@@ -18,10 +16,7 @@ namespace Infrastructure.Services.Treasury
     public class TreasuryBalanceService : BaseService<TreasuryBalanceData>, ITreasuryBalanceService
     {
         private readonly IAssetService _assetService;
-        //private readonly IExchangeService _exchangeService;
-        private readonly IUserService _userService;
-        private readonly ILoggingService _loggingService;
-        private readonly ICacheService<TreasuryBalanceData> _cacheService;
+        private readonly IExchangeService _exchangeService;
 
         private const string BALANCE_CACHE_PREFIX = "treasury:balance:";
         private static readonly TimeSpan CACHE_DURATION = TimeSpan.FromMinutes(5);
@@ -29,10 +24,7 @@ namespace Infrastructure.Services.Treasury
         public TreasuryBalanceService(
             IServiceProvider serviceProvider,
             IAssetService assetService,
-            //IExchangeService exchangeService,
-            IUserService userService,
-            ILoggingService loggingService,
-            ICacheService<TreasuryBalanceData> cacheService
+            IExchangeService exchangeService
         ) : base(
             serviceProvider,
             new()
@@ -59,10 +51,7 @@ namespace Infrastructure.Services.Treasury
             })
         {
             _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
-            //_exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
-            _userService = userService ?? throw new ArgumentNullException(nameof(userService));
-            _loggingService = loggingService ?? throw new ArgumentNullException(nameof(loggingService));
-            _cacheService = cacheService ?? throw new ArgumentNullException(nameof(cacheService));
+            _exchangeService = exchangeService ?? throw new ArgumentNullException(nameof(exchangeService));
         }
 
         #region Balance Management
@@ -231,19 +220,12 @@ namespace Infrastructure.Services.Treasury
 
                     if (!balance.LastExchangeRate.HasValue)
                     {
-                        /*
                         var currentRateResult = await _exchangeService.GetCachedAssetPriceAsync(balance.AssetTicker);
                         if (currentRateResult == null || !currentRateResult.IsSuccess)
                             continue;
 
                         currentRate = currentRateResult.Data;
-                        */
                     }
-
-                    // Update would happen here with real exchange rate
-                    // balance.TotalUsdValue = balance.TotalBalance * currentRate;
-                    // balance.LastExchangeRate = currentRate;
-                    // balance.LastUsdUpdateAt = DateTime.UtcNow;
 
                     var updateFields = new Dictionary<string, object>
                     {

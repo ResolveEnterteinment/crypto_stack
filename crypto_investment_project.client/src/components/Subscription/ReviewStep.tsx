@@ -1,5 +1,17 @@
+// src/components/Subscription/ReviewStep.tsx - Refactored with Global Styling & Ant Design
+import React from 'react';
+import { Card, Typography, Space, Divider, Tag, Progress, Alert } from 'antd';
+import {
+    CheckCircleOutlined,
+    CalendarOutlined,
+    DollarOutlined,
+    InfoCircleOutlined,
+    CreditCardOutlined
+} from '@ant-design/icons';
 import { AssetColors } from "../../types/assetTypes";
 import { Allocation } from "../../types/subscription";
+
+const { Title, Text, Paragraph } = Typography;
 
 // Define interval display mapping
 const INTERVAL_DISPLAY: Record<string, string> = {
@@ -23,8 +35,10 @@ interface ReviewStepProps {
 const ReviewStep: React.FC<ReviewStepProps> = ({ formData }) => {
     const { interval, amount, currency, endDate, allocations } = formData;
 
-    // Format date for display
-    const formatDate = (date: Date) => {
+    /**
+     * Format date for display
+     */
+    const formatDate = (date: Date | null): string => {
         if (!date) return 'Ongoing (until canceled)';
         return new Date(date).toLocaleDateString('en-US', {
             year: 'numeric',
@@ -33,6 +47,9 @@ const ReviewStep: React.FC<ReviewStepProps> = ({ formData }) => {
         });
     };
 
+    /**
+     * Format currency
+     */
     const formatCurrency = (amount: number): string => {
         return new Intl.NumberFormat('en-US', {
             style: 'currency',
@@ -42,36 +59,29 @@ const ReviewStep: React.FC<ReviewStepProps> = ({ formData }) => {
         }).format(amount);
     };
 
-    // Calculate estimated annual investment (excluding one-time)
-    const calculateAnnualAmount = () => {
+    /**
+     * Calculate estimated annual investment
+     */
+    const calculateAnnualAmount = (): number => {
         if (interval === 'ONCE') return amount;
 
-        switch (interval) {
-            case "ONCE":
-                return amount;
-                break;
-            case "DAILY":
-                return amount * 365;
-                break;
-            case "WEEKLY":
-                return amount * 52;
-                break;
-            case "MONTHLY":
-                return amount * 12;
-                break;
-            case "YEARLY":
-                return amount;
-                break;
-            default:
-                throw new Error("Wrong interval.");
-        }
+        const multipliers: Record<string, number> = {
+            "DAILY": 365,
+            "WEEKLY": 52,
+            "MONTHLY": 12,
+            "YEARLY": 1
+        };
+
+        return amount * (multipliers[interval] || 0);
     };
 
     // Get estimated annual investment
     const annualAmount = calculateAnnualAmount();
 
-    // Get color for asset based on ticker
-    const getAssetColor = (ticker:string) => {
+    /**
+     * Get color for asset based on ticker
+     */
+    const getAssetColor = (ticker: string): string => {
         return AssetColors[ticker] || AssetColors.DEFAULT;
     };
 
@@ -82,119 +92,187 @@ const ReviewStep: React.FC<ReviewStepProps> = ({ formData }) => {
     const netInvestment = amount - totalFees;
 
     return (
-        <div className="space-y-8">
-            <div>
-                <h2 className="text-2xl font-semibold text-gray-800 mb-4">Review Your Investment Plan</h2>
-                <p className="text-gray-600 mb-6">
+        <div className="stack-lg">
+            {/* Header */}
+            <div className="text-center">
+                <Title level={2} className="mb-sm">
+                    Review Your Investment Plan
+                </Title>
+                <Paragraph className="text-body text-secondary">
                     Please review your investment plan details before confirming.
-                </p>
+                </Paragraph>
             </div>
 
             {/* Plan Details Summary */}
-            <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-lg font-medium text-gray-800 mb-4">Plan Details</h3>
-                <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+            <Card
+                title={
+                    <Space>
+                        <CalendarOutlined style={{ color: 'var(--color-primary)' }} />
+                        <Text strong>Plan Details</Text>
+                    </Space>
+                }
+                className="elevation-2"
+            >
+                <div className="grid-2 gap-lg">
                     <div>
-                        <p className="text-sm text-gray-500">Plan Type</p>
-                        <p className="font-medium">{INTERVAL_DISPLAY[interval]}</p>
+                        <Text type="secondary" className="text-body-sm">Plan Type</Text>
+                        <div className="font-semibold">{INTERVAL_DISPLAY[interval]}</div>
                     </div>
                     <div>
-                        <p className="text-sm text-gray-500">Investment Amount</p>
-                        <p className="font-medium">${amount.toFixed(2)} {currency}</p>
+                        <Text type="secondary" className="text-body-sm">Investment Amount</Text>
+                        <div className="font-semibold">{formatCurrency(amount)} {currency}</div>
                     </div>
 
                     {interval !== 'ONCE' && (
                         <>
                             <div>
-                                <p className="text-sm text-gray-500">End Date</p>
-                                <p className="font-medium">{endDate ? formatDate(endDate) : "Until Canceled"}</p>
+                                <Text type="secondary" className="text-body-sm">End Date</Text>
+                                <div className="font-semibold">{endDate ? formatDate(endDate) : "Until Canceled"}</div>
                             </div>
                             <div>
-                                <p className="text-sm text-gray-500">Est. Annual Investment</p>
-                                <p className="font-medium">{formatCurrency(annualAmount)} {currency}</p>
+                                <Text type="secondary" className="text-body-sm">Est. Annual Investment</Text>
+                                <div className="font-semibold text-primary">{formatCurrency(annualAmount)} {currency}</div>
                             </div>
                         </>
                     )}
 
                     <div>
-                        <p className="text-sm text-gray-500">Payment Method</p>
-                        <p className="font-medium">Credit/Debit Card</p>
-                    </div>
-                    <div>
-                        <p className="text-sm text-gray-500">Start Date</p>
-                        <p className="font-medium">Immediately after payment</p>
+                        <Text type="secondary" className="text-body-sm">Payment Method</Text>
+                        <div className="font-semibold">
+                            <Space>
+                                <CreditCardOutlined />
+                                Credit/Debit Card
+                            </Space>
+                        </div>
                     </div>
                 </div>
-            </div>
+            </Card>
 
             {/* Asset Allocation Summary */}
-            <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-lg font-medium text-gray-800 mb-4">Asset Allocation</h3>
-
+            <Card
+                title={
+                    <Space>
+                        <DollarOutlined style={{ color: 'var(--color-primary)' }} />
+                        <Text strong>Asset Allocation</Text>
+                    </Space>
+                }
+                className="elevation-2"
+            >
                 {/* Visual representation of allocation */}
-                <div className="mb-4 h-8 bg-gray-200 rounded-full overflow-hidden flex">
-                    {allocations.map((allocation: Allocation) => (
-                        <div
-                            key={allocation.assetId}
-                            style={{
-                                width: `${allocation.percentAmount}%`,
-                                backgroundColor: getAssetColor(allocation.assetTicker)
-                            }}
-                            className="h-full"
-                        />
-                    ))}
+                <div className="mb-lg">
+                    <div style={{
+                        height: '32px',
+                        borderRadius: 'var(--radius-lg)',
+                        overflow: 'hidden',
+                        display: 'flex',
+                        boxShadow: 'var(--shadow-sm)'
+                    }}>
+                        {allocations.map((allocation) => (
+                            <div
+                                key={allocation.assetId}
+                                style={{
+                                    width: `${allocation.percentAmount}%`,
+                                    backgroundColor: getAssetColor(allocation.assetTicker),
+                                    transition: 'all 0.3s ease'
+                                }}
+                                title={`${allocation.assetTicker}: ${allocation.percentAmount}%`}
+                            />
+                        ))}
+                    </div>
                 </div>
 
                 {/* Allocation details */}
-                <div className="space-y-3 mt-4">
-                    {allocations.map((allocation: Allocation) => (
-                        <div key={allocation.assetId} className="flex justify-between items-center border-b border-gray-200 pb-2">
-                            <div className="flex items-center">
-                                <div
-                                    className="w-4 h-4 rounded-full mr-2"
-                                    style={{ backgroundColor: getAssetColor(allocation.assetTicker) }}
-                                />
-                                <span className="font-medium">{allocation.assetName} ({allocation.assetTicker})</span>
+                <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                    {allocations.map((allocation) => (
+                        <Card
+                            key={allocation.assetId}
+                            size="small"
+                            style={{ backgroundColor: 'var(--color-bg-container)' }}
+                        >
+                            <div className="flex-between">
+                                <Space>
+                                    <div
+                                        style={{
+                                            width: '16px',
+                                            height: '16px',
+                                            borderRadius: '50%',
+                                            backgroundColor: getAssetColor(allocation.assetTicker)
+                                        }}
+                                    />
+                                    <Text strong>
+                                        {allocation.assetName} ({allocation.assetTicker})
+                                    </Text>
+                                </Space>
+                                <Space size="large">
+                                    <Tag color="blue" style={{ margin: 0 }}>
+                                        {allocation.percentAmount}%
+                                    </Tag>
+                                    <Text type="secondary">
+                                        {formatCurrency((amount * allocation.percentAmount) / 100)}
+                                    </Text>
+                                </Space>
                             </div>
-                            <div className="flex items-center">
-                                <span className="font-medium">{allocation.percentAmount}%</span>
-                                <span className="text-gray-500 ml-2">
-                                    ${((amount * allocation.percentAmount) / 100).toFixed(2)}
-                                </span>
-                            </div>
-                        </div>
+                        </Card>
                     ))}
-                </div>
-            </div>
+                </Space>
+            </Card>
 
             {/* Payment & Fee Summary */}
-            <div className="bg-gray-50 p-6 rounded-lg">
-                <h3 className="text-lg font-medium text-gray-800 mb-4">Payment Summary</h3>
+            <Card
+                title={
+                    <Space>
+                        <CheckCircleOutlined style={{ color: 'var(--color-success)' }} />
+                        <Text strong>Payment Summary</Text>
+                    </Space>
+                }
+                className="elevation-2"
+            >
+                <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                    <div className="flex-between">
+                        <Text>Investment Amount</Text>
+                        <Text strong>{formatCurrency(amount)}</Text>
+                    </div>
+                    <div className="flex-between">
+                        <Text type="secondary" className="text-body-sm">Platform Fee (1%)</Text>
+                        <Text type="secondary">-{formatCurrency(platformFee)}</Text>
+                    </div>
+                    <div className="flex-between">
+                        <Text type="secondary" className="text-body-sm">Payment Processing Fee (2.9% + $0.30)</Text>
+                        <Text type="secondary">-{formatCurrency(stripeFee)}</Text>
+                    </div>
 
-                <div className="space-y-2">
-                    <div className="flex justify-between">
-                        <span>Invested Amount</span>
-                        <span className="font-medium">${amount.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-gray-500">
-                        <span>Platform Fee (1%)</span>
-                        <span>-${platformFee.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-gray-500">
-                        <span>Payment Processing Fee (2.9% + $0.30)</span>
-                        <span>-${stripeFee.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between font-medium pt-2 border-t border-gray-200">
-                        <span>Net Investment Amount</span>
-                        <span>${netInvestment.toFixed(2)}</span>
-                    </div>
-                </div>
+                    <Divider style={{ margin: '12px 0' }} />
 
-                <p className="mt-4 text-sm text-gray-500">
-                    By proceeding, you agree to our Terms of Service and Privacy Policy. You authorize regular charges to your payment method
-                    {interval !== 'ONCE' ? ' according to your selected plan' : ''}. You can cancel anytime.
-                </p>
-            </div>
+                    <div className="flex-between">
+                        <Text strong style={{ fontSize: '16px' }}>Net Investment Amount</Text>
+                        <Text strong className="text-primary" style={{ fontSize: '18px' }}>
+                            {formatCurrency(netInvestment)}
+                        </Text>
+                    </div>
+                </Space>
+            </Card>
+
+            {/* Terms & Conditions */}
+            <Alert
+                message={
+                    <Paragraph className="m-0 text-body-sm">
+                        By proceeding, you agree to our{' '}
+                        <a href="/terms" target="_blank" rel="noopener noreferrer">
+                            Terms of Service
+                        </a>
+                        {' '}and{' '}
+                        <a href="/privacy" target="_blank" rel="noopener noreferrer">
+                            Privacy Policy
+                        </a>
+                        . You authorize regular charges to your payment method
+                        {interval !== 'ONCE' ? ' according to your selected plan' : ''}.
+                        {' '}You can cancel anytime.
+                    </Paragraph>
+                }
+                type="info"
+                showIcon
+                icon={<InfoCircleOutlined />}
+            />
         </div>
     );
 };

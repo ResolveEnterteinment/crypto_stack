@@ -1,6 +1,7 @@
 using Application.Interfaces.Treasury;
 using Domain.Constants;
 using Domain.DTOs.Exchange;
+using Domain.DTOs.Subscription;
 using Domain.Exceptions;
 using Domain.Models.Exchange;
 using Infrastructure.Services.FlowEngine.Core.Models;
@@ -30,15 +31,17 @@ namespace Infrastructure.Flows.Exchange
             _builder.Step("CalculateDust")
                 .RequiresData<ExchangeOrderData>("ExchangeOrderData")
                 .RequiresData<PlacedExchangeOrder>("PlacedOrder")
+                .RequiresData<EnhancedAllocationDto>("Allocation")
                 .Execute(async context =>
                 {
                     var placedOrder = context.GetData<PlacedExchangeOrder>("PlacedOrder");
                     var exchangeOrder = context.GetData<ExchangeOrderData>("ExchangeOrderData");
+                    var allocation = context.GetData<EnhancedAllocationDto>("Allocation");
 
                     // Calculate dust amount
                     // Dust = Quantity ordered - Quantity filled
                     decimal dustAmount = 0m;
-                    string dustTicker = exchangeOrder.QuoteTicker; // Usually the quote asset
+                    string dustTicker = allocation.Currency.ToUpperInvariant(); // Usually the quote asset
 
                     if (exchangeOrder.Side == OrderSide.Buy)
                     {
@@ -65,21 +68,23 @@ namespace Infrastructure.Flows.Exchange
                 .Build();
 
             _builder.Step("CheckDustThreshold")
+                .RequiresData<EnhancedAllocationDto>("Allocation")
                 .Execute(async context =>
                 {
                     var dustAmount = context.GetData<decimal>("DustAmount");
-                    var dustAsset = context.GetData<string>("DustTicker");
+                    var dustTicker = context.GetData<string>("DustTicker");
 
                     // Define minimum dust thresholds by asset type
                     // decimal minThreshold = GetMinimumDustThreshold(dustAsset);
+                    var allocation = context.GetData<EnhancedAllocationDto>("Allocation");
 
-                    decimal minThreshold = GetMinimumDustThreshold(dustAsset);
+                    decimal minThreshold = 1m/((decimal)Math.Pow(10, allocation.Precision));
 
                     if (dustAmount < minThreshold)
                     {
                         _logger.LogTrace(
                             "Dust amount {Amount} {Asset} below threshold {Threshold}, skipping collection",
-                            dustAmount, dustAsset, minThreshold);
+                            dustAmount, dustTicker, minThreshold);
 
                         context.SetData("ShouldCollectDust", false);
 

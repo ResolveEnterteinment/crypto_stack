@@ -95,7 +95,7 @@ const AssetBalanceCard: React.FC<AssetBalanceCardProps> = ({ assetHoldings }) =>
                         <Button
                             onClick={handleWithdraw}
                             icon={<TransactionOutlined />}
-                            className={"btn-ghost"}
+                            className="btn-ghost"
                         >
                             Withdraw
                         </Button>

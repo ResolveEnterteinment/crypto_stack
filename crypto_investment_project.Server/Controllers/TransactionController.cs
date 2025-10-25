@@ -1,10 +1,14 @@
 using Application.Contracts.Requests.Subscription;
+using Application.Contracts.Responses.Transaction;
 using Application.Extensions;
 using Application.Interfaces;
+using Application.Interfaces.Asset;
 using Application.Interfaces.Logging;
 using Application.Interfaces.Subscription;
 using Domain.Constants;
+using Domain.Constants.Transaction;
 using Domain.DTOs;
+using Domain.Models.Transaction;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -20,6 +24,7 @@ namespace crypto_investment_project.Server.Controllers
     {
         private readonly ISubscriptionService _subscriptionService;
         private readonly ITransactionService _transactionService;
+        private readonly IAssetService _assetService;
         private readonly ILoggingService _logger;
         private readonly IIdempotencyService _idempotencyService;
         private readonly IUserService _userService;
@@ -27,6 +32,7 @@ namespace crypto_investment_project.Server.Controllers
         public TransactionController(
             ISubscriptionService subscriptionService,
             ITransactionService transactionService,
+            IAssetService assetService,
             IValidator<SubscriptionCreateRequest> createValidator,
             IValidator<SubscriptionUpdateRequest> updateValidator,
             IIdempotencyService idempotencyService,
@@ -35,6 +41,7 @@ namespace crypto_investment_project.Server.Controllers
         {
             _subscriptionService = subscriptionService ?? throw new ArgumentNullException(nameof(subscriptionService));
             _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
+            _assetService = assetService ?? throw new ArgumentNullException(nameof(assetService));
             _idempotencyService = idempotencyService ?? throw new ArgumentNullException(nameof(idempotencyService));
             _userService = userService ?? throw new ArgumentNullException(nameof(userService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -281,34 +288,82 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 // Get user subscriptions
-                var transactionsResult = await _transactionService.GetBySubscriptionIdAsync(subscriptionId);
+                var transactionsResult = await _transactionService.GetSubscriptionTransactionsAsync(subscriptionId);
 
                 if (!transactionsResult.IsSuccess)
                 {
                     return ResultWrapper.Failure(transactionsResult.Reason,
-                        $"Failed to fetch transactions for subscription ID {subscriptionId}",
+                        transactionsResult.ErrorMessage,
                         transactionsResult.ErrorCode)
                         .ToActionResult(this);
                 }
+
+                var transactions = transactionsResult.Data ?? [];
 
                 // Generate ETag from data and store it
                 var newEtag = $"\"{Guid.NewGuid():N}\""; // Simple approach; production would use content hash
                 await _idempotencyService.StoreResultAsync(etagKey, newEtag);
                 Response.Headers.ETag = newEtag;
 
-                _logger.LogInformation("Successfully retrieved {Count} transactions for subscription {SubscriptionId}",
-                    transactionsResult.Data?.Count() ?? 0, subscriptionId);
+                var result = MapToTransactionResponse(transactions);
 
-                return ResultWrapper.Success(transactionsResult.Data)
+                _logger.LogInformation("Successfully retrieved {Count} transactions for subscription {SubscriptionId}",
+                    transactions.Count, subscriptionId);
+
+                return ResultWrapper.Success(result)
                     .ToActionResult(this);
             }
             catch (Exception ex)
             {
                 // Let global exception handler middleware handle this
-                _logger.LogError("Error retrieving transactions for subscription {SubscriptionId}", subscription);
+                _logger.LogError("Error retrieving transactions for subscription {SubscriptionId} {ErrorMessage}", subscription, ex.Message);
                 return ResultWrapper.InternalServerError()
                         .ToActionResult(this);
             }
+        }
+
+        private List<TransactionResponse> MapToTransactionResponse(List<TransactionData> transactions)
+        {
+            var response = transactions.Select(transaction =>
+            {
+                var from = transaction.FromBalance;
+                var to = transaction.ToBalance;
+
+                var fromAssetTask = _assetService.GetByIdAsync(from.AssetId);
+                var toAssetTask = _assetService.GetByIdAsync(to.AssetId);
+
+                Task.WaitAll(fromAssetTask, toAssetTask);
+
+                var fromAsset = fromAssetTask.Result.IsSuccess ? fromAssetTask.Result.Data : null;
+                var toAsset = toAssetTask.Result.IsSuccess ? toAssetTask.Result.Data : null;
+
+                return transaction.Action switch
+                {
+                    TransactionActionType.Buy => new TransactionResponse
+                    {
+                        Action = transaction.Action,
+                        AssetName = toAsset.Name,
+                        AssetTicker = toAsset.Ticker,
+                        Quantity = to.Quantity,
+                        CreatedAt = transaction.CreatedAt,
+                        QuoteQuantity = from != null ? from.Quantity : 0,
+                        QuoteCurrency = from != null ? from.Ticker : "N/A"
+                    },
+                    TransactionActionType.Sell => new TransactionResponse
+                    {
+                        Action = transaction.Action,
+                        AssetName = fromAsset.Name,
+                        AssetTicker = fromAsset.Ticker,
+                        Quantity = from.Quantity,
+                        CreatedAt = transaction.CreatedAt,
+                        QuoteQuantity = to != null ? to.Quantity : 0,
+                        QuoteCurrency = to != null ? to.Ticker : "N/A"
+                    },
+                    // Handle other actions like Trade, Transfer, Fee, etc. as needed
+                    _ => throw new NotImplementedException($"Transaction action '{transaction.Action}' is not implemented in the response mapping."),
+                };
+            });
+            return response.ToList();
         }
 
         /// <summary>
@@ -374,7 +429,7 @@ namespace crypto_investment_project.Server.Controllers
                 }
 
                 // Get user subscriptions
-                var transactionsResult = await _transactionService.GetBySubscriptionIdAsync(subscriptionId);
+                var transactionsResult = await _transactionService.GetSubscriptionTransactionsAsync(subscriptionId);
 
                 if (!transactionsResult.IsSuccess)
                 {
@@ -390,7 +445,7 @@ namespace crypto_investment_project.Server.Controllers
                 Response.Headers.ETag = newEtag;
 
                 _logger.LogInformation("Successfully retrieved {Count} transactions for subscription {SubscriptionId}",
-                    transactionsResult.Data?.Count() ?? 0, subscriptionId);
+                    transactionsResult.Data?.Count ?? 0, subscriptionId);
 
                 return ResultWrapper.Success(transactionsResult.Data)
                     .ToActionResult(this);
@@ -398,7 +453,7 @@ namespace crypto_investment_project.Server.Controllers
             catch (Exception ex)
             {
                 // Let global exception handler middleware handle this
-                _logger.LogError("Error retrieving transactions for subscription {SubscriptionId}", subscription);
+                _logger.LogError("Error retrieving transactions for subscription {SubscriptionId}: {ErrorMessage}", subscription, ex.Message);
                 return ResultWrapper.InternalServerError()
                         .ToActionResult(this);
             }

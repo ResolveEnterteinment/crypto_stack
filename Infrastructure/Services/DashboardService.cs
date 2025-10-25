@@ -480,7 +480,7 @@ namespace Infrastructure.Services
             }
 
             var balances = balancesResult.Data;
-            var list = new List<AssetHoldingDto>();
+            var list = new Dictionary<string, AssetHoldingDto>();
 
             var exchangeGroups = balances.GroupBy(b => b.Asset!.Exchange);
 
@@ -500,16 +500,12 @@ namespace Infrastructure.Services
                     var asset = balance.Asset!;
                     decimal val = 0;
 
-                    if (rates?.TryGetValue(asset.Ticker, out var rate) ?? false)
+                    if (rates.TryGetValue(asset.Ticker, out var rate))
                     {
                         val = balance.Total * rate;
                     }
-                    else
-                    {
-                        val = balance.Total;
-                    }
 
-                    list.Add(new AssetHoldingDto
+                    list.TryAdd(asset.Ticker, new AssetHoldingDto
                     {
                         Id = asset.Id.ToString(),
                         Name = asset.Name,
@@ -521,7 +517,7 @@ namespace Infrastructure.Services
                 }
             }
 
-            return list;
+            return list.Values.ToList();
         }
 
         private async Task<ResultWrapper<decimal>> FetchTotalInvestmentsCachedAsync(Guid userId)

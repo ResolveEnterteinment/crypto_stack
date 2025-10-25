@@ -26,6 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Folder Include="Contracts\Responses\Exchange\" />
     <Folder Include="Contracts\Responses\KYC\OCR\" />
     <Folder Include="Interfaces\Flow\" />
   </ItemGroup>

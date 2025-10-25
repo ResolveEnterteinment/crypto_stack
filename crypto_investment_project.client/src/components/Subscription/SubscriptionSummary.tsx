@@ -1,6 +1,11 @@
-// src/components/Subscription/SubscriptionSummary.tsx
+// src/components/Subscription/SubscriptionSummary.tsx - Refactored with Global Styling & Ant Design
 import React from 'react';
+import { Card, Typography, Space, Divider, Tag } from 'antd';
+import { CalendarOutlined, DollarOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { Allocation } from '../../types/subscription';
+import { AssetColors } from '../../types/assetTypes';
+
+const { Text, Title } = Typography;
 
 interface SubscriptionSummaryProps {
     interval: string;
@@ -17,23 +22,23 @@ const SubscriptionSummary: React.FC<SubscriptionSummaryProps> = ({
     endDate,
     allocations
 }) => {
-    // Format the interval for display
+    /**
+     * Format the interval for display
+     */
     const formatInterval = (intervalCode: string): string => {
-        switch (intervalCode) {
-            case 'ONCE':
-                return 'One-time payment';
-            case 'DAILY':
-                return 'Daily';
-            case 'WEEKLY':
-                return 'Weekly';
-            case 'MONTHLY':
-                return 'Monthly';
-            default:
-                return intervalCode;
-        }
+        const intervals: Record<string, string> = {
+            'ONCE': 'One-time payment',
+            'DAILY': 'Daily',
+            'WEEKLY': 'Weekly',
+            'MONTHLY': 'Monthly',
+            'YEARLY': 'Yearly'
+        };
+        return intervals[intervalCode] || intervalCode;
     };
 
-    // Format date for display
+    /**
+     * Format date for display
+     */
     const formatDate = (date: Date | null): string => {
         if (!date) return 'Ongoing';
         return date.toLocaleDateString('en-US', {
@@ -43,76 +48,180 @@ const SubscriptionSummary: React.FC<SubscriptionSummaryProps> = ({
         });
     };
 
-    // Calculate estimated annual investment (excluding one-time)
+    /**
+     * Format currency
+     */
+    const formatCurrency = (value: number): string => {
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        }).format(value);
+    };
+
+    /**
+     * Calculate estimated annual investment
+     */
     const calculateAnnualAmount = (): number => {
         if (interval === 'ONCE') return amount;
 
         const multipliers: Record<string, number> = {
             'DAILY': 365,
             'WEEKLY': 52,
-            'MONTHLY': 12
+            'MONTHLY': 12,
+            'YEARLY': 1
         };
 
         return amount * (multipliers[interval] || 0);
     };
 
-    // Get estimated annual investment
+    /**
+     * Get color for asset
+     */
+    const getAssetColor = (ticker: string): string => {
+        return AssetColors[ticker] || AssetColors.DEFAULT;
+    };
+
     const annualAmount = calculateAnnualAmount();
 
     return (
-        <div className="space-y-4">
-            {/* Basic plan details */}
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <p className="text-sm text-gray-500">Plan Type</p>
-                    <p className="font-medium">{formatInterval(interval)}</p>
+        <Card className="elevation-2" bordered={false}>
+            <Space direction="vertical" size="large" style={{ width: '100%' }}>
+                {/* Header */}
+                <div className="text-center">
+                    <Title level={4} className="mb-xs">Subscription Summary</Title>
+                    <Text type="secondary">Your investment plan overview</Text>
                 </div>
-                <div>
-                    <p className="text-sm text-gray-500">Investment Amount</p>
-                    <p className="font-medium">${amount.toFixed(2)} {currency}</p>
-                </div>
-                {interval !== 'ONCE' && (
-                    <>
-                        <div>
-                            <p className="text-sm text-gray-500">End Date</p>
-                            <p className="font-medium">{formatDate(endDate)}</p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-gray-500">Est. Annual Investment</p>
-                            <p className="font-medium">${annualAmount.toFixed(2)} {currency}</p>
-                        </div>
-                    </>
-                )}
-            </div>
 
-            {/* Asset allocation breakdown */}
-            <div>
-                <p className="text-sm text-gray-500 mb-2">Asset Allocation</p>
-                <div className="space-y-2">
-                    {allocations.map(allocation => (
-                        <div key={allocation.assetId} className="flex justify-between items-center">
-                            <div className="flex items-center">
-                                <span className="font-medium">{allocation.assetName} ({allocation.assetTicker})</span>
-                            </div>
-                            <div className="flex items-center">
-                                <span className="font-medium">{allocation.percentAmount}%</span>
-                                <span className="text-gray-500 ml-2">
-                                    ${((amount * allocation.percentAmount) / 100).toFixed(2)}
-                                </span>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
+                <Divider style={{ margin: 0 }} />
 
-            {/* Fee disclosure */}
-            <div className="border-t pt-4 mt-4">
-                <p className="text-sm text-gray-500 mb-1">Transaction Fees</p>
-                <p className="text-sm">Payment processing fee: <span className="font-medium">2.9% + $0.30</span></p>
-                <p className="text-sm">Platform fee: <span className="font-medium">1.0%</span></p>
-            </div>
-        </div>
+                {/* Basic Plan Details */}
+                <div className="grid-2 gap-md">
+                    <div>
+                        <Space direction="vertical" size="small">
+                            <Text type="secondary" className="text-body-sm">
+                                <ClockCircleOutlined /> Plan Type
+                            </Text>
+                            <Text strong>{formatInterval(interval)}</Text>
+                        </Space>
+                    </div>
+                    <div>
+                        <Space direction="vertical" size="small">
+                            <Text type="secondary" className="text-body-sm">
+                                <DollarOutlined /> Investment Amount
+                            </Text>
+                            <Text strong className="text-primary">
+                                {formatCurrency(amount)} {currency}
+                            </Text>
+                        </Space>
+                    </div>
+
+                    {interval !== 'ONCE' && (
+                        <>
+                            <div>
+                                <Space direction="vertical" size="small">
+                                    <Text type="secondary" className="text-body-sm">
+                                        <CalendarOutlined /> End Date
+                                    </Text>
+                                    <Text strong>{formatDate(endDate)}</Text>
+                                </Space>
+                            </div>
+                            <div>
+                                <Space direction="vertical" size="small">
+                                    <Text type="secondary" className="text-body-sm">
+                                        Est. Annual Investment
+                                    </Text>
+                                    <Text strong className="text-success">
+                                        {formatCurrency(annualAmount)} {currency}
+                                    </Text>
+                                </Space>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                <Divider style={{ margin: 0 }} />
+
+                {/* Asset Allocation */}
+                <div>
+                    <Text type="secondary" className="text-body-sm mb-sm" style={{ display: 'block' }}>
+                        Asset Allocation
+                    </Text>
+
+                    {/* Visual Bar */}
+                    <div style={{
+                        height: '24px',
+                        borderRadius: 'var(--radius-lg)',
+                        overflow: 'hidden',
+                        display: 'flex',
+                        marginBottom: 'var(--spacing-md)',
+                        boxShadow: 'var(--shadow-sm)'
+                    }}>
+                        {allocations.map(allocation => (
+                            <div
+                                key={allocation.assetId}
+                                style={{
+                                    width: `${allocation.percentAmount}%`,
+                                    backgroundColor: getAssetColor(allocation.assetTicker),
+                                    transition: 'all 0.3s ease'
+                                }}
+                                title={`${allocation.assetTicker}: ${allocation.percentAmount}%`}
+                            />
+                        ))}
+                    </div>
+
+                    {/* Allocation List */}
+                    <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                        {allocations.map(allocation => (
+                            <div key={allocation.assetId} className="flex-between">
+                                <Space size="small">
+                                    <div
+                                        style={{
+                                            width: '12px',
+                                            height: '12px',
+                                            borderRadius: '50%',
+                                            backgroundColor: getAssetColor(allocation.assetTicker)
+                                        }}
+                                    />
+                                    <Text strong className="text-body-sm">
+                                        {allocation.assetName} ({allocation.assetTicker})
+                                    </Text>
+                                </Space>
+                                <Space size="small">
+                                    <Tag color="blue" style={{ margin: 0 }}>
+                                        {allocation.percentAmount}%
+                                    </Tag>
+                                    <Text type="secondary" className="text-body-sm">
+                                        {formatCurrency((amount * allocation.percentAmount) / 100)}
+                                    </Text>
+                                </Space>
+                            </div>
+                        ))}
+                    </Space>
+                </div>
+
+                <Divider style={{ margin: 0 }} />
+
+                {/* Fee Disclosure */}
+                <div>
+                    <Text type="secondary" className="text-body-sm mb-xs" style={{ display: 'block' }}>
+                        Transaction Fees
+                    </Text>
+                    <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                        <div className="flex-between">
+                            <Text className="text-body-sm">Payment processing fee:</Text>
+                            <Text strong className="text-body-sm">2.9% + $0.30</Text>
+                        </div>
+                        <div className="flex-between">
+                            <Text className="text-body-sm">Platform fee:</Text>
+                            <Text strong className="text-body-sm">1.0%</Text>
+                        </div>
+                    </Space>
+                </div>
+            </Space>
+        </Card>
     );
-}
+};
 
-module.exports = { SubscriptionSummary };
+export default SubscriptionSummary;

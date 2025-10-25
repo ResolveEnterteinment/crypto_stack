@@ -14,6 +14,7 @@ using Domain.DTOs.Settings;
 using Infrastructure.Flows.Demo;
 using Infrastructure.Services;
 using Infrastructure.Services.Asset;
+using Infrastructure.Services.Balance;
 using Infrastructure.Services.Base;
 using Infrastructure.Services.Demo;
 using Infrastructure.Services.Email;

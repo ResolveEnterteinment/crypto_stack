@@ -1,13 +1,19 @@
-// src/components/Subscription/PlanDetailsStep.jsx
+// src/components/Subscription/PlanDetailsStep.tsx - Refactored with Global Styling & Ant Design
 import React from 'react';
+import { Form, Select, InputNumber, DatePicker, Card, Typography, Space, Divider } from 'antd';
+import { DollarOutlined, CalendarOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import dayjs, { Dayjs } from 'dayjs';
 import { Allocation } from '../../types/subscription';
 
+const { Title, Text, Paragraph } = Typography;
+const { Option } = Select;
+
 const INTERVALS = [
-    { value: 'ONCE', label: 'One-time payment' },
-    { value: 'DAILY', label: 'Daily' },
-    { value: 'WEEKLY', label: 'Weekly' },
-    { value: 'MONTHLY', label: 'Monthly' },
-    { value: 'YEARLY', label: 'Yearly' }
+    { value: 'ONCE', label: 'One-time payment', description: 'Single investment' },
+    { value: 'DAILY', label: 'Daily', description: 'Invest every day' },
+    { value: 'WEEKLY', label: 'Weekly', description: 'Invest every week' },
+    { value: 'MONTHLY', label: 'Monthly', description: 'Invest every month' },
+    { value: 'YEARLY', label: 'Yearly', description: 'Invest every year' }
 ];
 
 interface PlanDetailsStepProps {
@@ -16,130 +22,218 @@ interface PlanDetailsStepProps {
         amount: number;
         endDate: Date | null;
     };
-    updateFormData: any;
+    updateFormData: (field: string, value: any) => void;
 }
 
 const PlanDetailsStep: React.FC<PlanDetailsStepProps> = ({ formData, updateFormData }) => {
-    const handleIntervalChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        updateFormData('interval', e.target.value);
+    /**
+     * Handle interval change
+     */
+    const handleIntervalChange = (value: string) => {
+        updateFormData('interval', value);
     };
 
-    const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = parseFloat(e.target.value);
-        if (!isNaN(value) && value > 0) {
+    /**
+     * Handle amount change
+     */
+    const handleAmountChange = (value: number | null) => {
+        if (value && value > 0) {
             updateFormData('amount', value);
         }
     };
 
-    const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const date = e.target.value ? new Date(e.target.value) : null;
-        updateFormData('endDate', date);
+    /**
+     * Handle end date change
+     */
+    const handleEndDateChange = (date: Dayjs | null) => {
+        updateFormData('endDate', date ? date.toDate() : null);
+    };
+
+    /**
+     * Calculate estimated annual investment
+     */
+    const calculateAnnualAmount = (): number => {
+        if (formData.interval === 'ONCE') return formData.amount;
+
+        const multipliers: Record<string, number> = {
+            'DAILY': 365,
+            'WEEKLY': 52,
+            'MONTHLY': 12,
+            'YEARLY': 1
+        };
+
+        return formData.amount * (multipliers[formData.interval] || 0);
     };
 
     // Get minimum date (tomorrow)
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const minDate = tomorrow.toISOString().split('T')[0];
+    const tomorrow = dayjs().add(1, 'day');
+    const annualAmount = calculateAnnualAmount();
 
     return (
-        <div className="space-y-6">
+        <div className="stack-lg">
+            {/* Header */}
             <div>
-                <h2 className="text-2xl font-semibold text-gray-800 mb-4">Investment Plan Details</h2>
-                <p className="text-gray-600 mb-6">
+                <Title level={2} className="mb-sm">
+                    Investment Plan Details
+                </Title>
+                <Paragraph className="text-body text-secondary">
                     Choose how often you want to invest and how much.
-                </p>
+                </Paragraph>
             </div>
 
-            <div>
-                <label className="block text-gray-700 font-medium mb-2">
-                    Investment Frequency
-                </label>
-                <select
+            <Divider className="divider" />
+
+            {/* Investment Frequency */}
+            <Form.Item
+                label={
+                    <Space>
+                        <ClockCircleOutlined />
+                        <Text strong>Investment Frequency</Text>
+                    </Space>
+                }
+                required
+            >
+                <Select
                     value={formData.interval}
                     onChange={handleIntervalChange}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    required
+                    size="large"
+                    style={{ width: '100%' }}
+                    placeholder="Select investment frequency"
                 >
                     {INTERVALS.map(option => (
-                        <option key={option.value} value={option.value}>
-                            {option.label}
-                        </option>
+                        <Option key={option.value} value={option.value}>
+                            <div>
+                                <div className="font-medium">{option.label}</div>
+                                <div className="text-caption text-secondary">{option.description}</div>
+                            </div>
+                        </Option>
                     ))}
-                </select>
-                <p className="mt-1 text-sm text-gray-500">
+                </Select>
+                <Text type="secondary" className="text-body-sm" style={{ marginTop: '8px', display: 'block' }}>
                     How often would you like to invest? Choose "One-time payment" for a single investment.
-                </p>
-            </div>
+                </Text>
+            </Form.Item>
 
-            <div>
-                <label className="block text-gray-700 font-medium mb-2">
-                    Investment Amount (USD)
-                </label>
-                <div className="relative">
-                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">
-                        $
-                    </span>
-                    <input
-                        type="number"
-                        min="10"
-                        step="0.01"
-                        value={formData.amount}
-                        onChange={handleAmountChange}
-                        className="w-full p-3 pl-8 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                        required
-                    />
-                </div>
-                <p className="mt-1 text-sm text-gray-500">
+            {/* Investment Amount */}
+            <Form.Item
+                label={
+                    <Space>
+                        <DollarOutlined />
+                        <Text strong>Investment Amount (USD)</Text>
+                    </Space>
+                }
+                required
+            >
+                <InputNumber
+                    value={formData.amount}
+                    onChange={handleAmountChange}
+                    min={10}
+                    step={10}
+                    precision={2}
+                    size="large"
+                    style={{ width: '100%' }}
+                    prefix="$"
+                    placeholder="Enter amount"
+                    formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                    parser={(value) => Number(value!.replace(/\$\s?|(,*)/g, ''))}
+                />
+                <Text type="secondary" className="text-body-sm" style={{ marginTop: '8px', display: 'block' }}>
                     Minimum investment: $10
-                </p>
-            </div>
+                </Text>
+            </Form.Item>
 
+            {/* End Date (only for recurring) */}
             {formData.interval !== 'ONCE' && (
-                <div>
-                    <label className="block text-gray-700 font-medium mb-2">
-                        End Date (Optional)
-                    </label>
-                    <input
-                        type="date"
-                        value={formData.endDate ? formData.endDate.toISOString().split('T')[0] : ''}
+                <Form.Item
+                    label={
+                        <Space>
+                            <CalendarOutlined />
+                            <Text strong>End Date (Optional)</Text>
+                        </Space>
+                    }
+                >
+                    <DatePicker
+                        value={formData.endDate ? dayjs(formData.endDate) : null}
                         onChange={handleEndDateChange}
-                        min={minDate}
-                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        minDate={tomorrow}
+                        size="large"
+                        style={{ width: '100%' }}
+                        placeholder="Select end date"
+                        format="MMMM DD, YYYY"
                     />
-                    <p className="mt-1 text-sm text-gray-500">
+                    <Text type="secondary" className="text-body-sm" style={{ marginTop: '8px', display: 'block' }}>
                         Leave empty for ongoing subscription. You can cancel anytime.
-                    </p>
-                </div>
+                    </Text>
+                </Form.Item>
             )}
 
+            {/* Summary Card (only for recurring) */}
             {formData.interval !== 'ONCE' && (
-                <div className="bg-gray-50 p-4 rounded-lg">
-                    <h3 className="font-medium text-gray-700 mb-2">Recurring Payment Summary</h3>
-                    <div className="grid grid-cols-2 gap-4">
+                <Card
+                    className="card-minimal"
+                    style={{
+                        backgroundColor: 'var(--color-bg-container)',
+                        marginTop: 'var(--spacing-lg)'
+                    }}
+                >
+                    <Title level={4} className="mb-md">
+                        Recurring Payment Summary
+                    </Title>
+                    <div className="grid-2">
                         <div>
-                            <p className="text-sm text-gray-500">Frequency</p>
-                            <p className="font-medium">
+                            <Text type="secondary" className="text-body-sm">Frequency</Text>
+                            <div className="font-medium">
                                 {INTERVALS.find(i => i.value === formData.interval)?.label}
-                            </p>
+                            </div>
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500">Per Payment</p>
-                            <p className="font-medium">${formData.amount.toFixed(2)}</p>
+                            <Text type="secondary" className="text-body-sm">Per Payment</Text>
+                            <div className="font-medium">${formData.amount.toFixed(2)}</div>
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500">End Date</p>
-                            <p className="font-medium">
+                            <Text type="secondary" className="text-body-sm">End Date</Text>
+                            <div className="font-medium">
                                 {formData.endDate
-                                    ? formData.endDate.toLocaleDateString()
+                                    ? dayjs(formData.endDate).format('MMMM DD, YYYY')
                                     : 'Ongoing (until canceled)'}
-                            </p>
+                            </div>
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500">Payment Method</p>
-                            <p className="font-medium">Credit/Debit Card</p>
+                            <Text type="secondary" className="text-body-sm">Est. Annual Investment</Text>
+                            <div className="font-medium text-primary">
+                                ${annualAmount.toLocaleString('en-US', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2
+                                })}
+                            </div>
                         </div>
                     </div>
-                </div>
+                </Card>
+            )}
+
+            {/* One-time Payment Info */}
+            {formData.interval === 'ONCE' && (
+                <Card
+                    className="card-minimal"
+                    style={{
+                        backgroundColor: 'var(--color-bg-container)',
+                        marginTop: 'var(--spacing-lg)'
+                    }}
+                >
+                    <Space direction="vertical" size="small">
+                        <Text type="secondary" className="text-body-sm">
+                            Payment Method
+                        </Text>
+                        <Text className="font-medium">Credit/Debit Card via Stripe</Text>
+                        <Divider style={{ margin: '12px 0' }} />
+                        <Text type="secondary" className="text-body-sm">
+                            Total Investment
+                        </Text>
+                        <Text className="text-h3 text-primary">
+                            ${formData.amount.toFixed(2)}
+                        </Text>
+                    </Space>
+                </Card>
             )}
         </div>
     );

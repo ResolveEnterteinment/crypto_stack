@@ -15,8 +15,10 @@ namespace Application.Interfaces
     {
         Task<ResultWrapper<List<BalanceData>>> GetAllByUserIdAsync(Guid userId, string? assetClass = null);
         Task<ResultWrapper<BalanceData>> GetUserBalanceByTickerAsync(Guid userId, string ticker);
+        Task<ResultWrapper<BalanceData>> GetOrCreateEnhancedBalanceAsync(Guid userId, string ticker);
         Task<ResultWrapper<BalanceData>> UpsertBalanceAsync(Guid userId, BalanceUpdateDto balanceUpdateDto, IClientSessionHandle? session = null);
         Task<ResultWrapper<List<BalanceData>>> FetchBalancesWithAssetsAsync(Guid userId, string? assetType = null);
+        Task InvalidateBalanceCachesForUsersAsync(IEnumerable<Guid> userIds);
         Task<ResultWrapper> WarmupUserBalanceCacheAsync(Guid userId);
     }
 }
